@@ -33,12 +33,19 @@ pub use crate::world::{
     ChunkLoadRequest, ChunkManager, ChunkModified, ChunkUnloadRequest,
     DEFAULT_LOAD_DISTANCE, DEFAULT_UNLOAD_DISTANCE, ViewerPosition, WorldConfig, WorldPlugin,
     PersistenceConfig, PersistencePlugin,
+    OcclusionPlugin, is_chunk_occluded,
 };
 
 // World interaction API
 pub use crate::world::{
     get_voxel_at, set_voxel_at, raycast, RaycastHit,
     sphere_overlaps_voxels, resolve_sphere_collision,
+    capsule_overlaps_voxels, resolve_capsule_collision,
+};
+
+// Mining API
+pub use crate::world::{
+    tick_mining, stop_mining, MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
 };
 
 // Render

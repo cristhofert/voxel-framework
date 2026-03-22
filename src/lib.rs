@@ -60,6 +60,8 @@ use bevy::prelude::*;
 use mesh::MeshPlugin;
 use render::RenderPlugin;
 use voxel::DefaultVoxel;
+use world::mining::MiningPlugin;
+use world::occlusion::OcclusionPlugin;
 use world::{WorldConfigPlugin, WorldPlugin};
 
 /// Top-level plugin that registers all voxel framework systems and resources
@@ -99,5 +101,7 @@ impl Plugin for VoxelPlugin {
         app.add_plugins(WorldConfigPlugin);
         app.add_plugins(RenderPlugin::<DefaultVoxel>::new());
         app.add_plugins(MeshPlugin::<DefaultVoxel>::new());
+        app.add_plugins(OcclusionPlugin::<DefaultVoxel>::new());
+        app.add_plugins(MiningPlugin);
     }
 }

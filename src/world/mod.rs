@@ -13,15 +13,24 @@
 
 pub mod collision;
 pub mod config;
+pub mod mining;
+pub mod occlusion;
 pub mod persistence;
 pub mod raycast;
 pub mod systems;
 pub mod voxel_ops;
 
-pub use collision::{resolve_sphere_collision, sphere_overlaps_voxels};
+pub use collision::{
+    capsule_overlaps_voxels, resolve_capsule_collision, resolve_sphere_collision,
+    sphere_overlaps_voxels,
+};
 pub use config::{WorldConfig, WorldConfigPlugin};
+pub use occlusion::{OcclusionPlugin, is_chunk_occluded};
 pub use persistence::{PersistenceConfig, PersistencePlugin, chunk_autosave_system, try_load_chunk};
 pub use raycast::{RaycastHit, raycast};
+pub use mining::{
+    tick_mining, stop_mining, MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
+};
 pub use systems::ViewerPosition;
 pub use voxel_ops::{get_voxel_at, set_voxel_at};
 
