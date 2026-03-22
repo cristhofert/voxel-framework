@@ -62,11 +62,11 @@ use crate::world::ViewerPosition;
 // ─── Physics constants ────────────────────────────────────────────────────────
 
 /// Radius of the player's collision capsule (world units).
-pub const PLAYER_RADIUS: f32 = 0.3;
+pub const PLAYER_RADIUS: f32 = 0.6;
 
 /// Half-height of the capsule's cylindrical spine (world units).
 /// The full capsule height is `2 * (PLAYER_HALF_HEIGHT + PLAYER_RADIUS)`.
-pub const PLAYER_HALF_HEIGHT: f32 = 0.6;
+pub const PLAYER_HALF_HEIGHT: f32 = 1.8;
 
 /// Lerp factor applied when the player is accelerating.
 const ACCEL: f32 = 12.0;
