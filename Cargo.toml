@@ -1,0 +1,19 @@
+[package]
+name = "voxel-framework"
+version = "0.1.0"
+edition = "2024"
+description = "A reusable voxel engine framework built on Bevy"
+
+[dependencies]
+bevy = { version = "0.18", default-features = false, features = [
+    "bevy_asset", "bevy_render", "bevy_pbr", "bevy_core_pipeline", "multi_threaded"
+] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+bevy = { version = "0.18", features = ["bevy_winit", "wayland", "bevy_mesh"] }
+
+[[example]]
+name = "basic_world"
+path = "examples/basic_world.rs"

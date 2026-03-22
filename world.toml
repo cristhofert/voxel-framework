@@ -1,0 +1,14 @@
+seed = 42
+spawn_position = [0.0, 0.0, 0.0]
+load_distance = 150.0
+unload_distance = 200.0
+
+[asteroids]
+seed = 42
+count = 20
+min_radius = 15.0
+max_radius = 40.0
+
+[lighting]
+sun_illuminance = 15000.0
+ambient_brightness = 0.1

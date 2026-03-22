@@ -1,0 +1,319 @@
+//! Integration tests for voxel-framework.
+//!
+//! Tests pure logic without spinning up a Bevy App (no display required).
+
+use bevy::math::Vec3;
+use bevy::mesh::{Indices, Mesh};
+use bevy::mesh::VertexAttributeValues;
+
+use voxel_framework::chunk::{Chunk, CHUNK_SIZE};
+use voxel_framework::generator::ChunkGenerator;
+use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
+use voxel_framework::mesh::generate_chunk_mesh;
+use voxel_framework::mesh::lod::{compute_lod, lod_to_step};
+use voxel_framework::noise::fbm;
+use voxel_framework::voxel::DefaultVoxel;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn vertex_count(mesh: &Mesh) -> usize {
+    match mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .expect("mesh has no ATTRIBUTE_POSITION")
+    {
+        VertexAttributeValues::Float32x3(v) => v.len(),
+        _ => panic!("unexpected position attribute type"),
+    }
+}
+
+fn index_count(mesh: &Mesh) -> usize {
+    match mesh.indices().expect("mesh has no indices") {
+        Indices::U32(idx) => idx.len(),
+        _ => panic!("expected U32 indices"),
+    }
+}
+
+fn fill_chunk(voxel: DefaultVoxel) -> Chunk<DefaultVoxel> {
+    let mut chunk = Chunk::<DefaultVoxel>::new();
+    for x in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                chunk.set(x, y, z, voxel);
+            }
+        }
+    }
+    chunk
+}
+
+fn solid_count(chunk: &Chunk<DefaultVoxel>) -> usize {
+    (0..CHUNK_SIZE)
+        .flat_map(|x| (0..CHUNK_SIZE).flat_map(move |y| (0..CHUNK_SIZE).map(move |z| (x, y, z))))
+        .filter(|&(x, y, z)| chunk.is_solid_at(x, y, z))
+        .count()
+}
+
+// ── 1. Chunk + Voxel roundtrip ────────────────────────────────────────────────
+
+#[test]
+fn chunk_fill_and_read() {
+    let chunk = fill_chunk(DefaultVoxel::Rock);
+    for x in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                assert_eq!(
+                    chunk.get(x, y, z),
+                    DefaultVoxel::Rock,
+                    "expected Rock at ({x}, {y}, {z})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn chunk_is_fully_solid_after_fill() {
+    let chunk = fill_chunk(DefaultVoxel::Rock);
+    assert!(chunk.is_fully_solid(), "fully filled chunk must report is_fully_solid");
+    assert!(!chunk.is_empty(), "fully filled chunk must not report is_empty");
+}
+
+#[test]
+fn chunk_is_empty_on_new() {
+    let chunk = Chunk::<DefaultVoxel>::new();
+    assert!(chunk.is_empty(), "new chunk must be empty");
+    assert!(!chunk.is_fully_solid(), "new chunk must not be fully solid");
+}
+
+// ── 2. Mesh generation ────────────────────────────────────────────────────────
+
+#[test]
+fn empty_chunk_produces_no_geometry() {
+    let chunk = Chunk::<DefaultVoxel>::new();
+    let mesh = generate_chunk_mesh(&chunk, 1);
+    assert_eq!(
+        vertex_count(&mesh),
+        0,
+        "air-only chunk should produce 0 vertices"
+    );
+}
+
+#[test]
+fn single_voxel_produces_6_faces() {
+    let mut chunk = Chunk::<DefaultVoxel>::new();
+    chunk.set(0, 0, 0, DefaultVoxel::Rock);
+    let mesh = generate_chunk_mesh(&chunk, 1);
+
+    // 4 vertices per face × 6 faces = 24 vertices
+    assert_eq!(
+        vertex_count(&mesh),
+        24,
+        "single voxel should produce 24 vertices (4 per face × 6 faces)"
+    );
+    // 6 indices per face × 6 faces = 36 indices
+    assert_eq!(
+        index_count(&mesh),
+        36,
+        "single voxel should produce 36 indices (6 per face × 6 faces)"
+    );
+}
+
+#[test]
+fn full_chunk_only_has_outer_faces() {
+    // Greedy meshing merges the entire surface of a uniform solid chunk into
+    // one quad per face direction — 6 quads total.
+    let chunk = fill_chunk(DefaultVoxel::Rock);
+    let mesh = generate_chunk_mesh(&chunk, 1);
+
+    assert_eq!(
+        vertex_count(&mesh),
+        24,
+        "fully solid chunk should produce 24 vertices (4 per face × 6 outer faces)"
+    );
+    assert_eq!(
+        index_count(&mesh),
+        36,
+        "fully solid chunk should produce 36 indices (6 per face × 6 outer faces)"
+    );
+}
+
+#[test]
+fn lod_1_produces_coarser_mesh_than_lod_0() {
+    // Checkerboard of two solid voxel types: LOD 0 cannot merge across type
+    // boundaries (many small quads), LOD 1 collapses 2×2×2 super-voxels so
+    // much more merging is possible.
+    let mut chunk = Chunk::<DefaultVoxel>::new();
+    for x in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                let voxel = if (x + y + z) % 2 == 0 {
+                    DefaultVoxel::Rock
+                } else {
+                    DefaultVoxel::IronOre
+                };
+                chunk.set(x, y, z, voxel);
+            }
+        }
+    }
+
+    let mesh_lod0 = generate_chunk_mesh(&chunk, lod_to_step(0)); // step = 1
+    let mesh_lod1 = generate_chunk_mesh(&chunk, lod_to_step(1)); // step = 2
+
+    let verts_lod0 = vertex_count(&mesh_lod0);
+    let verts_lod1 = vertex_count(&mesh_lod1);
+
+    assert!(
+        verts_lod1 <= verts_lod0,
+        "LOD 1 ({verts_lod1} vertices) should be <= LOD 0 ({verts_lod0} vertices)"
+    );
+}
+
+// ── 3. Generator determinism ──────────────────────────────────────────────────
+
+#[test]
+fn asteroid_generator_is_deterministic() {
+    let generator = AsteroidGenerator::new(AsteroidConfig::default());
+    let coord = bevy::math::IVec3::new(0, 0, 0);
+
+    let mut chunk_a = Chunk::<DefaultVoxel>::new();
+    generator.generate(coord, &mut chunk_a);
+
+    let mut chunk_b = Chunk::<DefaultVoxel>::new();
+    generator.generate(coord, &mut chunk_b);
+
+    for x in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                assert_eq!(
+                    chunk_a.get(x, y, z),
+                    chunk_b.get(x, y, z),
+                    "voxel mismatch at ({x}, {y}, {z}): generation must be deterministic"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn asteroid_generator_different_coords_can_differ() {
+    // The first asteroid is always at the origin, so chunks at different
+    // positions within the asteroid may differ. We generate coord (0,0,0) and
+    // a far-away coord and expect at least one pair of voxels to differ (the
+    // far one should be all-air, which differs from the near one).
+    let generator = AsteroidGenerator::new(AsteroidConfig::default());
+
+    let mut chunk_near = Chunk::<DefaultVoxel>::new();
+    generator.generate(bevy::math::IVec3::new(0, 0, 0), &mut chunk_near);
+
+    let mut chunk_far = Chunk::<DefaultVoxel>::new();
+    generator.generate(bevy::math::IVec3::new(1000, 1000, 1000), &mut chunk_far);
+
+    let near_has_solid = solid_count(&chunk_near) > 0;
+    let far_is_empty = chunk_far.is_empty();
+
+    // If the near chunk has any solid content and the far one is empty,
+    // they are provably different.
+    assert!(
+        near_has_solid || far_is_empty,
+        "expected the two chunks to differ in content"
+    );
+
+    // They should not be identical — at least one voxel must differ.
+    let identical = (0..CHUNK_SIZE).all(|x| {
+        (0..CHUNK_SIZE).all(|y| {
+            (0..CHUNK_SIZE).all(|z| chunk_near.get(x, y, z) == chunk_far.get(x, y, z))
+        })
+    });
+    assert!(
+        !identical,
+        "chunk at (0,0,0) and chunk at (1000,1000,1000) should not be identical"
+    );
+}
+
+#[test]
+fn asteroid_generator_produces_solid_voxels() {
+    // The first asteroid is always centered at the world origin. A config with
+    // a large enough radius guarantees solid voxels in the origin chunk.
+    let config = AsteroidConfig {
+        asteroid_count: 1,
+        min_radius: 30.0,
+        max_radius: 30.0,
+        ..AsteroidConfig::default()
+    };
+    let generator = AsteroidGenerator::new(config);
+
+    let mut chunk = Chunk::<DefaultVoxel>::new();
+    generator.generate(bevy::math::IVec3::new(0, 0, 0), &mut chunk);
+
+    assert!(
+        solid_count(&chunk) > 0,
+        "chunks near the asteroid center must contain at least one solid voxel"
+    );
+}
+
+// ── 4. Noise ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn fbm_noise_is_bounded() {
+    // fbm is documented to return values in approximately [-1.0, 1.0].
+    // We allow a tiny epsilon for floating-point accumulation.
+    for i in 0..500 {
+        let x = (i as f32) * 0.37 - 92.5;
+        let y = (i as f32) * 0.23 + 3.0;
+        let z = (i as f32) * 0.53 - 60.0;
+        let v = fbm(x, y, z, 42, 4, 2.5, 2.0, 0.5);
+        assert!(
+            (-1.01..=1.01).contains(&v),
+            "fbm({x}, {y}, {z}) = {v} is out of the expected [-1, 1] range"
+        );
+    }
+}
+
+#[test]
+fn fbm_noise_varies_spatially() {
+    // Sampling at a stride of 1.0 should not produce identical values.
+    let values: Vec<f32> = (0..20)
+        .map(|i| fbm(i as f32, 0.0, 0.0, 1234, 4, 2.5, 2.0, 0.5))
+        .collect();
+
+    let all_identical = values.windows(2).all(|w| w[0] == w[1]);
+    assert!(
+        !all_identical,
+        "fbm must produce varying values across spatial samples, but all 20 were identical"
+    );
+}
+
+// ── 5. LOD thresholds ─────────────────────────────────────────────────────────
+
+#[test]
+fn lod_0_within_50_units() {
+    let lod = compute_lod(Vec3::new(25.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod, 0, "distance 25 should map to LOD 0");
+
+    // Boundary: just under 50 is still LOD 0
+    let lod_boundary = compute_lod(Vec3::new(49.9, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_boundary, 0, "distance 49.9 should still be LOD 0");
+}
+
+#[test]
+fn lod_1_between_50_and_100() {
+    // Exactly 50.0 is NOT < 50.0, so it maps to LOD 1.
+    let lod_at_50 = compute_lod(Vec3::new(50.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_at_50, 1, "distance exactly 50 should map to LOD 1");
+
+    let lod_mid = compute_lod(Vec3::new(75.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_mid, 1, "distance 75 should map to LOD 1");
+
+    // Just under 100 is still LOD 1
+    let lod_near_100 = compute_lod(Vec3::new(99.9, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_near_100, 1, "distance 99.9 should still be LOD 1");
+}
+
+#[test]
+fn lod_2_beyond_100() {
+    // Exactly 100.0 is NOT < 100.0, so it maps to LOD 2.
+    let lod_at_100 = compute_lod(Vec3::new(100.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_at_100, 2, "distance exactly 100 should map to LOD 2");
+
+    let lod_far = compute_lod(Vec3::new(500.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_far, 2, "distance 500 should map to LOD 2");
+}
