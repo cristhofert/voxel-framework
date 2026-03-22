@@ -378,23 +378,33 @@ fn emit_quad<V: VoxelType>(
     uvs.push([0.0, h_uv]);
 
     // Two triangles with CCW winding when viewed from the normal direction.
-    // For positive faces (normal pointing outward), CCW is: 0-1-2, 0-2-3
-    // For negative faces (normal pointing inward from the other side), we
-    // need to reverse the winding: 0-2-1, 0-3-2
-    if face.positive {
+    // Bevy uses a right-hand coordinate system with CCW front faces.
+    //
+    // Cross-product analysis per face:
+    //   axis=0 (+X/-X) and axis=1 (+Y/-Y): positive faces need (0,2,1),(0,3,2)
+    //   and negative faces need (0,1,2),(0,2,3).
+    //
+    //   axis=2 (+Z/-Z): the u=X, v=Y tangent frame is left-handed relative to
+    //   +Z, so the winding must be inverted — positive Z needs (0,1,2),(0,2,3)
+    //   and negative Z needs (0,2,1),(0,3,2).
+    //
+    // A single XOR captures this: flip when (positive XOR axis==2) is false,
+    // i.e. use the "CCW" branch when face.positive != (face.axis == 2).
+    let ccw = face.positive != (face.axis == 2);
+    if ccw {
         indices.push(base_idx);
+        indices.push(base_idx + 2);
         indices.push(base_idx + 1);
-        indices.push(base_idx + 2);
         indices.push(base_idx);
-        indices.push(base_idx + 2);
         indices.push(base_idx + 3);
+        indices.push(base_idx + 2);
     } else {
         indices.push(base_idx);
-        indices.push(base_idx + 2);
         indices.push(base_idx + 1);
-        indices.push(base_idx);
-        indices.push(base_idx + 3);
         indices.push(base_idx + 2);
+        indices.push(base_idx);
+        indices.push(base_idx + 2);
+        indices.push(base_idx + 3);
     }
 }
 

@@ -36,7 +36,10 @@ pub use crate::world::{
 };
 
 // World interaction API
-pub use crate::world::{get_voxel_at, set_voxel_at, raycast, RaycastHit};
+pub use crate::world::{
+    get_voxel_at, set_voxel_at, raycast, RaycastHit,
+    sphere_overlaps_voxels, resolve_sphere_collision,
+};
 
 // Render
 pub use crate::render::{ChunkMaterial, ChunkMaterialConfig, ChunkRendered, RenderPlugin};

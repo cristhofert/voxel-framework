@@ -21,6 +21,7 @@ pub use systems::{chunk_despawn_system, chunk_mesh_system, lod_update_system};
 use bevy::prelude::*;
 
 use crate::chunk::CHUNK_SIZE;
+use crate::generator::GeneratorSystems;
 use crate::voxel::VoxelType;
 
 // ─── MeshPlugin ───────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ impl<V: VoxelType> Plugin for MeshPlugin<V> {
             Update,
             (
                 systems::lod_update_system::<V>,
-                systems::chunk_mesh_system::<V>,
+                systems::chunk_mesh_system::<V>.after(GeneratorSystems),
                 systems::chunk_despawn_system,
             ),
         );

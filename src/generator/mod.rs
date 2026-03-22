@@ -17,6 +17,13 @@ use bevy::prelude::*;
 use crate::chunk::Chunk;
 use crate::voxel::VoxelType;
 
+/// System set label for the generator pipeline.
+///
+/// `chunk_mesh_system` uses `.after(GeneratorSystems)` to guarantee it reads
+/// `ChunkModified` messages emitted in the same frame by `chunk_task_poll_system`.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GeneratorSystems;
+
 /// Trait for procedural chunk generation strategies.
 ///
 /// Implementors produce voxel data for a given chunk coordinate.
@@ -71,7 +78,9 @@ impl<V: VoxelType> Plugin for GeneratorPlugin<V> {
             (
                 systems::chunk_request_system::<V>,
                 systems::chunk_task_poll_system::<V>,
-            ),
+            )
+                .chain()
+                .in_set(GeneratorSystems),
         );
     }
 }

@@ -11,12 +11,14 @@
 //! Register [`WorldPlugin`] to get all resources and events registered on
 //! the Bevy `App` automatically.
 
+pub mod collision;
 pub mod config;
 pub mod persistence;
 pub mod raycast;
 pub mod systems;
 pub mod voxel_ops;
 
+pub use collision::{resolve_sphere_collision, sphere_overlaps_voxels};
 pub use config::{WorldConfig, WorldConfigPlugin};
 pub use persistence::{PersistenceConfig, PersistencePlugin, chunk_autosave_system, try_load_chunk};
 pub use raycast::{RaycastHit, raycast};
