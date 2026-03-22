@@ -85,5 +85,12 @@ pub use crate::ui::{
     UiPlugin,
 };
 
+// Player (6DOF jetpack)
+pub use crate::player::{
+    Player, PlayerConfig, PlayerPlugin,
+    player_look, player_move, player_resolve_collision, player_cursor_system,
+    PLAYER_RADIUS, PLAYER_HALF_HEIGHT,
+};
+
 // Top-level plugin
 pub use crate::VoxelPlugin;

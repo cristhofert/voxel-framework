@@ -53,6 +53,7 @@ pub mod generator;
 pub mod items;
 pub mod mesh;
 pub mod noise;
+pub mod player;
 pub mod prelude;
 pub mod render;
 pub mod skybox;
