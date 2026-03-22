@@ -56,6 +56,7 @@ pub mod noise;
 pub mod prelude;
 pub mod render;
 pub mod skybox;
+pub mod ui;
 pub mod voxel;
 pub mod world;
 
@@ -67,6 +68,7 @@ use items::hotbar::HotbarPlugin;
 use mesh::MeshPlugin;
 use render::RenderPlugin;
 use skybox::SkyboxPlugin;
+use ui::UiPlugin;
 use voxel::DefaultVoxel;
 use world::loading::LoadingPlugin;
 use world::mining::MiningPlugin;
@@ -119,5 +121,6 @@ impl Plugin for VoxelPlugin {
         app.add_plugins(SkyboxPlugin);
         app.add_plugins(SfxPlugin);
         app.add_plugins(HotbarPlugin);
+        app.add_plugins(UiPlugin);
     }
 }

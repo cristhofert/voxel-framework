@@ -76,5 +76,14 @@ pub use crate::items::{
     load_inventory, save_inventory,
 };
 
+// UI system
+pub use crate::ui::{
+    CrosshairConfig, CrosshairPlugin,
+    HotbarUiConfig, HotbarUiPlugin,
+    LoadingScreenConfig, LoadingScreenPlugin,
+    PickupNotificationConfig, PickupNotificationPlugin,
+    UiPlugin,
+};
+
 // Top-level plugin
 pub use crate::VoxelPlugin;
