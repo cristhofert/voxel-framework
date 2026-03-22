@@ -122,8 +122,37 @@ pub fn chunk_mesh_system<V: VoxelType>(
             }
         }
 
+        // Skip meshing entirely for all-air chunks — no render components needed.
+        if chunk.is_empty() {
+            if maybe_mesh3d.is_some() {
+                // Chunk was previously non-empty (e.g. all voxels mined out);
+                // strip render components so it becomes invisible.
+                commands.entity(entity).remove::<(
+                    Mesh3d,
+                    MeshMaterial3d<StandardMaterial>,
+                    ChunkRendered,
+                    ChunkLod,
+                )>();
+            }
+            continue;
+        }
+
         // Run the neighbor-aware greedy mesher at the effective LOD step.
         let new_mesh = generate_chunk_mesh_with_neighbors(chunk, &neighbors, effective_step);
+
+        if new_mesh.count_vertices() == 0 {
+            // Mesher produced no geometry (e.g. all faces are hidden by neighbors).
+            // Remove render components if they were previously attached.
+            if maybe_mesh3d.is_some() {
+                commands.entity(entity).remove::<(
+                    Mesh3d,
+                    MeshMaterial3d<StandardMaterial>,
+                    ChunkRendered,
+                    ChunkLod,
+                )>();
+            }
+            continue;
+        }
 
         if let Some(mesh3d) = maybe_mesh3d {
             // Update path: reuse the existing handle, replace asset data.

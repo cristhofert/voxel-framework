@@ -1,7 +1,7 @@
 seed = 42
 spawn_position = [0.0, 0.0, 0.0]
-load_distance = 150.0
-unload_distance = 200.0
+load_distance = 80.0
+unload_distance = 120.0
 
 [asteroids]
 seed = 42
@@ -12,3 +12,8 @@ max_radius = 40.0
 [lighting]
 sun_illuminance = 15000.0
 ambient_brightness = 0.1
+
+[skybox]
+mode = "starfield"
+star_count = 800
+star_radius = 900.0
