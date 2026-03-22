@@ -618,6 +618,8 @@ impl<I: ItemType> Default for PickupNotificationPlugin<I> {
 impl<I: ItemType> Plugin for PickupNotificationPlugin<I> {
     fn build(&self, app: &mut App) {
         app.init_resource::<PickupNotificationConfig>();
+        // Ensure the message is registered even if DropsPlugin<I> is not used.
+        app.add_message::<ItemPickedUp<I>>();
         app.add_systems(Startup, spawn_notification_container);
         app.add_systems(
             Update,
