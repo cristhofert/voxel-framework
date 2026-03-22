@@ -76,6 +76,7 @@ fn setup_skybox_system(
 ) {
     match &config.mode {
         SkyboxMode::Starfield(cfg) => {
+            commands.insert_resource(ClearColor(Color::BLACK));
             spawn_starfield(&mut commands, &mut meshes, &mut materials, cfg);
         }
         SkyboxMode::Color(color) => {
