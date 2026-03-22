@@ -60,5 +60,21 @@ pub use crate::world::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldR
 pub use crate::render::{ChunkMaterial, ChunkMaterialConfig, ChunkRendered, RenderPlugin};
 pub use crate::render::material::chunk_aabb;
 
+// Fragment system
+pub use crate::fragments::{Fragment, FragmentConfig, FragmentPlugin};
+
+// Audio SFX system
+pub use crate::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent, SfxPlugin, SfxRequest};
+
+// Skybox
+pub use crate::skybox::{SkyboxConfig, SkyboxMode, SkyboxPlugin, StarfieldConfig};
+
+// Items system
+pub use crate::items::{
+    DefaultItem, DroppedItem, DropsPlugin, DropTable, HotbarPlugin, HotbarSelectionChanged,
+    HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp, ItemType, MagnetConfig,
+    load_inventory, save_inventory,
+};
+
 // Top-level plugin
 pub use crate::VoxelPlugin;

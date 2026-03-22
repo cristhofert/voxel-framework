@@ -9,6 +9,7 @@
 use bevy::prelude::*;
 
 use crate::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
+use crate::skybox::{SkyboxConfig, SkyboxMode, StarfieldConfig};
 use crate::world::ChunkManager;
 
 // ─── Config structs ───────────────────────────────────────────────────────────
@@ -37,6 +38,30 @@ impl Default for AsteroidConfigToml {
             count: 20,
             min_radius: 15.0,
             max_radius: 40.0,
+        }
+    }
+}
+
+/// Skybox parameters as read from TOML.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SkyboxConfigToml {
+    /// "starfield" or "color". Default: "starfield"
+    pub mode: String,
+    /// Number of stars (used when mode = "starfield"). Default: 800
+    pub star_count: u32,
+    /// Distance of stars from origin (used when mode = "starfield"). Default: 900.0
+    pub star_radius: f32,
+    /// Background color as RGBA (used when mode = "color"). Default: None
+    pub background_color: Option<[f32; 4]>,
+}
+
+impl Default for SkyboxConfigToml {
+    fn default() -> Self {
+        Self {
+            mode: "starfield".to_string(),
+            star_count: 800,
+            star_radius: 900.0,
+            background_color: None,
         }
     }
 }
@@ -86,6 +111,9 @@ pub struct WorldConfig {
     pub asteroids: AsteroidConfigToml,
     /// Scene lighting parameters.
     pub lighting: LightingConfig,
+    /// Skybox configuration.
+    #[serde(default)]
+    pub skybox: SkyboxConfigToml,
 }
 
 impl Default for WorldConfig {
@@ -97,6 +125,7 @@ impl Default for WorldConfig {
             unload_distance: 200.0,
             asteroids: AsteroidConfigToml::default(),
             lighting: LightingConfig::default(),
+            skybox: SkyboxConfigToml::default(),
         }
     }
 }
@@ -115,6 +144,26 @@ impl WorldConfig {
             max_radius: self.asteroids.max_radius,
             ..AsteroidConfig::default()
         })
+    }
+
+    /// Converts [`SkyboxConfigToml`] into a [`SkyboxConfig`] runtime resource.
+    ///
+    /// - `"starfield"` → [`SkyboxMode::Starfield`] using `star_count` and `star_radius`.
+    /// - `"color"` → [`SkyboxMode::Color`] using `background_color` (falls back to black).
+    /// - Any other value falls back to the default starfield.
+    pub fn build_skybox_config(&self) -> SkyboxConfig {
+        let mode = match self.skybox.mode.as_str() {
+            "color" => {
+                let [r, g, b, a] = self.skybox.background_color.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                SkyboxMode::Color(Color::srgba(r, g, b, a))
+            }
+            _ => SkyboxMode::Starfield(StarfieldConfig {
+                count: self.skybox.star_count,
+                radius: self.skybox.star_radius,
+                ..StarfieldConfig::default()
+            }),
+        };
+        SkyboxConfig { mode }
     }
 
     /// Loads a [`WorldConfig`] from a TOML file at `path`.
@@ -212,6 +261,11 @@ max_radius = 50.0
 [lighting]
 sun_illuminance = 20000.0
 ambient_brightness = 0.2
+
+[skybox]
+mode = "starfield"
+star_count = 800
+star_radius = 900.0
 "#;
 
         let config = WorldConfig::from_toml_str(toml).expect("TOML should parse without error");

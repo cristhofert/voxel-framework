@@ -46,19 +46,27 @@
 //!
 //! See [`prelude`] for the most commonly used re-exports.
 
+pub mod audio;
 pub mod chunk;
+pub mod fragments;
 pub mod generator;
+pub mod items;
 pub mod mesh;
 pub mod noise;
 pub mod prelude;
 pub mod render;
+pub mod skybox;
 pub mod voxel;
 pub mod world;
 
 use bevy::prelude::*;
 
+use audio::SfxPlugin;
+use fragments::FragmentPlugin;
+use items::hotbar::HotbarPlugin;
 use mesh::MeshPlugin;
 use render::RenderPlugin;
+use skybox::SkyboxPlugin;
 use voxel::DefaultVoxel;
 use world::loading::LoadingPlugin;
 use world::mining::MiningPlugin;
@@ -107,5 +115,9 @@ impl Plugin for VoxelPlugin {
         app.add_plugins(MiningPlugin);
         app.add_plugins(PlacementPlugin);
         app.add_plugins(LoadingPlugin);
+        app.add_plugins(FragmentPlugin);
+        app.add_plugins(SkyboxPlugin);
+        app.add_plugins(SfxPlugin);
+        app.add_plugins(HotbarPlugin);
     }
 }
