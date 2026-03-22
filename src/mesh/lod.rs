@@ -1,22 +1,21 @@
 //! LOD level computation for chunk meshing.
 //!
 //! Provides [`compute_lod`], which maps the Euclidean distance between a
-//! chunk's world-space center and the viewer to one of three discrete levels:
+//! chunk's world-space center and the viewer to one of two discrete levels:
 //!
-//! | Level | Distance       | Greedy-mesh step |
-//! |-------|----------------|-----------------|
-//! | `0`   | < 50.0 units   | 1 (full detail) |
-//! | `1`   | 50–100 units   | 2 (half detail) |
-//! | `2`   | > 100 units    | 4 (coarse)      |
+//! | Level | Distance        | Greedy-mesh step |
+//! |-------|-----------------|-----------------|
+//! | `0`   | < 200.0 units   | 1 (full detail) |
+//! | `1`   | ≥ 200.0 units   | 2 (half detail) |
+//!
+//! Only two levels are used to avoid visible seams and large flat quads
+//! that appear with more aggressive LOD steps.
 
 use bevy::prelude::Vec3;
 
-/// Distance threshold below which LOD 0 (full detail) is used.
-pub const LOD0_MAX_DISTANCE: f32 = 50.0;
-
-/// Distance threshold below which LOD 1 (reduced detail) is used.
-/// Beyond this distance LOD 2 (coarse) is used.
-pub const LOD1_MAX_DISTANCE: f32 = 100.0;
+/// Distance threshold below which LOD 0 (full detail, step=1) is used.
+/// At or beyond this distance LOD 1 (step=2) is used.
+pub const LOD0_MAX_DISTANCE: f32 = 200.0;
 
 /// Compute the LOD level for a chunk given the chunk's world-space position
 /// and the viewer's world-space position.
@@ -27,18 +26,15 @@ pub const LOD1_MAX_DISTANCE: f32 = 100.0;
 ///
 /// # Returns
 ///
-/// * `0` — distance < 50.0 units
-/// * `1` — distance 50–100 units
-/// * `2` — distance > 100 units
+/// * `0` — distance < 200.0 units (step=1, full detail)
+/// * `1` — distance ≥ 200.0 units (step=2, half detail)
 #[inline]
 pub fn compute_lod(chunk_world_pos: Vec3, viewer_pos: Vec3) -> u8 {
     let dist = chunk_world_pos.distance(viewer_pos);
     if dist < LOD0_MAX_DISTANCE {
         0
-    } else if dist < LOD1_MAX_DISTANCE {
-        1
     } else {
-        2
+        1
     }
 }
 
@@ -48,8 +44,8 @@ pub fn compute_lod(chunk_world_pos: Vec3, viewer_pos: Vec3) -> u8 {
 /// by at least `hysteresis` units.
 ///
 /// Rules:
-/// - Upgrade to finer LOD (e.g., 1→0): distance must be < threshold - hysteresis
-/// - Downgrade to coarser LOD (e.g., 0→1): distance must be > threshold + hysteresis
+/// - Upgrade to finer LOD (1→0): distance must be < LOD0_MAX_DISTANCE - hysteresis
+/// - Downgrade to coarser LOD (0→1): distance must be > LOD0_MAX_DISTANCE + hysteresis
 pub fn compute_lod_with_hysteresis(
     chunk_world_pos: Vec3,
     viewer_pos: Vec3,
@@ -66,23 +62,13 @@ pub fn compute_lod_with_hysteresis(
                 0
             }
         }
-        1 => {
+        _ => {
             if dist < LOD0_MAX_DISTANCE - hysteresis {
                 0
-            } else if dist > LOD1_MAX_DISTANCE + hysteresis {
-                2
             } else {
                 1
             }
         }
-        2 => {
-            if dist < LOD1_MAX_DISTANCE - hysteresis {
-                1
-            } else {
-                2
-            }
-        }
-        _ => compute_lod(chunk_world_pos, viewer_pos),
     }
 }
 
@@ -91,16 +77,10 @@ pub fn compute_lod_with_hysteresis(
 /// | LOD | Step |
 /// |-----|------|
 /// | 0   | 1    |
-/// | 1   | 2    |
-/// | 2   | 4    |
-/// | _   | 4    | (any unknown level falls back to coarsest)
+/// | _   | 2    | (any level ≥ 1 uses half-detail)
 #[inline]
 pub fn lod_to_step(lod: u8) -> usize {
-    match lod {
-        0 => 1,
-        1 => 2,
-        _ => 4,
-    }
+    if lod == 0 { 1 } else { 2 }
 }
 
 #[cfg(test)]
@@ -115,60 +95,54 @@ mod tests {
     }
 
     #[test]
-    fn mid_range_chunk_is_lod1() {
-        let lod = compute_lod(Vec3::new(75.0, 0.0, 0.0), Vec3::ZERO);
-        assert_eq!(lod, 1);
-    }
-
-    #[test]
-    fn far_chunk_is_lod2() {
+    fn mid_range_chunk_is_still_lod0() {
+        // 150 units is well within the 200-unit threshold.
         let lod = compute_lod(Vec3::new(150.0, 0.0, 0.0), Vec3::ZERO);
-        assert_eq!(lod, 2);
+        assert_eq!(lod, 0);
     }
 
     #[test]
-    fn boundary_at_50_is_lod1() {
-        // At exactly 50.0 distance, LOD should be 1 (not < 50.0).
-        let lod = compute_lod(Vec3::new(50.0, 0.0, 0.0), Vec3::ZERO);
+    fn far_chunk_is_lod1() {
+        let lod = compute_lod(Vec3::new(250.0, 0.0, 0.0), Vec3::ZERO);
         assert_eq!(lod, 1);
     }
 
     #[test]
-    fn boundary_at_100_is_lod2() {
-        // At exactly 100.0 distance, LOD should be 2 (not < 100.0).
-        let lod = compute_lod(Vec3::new(100.0, 0.0, 0.0), Vec3::ZERO);
-        assert_eq!(lod, 2);
+    fn boundary_at_200_is_lod1() {
+        // At exactly 200.0 distance, LOD should be 1 (not < 200.0).
+        let lod = compute_lod(Vec3::new(200.0, 0.0, 0.0), Vec3::ZERO);
+        assert_eq!(lod, 1);
     }
 
     // ── hysteresis tests ──────────────────────────────────────────────────────
 
     #[test]
     fn test_hysteresis_prevents_upgrade_at_boundary() {
-        // At exactly 50.0 units, current LOD is 1.
-        // With hysteresis=5.0, upgrade requires dist < 45.0 → stays at 1.
-        let lod = compute_lod_with_hysteresis(Vec3::new(50.0, 0.0, 0.0), Vec3::ZERO, 1, 5.0);
+        // At 200.0 units, current LOD is 1.
+        // With hysteresis=5.0, upgrade requires dist < 195.0 → stays at 1.
+        let lod = compute_lod_with_hysteresis(Vec3::new(200.0, 0.0, 0.0), Vec3::ZERO, 1, 5.0);
         assert_eq!(lod, 1);
     }
 
     #[test]
     fn test_hysteresis_allows_upgrade_well_inside() {
-        // At 44.0 units (< 50.0 - 5.0 = 45.0), current LOD is 1 → upgrades to 0.
-        let lod = compute_lod_with_hysteresis(Vec3::new(44.0, 0.0, 0.0), Vec3::ZERO, 1, 5.0);
+        // At 194.0 units (< 200.0 - 5.0 = 195.0), current LOD is 1 → upgrades to 0.
+        let lod = compute_lod_with_hysteresis(Vec3::new(194.0, 0.0, 0.0), Vec3::ZERO, 1, 5.0);
         assert_eq!(lod, 0);
     }
 
     #[test]
     fn test_hysteresis_prevents_downgrade_at_boundary() {
-        // At exactly 50.0 units, current LOD is 0.
-        // With hysteresis=5.0, downgrade requires dist > 55.0 → stays at 0.
-        let lod = compute_lod_with_hysteresis(Vec3::new(50.0, 0.0, 0.0), Vec3::ZERO, 0, 5.0);
+        // At 200.0 units, current LOD is 0.
+        // With hysteresis=5.0, downgrade requires dist > 205.0 → stays at 0.
+        let lod = compute_lod_with_hysteresis(Vec3::new(200.0, 0.0, 0.0), Vec3::ZERO, 0, 5.0);
         assert_eq!(lod, 0);
     }
 
     #[test]
     fn test_hysteresis_allows_downgrade_well_outside() {
-        // At 56.0 units (> 50.0 + 5.0 = 55.0), current LOD is 0 → downgrades to 1.
-        let lod = compute_lod_with_hysteresis(Vec3::new(56.0, 0.0, 0.0), Vec3::ZERO, 0, 5.0);
+        // At 206.0 units (> 200.0 + 5.0 = 205.0), current LOD is 0 → downgrades to 1.
+        let lod = compute_lod_with_hysteresis(Vec3::new(206.0, 0.0, 0.0), Vec3::ZERO, 0, 5.0);
         assert_eq!(lod, 1);
     }
 
@@ -176,7 +150,6 @@ mod tests {
     fn lod_to_step_values() {
         assert_eq!(lod_to_step(0), 1);
         assert_eq!(lod_to_step(1), 2);
-        assert_eq!(lod_to_step(2), 4);
-        assert_eq!(lod_to_step(99), 4); // fallback
+        assert_eq!(lod_to_step(99), 2); // fallback to half-detail
     }
 }

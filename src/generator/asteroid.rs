@@ -139,7 +139,6 @@ impl AsteroidGenerator {
                 let hy = hash3(i as i32, 1, 0, per_seed);
                 let hz = hash3(i as i32, 2, 0, per_seed);
                 let hr = hash3(i as i32, 3, 0, per_seed);
-                let hf = hash3(i as i32, 4, 0, per_seed);
 
                 let spread_xz = config.max_radius * 10.0;
                 let spread_y = config.max_radius * 5.0;
@@ -149,9 +148,8 @@ impl AsteroidGenerator {
                 let z = (hz * 2.0 - 1.0) * spread_xz;
 
                 let r = config.min_radius + hr * (config.max_radius - config.min_radius);
-                let flatten = 0.5 + hf * 0.5; // [0.5, 1.0]
 
-                (Vec3::new(x, y, z), r, flatten)
+                (Vec3::new(x, y, z), r, 1.0_f32)
             };
 
             asteroids.push(Asteroid {
