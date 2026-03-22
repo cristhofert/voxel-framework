@@ -16,7 +16,7 @@ pub mod systems;
 
 pub use greedy::generate_chunk_mesh;
 pub use neighbor::generate_chunk_mesh_with_neighbors;
-pub use systems::{chunk_despawn_system, chunk_mesh_system, lod_update_system};
+pub use systems::{chunk_mesh_system, chunk_despawn_system, lod_update_system};
 
 use bevy::prelude::*;
 
@@ -68,7 +68,7 @@ impl<V: VoxelType> Plugin for MeshPlugin<V> {
             (
                 systems::lod_update_system::<V>,
                 systems::chunk_mesh_system::<V>.after(GeneratorSystems),
-                systems::chunk_despawn_system,
+                systems::chunk_despawn_system::<V>,
             ),
         );
     }

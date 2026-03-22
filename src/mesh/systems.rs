@@ -10,15 +10,19 @@
 //! rendered chunk based on distance to the viewer, and emits [`ChunkModified`]
 //! when the level changes so that `chunk_mesh_system` regenerates the mesh.
 
+use std::path::PathBuf;
+
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
 use crate::chunk::{Chunk, ChunkCoordComp, ChunkLod, CHUNK_SIZE};
+use crate::chunk::persistence as chunk_persistence;
 use crate::render::material::{ChunkMaterial, ChunkRendered};
 use crate::voxel::VoxelType;
 use crate::world::{ChunkManager, ChunkModified, ChunkUnloadRequest, ViewerPosition};
+use crate::world::persistence::PersistenceConfig;
 
-use super::generate_chunk_mesh;
+use super::{ChunkNeighbors, generate_chunk_mesh_with_neighbors};
 use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
 
 // ─── chunk_mesh_system ────────────────────────────────────────────────────────
@@ -30,10 +34,11 @@ use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
 /// 1. Looks up the entity in [`ChunkManager`].
 /// 2. Fetches its [`Chunk<V>`] component.
 /// 3. Computes the LOD level from the viewer distance using [`compute_lod`].
-/// 4. Runs [`generate_chunk_mesh`] at the step size for that LOD level.
-/// 5. **Update path** — if the entity already has a `Mesh3d` handle, replaces
+/// 4. Builds a [`ChunkNeighbors`] struct from the six adjacent chunks.
+/// 5. Runs [`generate_chunk_mesh_with_neighbors`] at the step size for that LOD level.
+/// 6. **Update path** — if the entity already has a `Mesh3d` handle, replaces
 ///    the mesh asset data in-place and updates the [`ChunkLod`] component.
-/// 6. **First-time path** — otherwise, allocates a new handle and inserts
+/// 7. **First-time path** — otherwise, allocates a new handle and inserts
 ///    `Mesh3d`, `MeshMaterial3d<StandardMaterial>`, `Transform`, `Visibility`,
 ///    AABB, [`ChunkRendered`], and [`ChunkLod`].
 ///
@@ -55,6 +60,21 @@ pub fn chunk_mesh_system<V: VoxelType>(
 
     let chunk_size_f = CHUNK_SIZE as f32;
 
+    // Face direction offsets: index matches ChunkNeighbors.faces convention.
+    // [+Y, -Y, +X, -X, +Z, -Z]
+    const NEIGHBOR_OFFSETS: [IVec3; 6] = [
+        IVec3::new(0, 1, 0),  // 0: +Y
+        IVec3::new(0, -1, 0), // 1: -Y
+        IVec3::new(1, 0, 0),  // 2: +X
+        IVec3::new(-1, 0, 0), // 3: -X
+        IVec3::new(0, 0, 1),  // 4: +Z
+        IVec3::new(0, 0, -1), // 5: -Z
+    ];
+
+    // For each face index i, the adjacent chunk's face that touches ours is
+    // the opposite direction. The face convention pairs are (0,1), (2,3), (4,5),
+    // so opposite = i ^ 1.
+
     for &ChunkModified(coord) in modified_reader.read() {
         let Some(entity) = manager.get_entity(coord) else {
             // Entity not registered — task may have been cancelled or coord
@@ -70,10 +90,40 @@ pub fn chunk_mesh_system<V: VoxelType>(
         // Compute LOD from the chunk center to the viewer.
         let chunk_center = coord.as_vec3() * chunk_size_f + Vec3::splat(chunk_size_f * 0.5);
         let lod = compute_lod(chunk_center, viewer.position);
-        let step = lod_to_step(lod);
+        let lod_step = lod_to_step(lod);
 
-        // Run the greedy mesher at the computed LOD step.
-        let new_mesh = generate_chunk_mesh(chunk, step);
+        // Clamp the step to the minimum among this chunk and all loaded neighbors
+        // to prevent border cracks when adjacent chunks have finer LOD levels.
+        let effective_step = {
+            let mut min_step = lod_step;
+            for &offset in &NEIGHBOR_OFFSETS {
+                let neighbor_coord = coord + offset;
+                if let Some(neighbor_entity) = manager.get_entity(neighbor_coord) {
+                    if let Ok((_, _, Some(neighbor_lod))) = chunks.get(neighbor_entity) {
+                        let neighbor_step = lod_to_step(neighbor_lod.0);
+                        min_step = min_step.min(neighbor_step);
+                    }
+                }
+            }
+            min_step
+        };
+
+        // Build ChunkNeighbors from the six adjacent loaded chunks.
+        let mut neighbors = ChunkNeighbors::<V>::default();
+        for (face_index, &offset) in NEIGHBOR_OFFSETS.iter().enumerate() {
+            let neighbor_coord = coord + offset;
+            if let Some(neighbor_entity) = manager.get_entity(neighbor_coord) {
+                if let Ok((neighbor_chunk, _, _)) = chunks.get(neighbor_entity) {
+                    // The face of the neighbor that is adjacent to our face_index
+                    // is the opposite direction: face_index ^ 1.
+                    let opposite_face = face_index ^ 1;
+                    neighbors.faces[face_index] = Some(neighbor_chunk.border_slice(opposite_face));
+                }
+            }
+        }
+
+        // Run the neighbor-aware greedy mesher at the effective LOD step.
+        let new_mesh = generate_chunk_mesh_with_neighbors(chunk, &neighbors, effective_step);
 
         if let Some(mesh3d) = maybe_mesh3d {
             // Update path: reuse the existing handle, replace asset data.
@@ -151,6 +201,23 @@ pub fn lod_update_system<V: VoxelType>(
                 .find_map(|(coord, e)| if e == entity { Some(coord) } else { None })
             {
                 modified_writer.write(ChunkModified(coord));
+
+                // Also remesh each loaded neighbor: their effective_step may
+                // change now that this chunk's LOD has changed.
+                const NEIGHBOR_OFFSETS: [IVec3; 6] = [
+                    IVec3::new(0, 1, 0),
+                    IVec3::new(0, -1, 0),
+                    IVec3::new(1, 0, 0),
+                    IVec3::new(-1, 0, 0),
+                    IVec3::new(0, 0, 1),
+                    IVec3::new(0, 0, -1),
+                ];
+                for &offset in &NEIGHBOR_OFFSETS {
+                    let neighbor_coord = coord + offset;
+                    if manager.is_loaded(neighbor_coord) {
+                        modified_writer.write(ChunkModified(neighbor_coord));
+                    }
+                }
             }
         }
     }
@@ -158,16 +225,53 @@ pub fn lod_update_system<V: VoxelType>(
 
 // ─── chunk_despawn_system ─────────────────────────────────────────────────────
 
-/// Responds to [`ChunkUnloadRequest`] messages by despawning chunk entities.
+/// Responds to [`ChunkUnloadRequest`] messages by saving and despawning chunk entities.
 ///
-/// After despawning, the chunk is also removed from [`ChunkManager`] so the
-/// streaming system is free to re-request the same coord if the viewer returns.
-pub fn chunk_despawn_system(
+/// For each unload request this system:
+/// 1. If [`PersistenceConfig::auto_save`] is `true`, saves the chunk's voxel
+///    data to disk before the entity is despawned.
+/// 2. Removes the chunk from [`ChunkManager`] so the streaming system can
+///    re-request the same coord if the viewer returns.
+/// 3. Despawns the entity.
+///
+/// Save errors are reported with `eprintln!` and do not panic.
+///
+/// This system is generic over `V` because it must query the [`Chunk<V>`]
+/// component to serialise voxel data. It is registered by [`MeshPlugin<V>`].
+pub fn chunk_despawn_system<V: VoxelType>(
     mut commands: Commands,
     mut unload_reader: MessageReader<ChunkUnloadRequest>,
     mut manager: ResMut<ChunkManager>,
+    config: Res<PersistenceConfig>,
+    chunks: Query<&Chunk<V>>,
 ) {
     for &ChunkUnloadRequest(coord) in unload_reader.read() {
+        // Save before unregistering so the entity is still valid.
+        if config.auto_save {
+            if let Some(entity) = manager.get_entity(coord) {
+                if let Ok(chunk) = chunks.get(entity) {
+                    let filename = chunk_persistence::chunk_filename(coord);
+                    let path: PathBuf = [config.save_dir.as_str(), &filename].iter().collect();
+
+                    if let Some(parent) = path.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            eprintln!(
+                                "voxel-framework: failed to create chunk save directory '{}': {e}",
+                                parent.display()
+                            );
+                        }
+                    }
+
+                    if let Err(e) = chunk_persistence::save_chunk(chunk, &path) {
+                        eprintln!(
+                            "voxel-framework: failed to save chunk {coord} on unload to '{}': {e}",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+
         if let Some(entity) = manager.unregister(coord) {
             commands.entity(entity).despawn();
         }

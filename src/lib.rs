@@ -60,7 +60,9 @@ use bevy::prelude::*;
 use mesh::MeshPlugin;
 use render::RenderPlugin;
 use voxel::DefaultVoxel;
+use world::loading::LoadingPlugin;
 use world::mining::MiningPlugin;
+use world::placement::PlacementPlugin;
 use world::occlusion::OcclusionPlugin;
 use world::{WorldConfigPlugin, WorldPlugin};
 
@@ -103,5 +105,7 @@ impl Plugin for VoxelPlugin {
         app.add_plugins(MeshPlugin::<DefaultVoxel>::new());
         app.add_plugins(OcclusionPlugin::<DefaultVoxel>::new());
         app.add_plugins(MiningPlugin);
+        app.add_plugins(PlacementPlugin);
+        app.add_plugins(LoadingPlugin);
     }
 }

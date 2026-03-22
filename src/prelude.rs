@@ -48,6 +48,14 @@ pub use crate::world::{
     tick_mining, stop_mining, MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
 };
 
+// Placement API
+pub use crate::world::{
+    try_place_voxel, tick_placement, PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced,
+};
+
+// Loading API
+pub use crate::world::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldReady};
+
 // Render
 pub use crate::render::{ChunkMaterial, ChunkMaterialConfig, ChunkRendered, RenderPlugin};
 pub use crate::render::material::chunk_aabb;

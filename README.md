@@ -6,15 +6,22 @@
 
 - 16×16×16 voxel chunks with efficient flat-array storage
 - Greedy meshing with LOD support and neighbor-aware face culling
+- Seam-free borders via neighbor-aware meshing (default in the live system)
 - Pluggable `ChunkGenerator` trait — bring your own world generation
 - Built-in `AsteroidGenerator` with FBM noise and mineral distribution
 - World streaming — automatic chunk load/unload based on viewer position
+- Save-on-unload — chunks written to disk when streaming out
 - PBR rendering via Bevy's `StandardMaterial` with vertex colors
 - Binary chunk persistence
 - Dynamic LOD (3 levels based on viewer distance)
 - Auto-save chunk persistence (optional, disk-backed)
 - TOML world configuration via `world.toml`
 - Coordinate utilities for world/chunk/voxel space conversions
+- Occlusion culling — chunks surrounded by solid neighbors are auto-hidden
+- Capsule-voxel collision for player movement
+- Mining API — break-time tracking and `VoxelBroken` events
+- Block placement API — cooldown tracking and `VoxelPlaced` events
+- Loading progress — `LoadingProgress` messages and a `WorldReady` event for loading screens
 
 ## Quick Start
 
@@ -96,6 +103,11 @@ cargo run --example basic_world
 | `generator::asteroid` | `AsteroidGenerator` with FBM surface deformation and mineral veins |
 | `mesh` | Greedy meshing (`generate_chunk_mesh`, `generate_chunk_mesh_with_neighbors`), `MeshPlugin`, LOD computation |
 | `world` | `ChunkManager`, `ViewerPosition`, lifecycle events, streaming system, `WorldPlugin`, `WorldConfig`, `PersistencePlugin` |
+| `world/occlusion` | `OcclusionPlugin`, `is_chunk_occluded` — hides chunks fully enclosed by solid neighbors |
+| `world/collision` | Sphere and capsule collision detection and resolution against solid voxels |
+| `world/mining` | `MiningPlugin`, `MiningConfig`, `MiningState`, `tick_mining`, `stop_mining`, `VoxelBroken`, `MiningProgress` |
+| `world/placement` | `PlacementPlugin`, `PlacementConfig`, `PlacementState`, `try_place_voxel`, `tick_placement`, `VoxelPlaced` |
+| `world/loading` | `LoadingPlugin`, `LoadingProgress`, `WorldReady`, `WorldLoadingState` |
 | `render` | Shared `StandardMaterial` for vertex-colored chunks, `RenderPlugin` |
 | `prelude` | Convenience re-export of all public types |
 
@@ -158,7 +170,7 @@ App::new()
 
 ## Persistence
 
-`PersistencePlugin` wires chunk auto-save into the Bevy game loop. Every time a `ChunkModified` event fires, the affected chunk is written to disk in binary format.
+`PersistencePlugin` wires chunk auto-save into the Bevy game loop. Every time a `ChunkModified` event fires, the affected chunk is written to disk in binary format. Chunks are also saved when they stream out of range (save-on-unload).
 
 ```rust
 use voxel_framework::prelude::*;
@@ -218,6 +230,145 @@ use voxel_framework::prelude::*;
 // chunk_pos is the world-space position of the chunk (e.g. from chunk_center())
 let lod: u8 = voxel_framework::mesh::lod::compute_lod(chunk_pos, viewer_pos);
 let step: usize = voxel_framework::mesh::lod::lod_to_step(lod);
+```
+
+## Occlusion Culling
+
+`OcclusionPlugin` hides any chunk whose six face-adjacent neighbors are all fully solid. Because none of that chunk's border faces are visible, its mesh is set to `Visibility::Hidden` automatically and restored when a neighbor changes.
+
+```rust
+use voxel_framework::prelude::*;
+
+App::new()
+    .add_plugins(DefaultPlugins)
+    .add_plugins(VoxelPlugin)
+    .add_plugins(OcclusionPlugin::<DefaultVoxel>::new())
+    .run();
+```
+
+You can also query occlusion directly without the plugin:
+
+```rust
+use voxel_framework::prelude::*;
+
+let occluded = is_chunk_occluded::<DefaultVoxel>(coord, &manager, &chunks);
+```
+
+## Mining & Placement
+
+Both systems are pure-function APIs — no hidden Bevy systems are injected. Register the plugins to initialize resources and messages, then call the free functions from your own systems.
+
+```rust
+App::new()
+    .add_plugins(MiningPlugin)
+    .add_plugins(PlacementPlugin);
+```
+
+### Mining
+
+`tick_mining` is called every frame while the mine button is held. It accumulates elapsed time against `MiningConfig::break_time`, emits `MiningProgress` each frame, and emits `VoxelBroken` (plus `ChunkModified` to trigger remeshing) when the voxel breaks.
+
+```rust
+fn my_mining_system(
+    time: Res<Time>,
+    mut state: ResMut<MiningState>,
+    config: Res<MiningConfig>,
+    manager: Res<ChunkManager>,
+    mut chunks: Query<&mut Chunk<DefaultVoxel>>,
+    mut broken: MessageWriter<VoxelBroken>,
+    mut progress: MessageWriter<MiningProgress>,
+    mut modified: MessageWriter<ChunkModified>,
+) {
+    // Call when mine button held:
+    tick_mining(target_chunk, target_local, time.delta_secs(),
+        &mut state, &config, &manager, &mut chunks,
+        &mut broken, &mut progress, &mut modified);
+}
+```
+
+Call `stop_mining` when the button is released to reset progress:
+
+```rust
+stop_mining(&mut state);
+```
+
+Override break time via `MiningConfig`:
+
+```rust
+app.insert_resource(MiningConfig { break_time: 2.0 });
+```
+
+### Placement
+
+`try_place_voxel` is called once when the place button is pressed. It returns `false` if the cooldown has not expired or the target voxel is already solid. `tick_placement` advances the cooldown timer and must be called every frame.
+
+```rust
+fn my_placement_system(
+    time: Res<Time>,
+    mut state: ResMut<PlacementState>,
+    config: Res<PlacementConfig>,
+    manager: Res<ChunkManager>,
+    mut chunks: Query<&mut Chunk<DefaultVoxel>>,
+    mut placed: MessageWriter<VoxelPlaced>,
+    mut modified: MessageWriter<ChunkModified>,
+) {
+    // Advance cooldown every frame:
+    tick_placement(time.delta_secs(), &mut state, &config);
+
+    // Call once on button press:
+    try_place_voxel(target_chunk, target_local, DefaultVoxel::Rock,
+        &mut state, &config, &manager, &mut chunks,
+        &mut placed, &mut modified);
+}
+```
+
+Override cooldown via `PlacementConfig`:
+
+```rust
+app.insert_resource(PlacementConfig { cooldown: 0.5 });
+```
+
+## Loading Screen
+
+`LoadingPlugin` tracks the initial chunk load and emits two message types:
+
+- `LoadingProgress` — fired every frame while loading, carries `loaded`, `total`, and `progress` (0.0–1.0).
+- `WorldReady` — fired exactly once when all chunks within `load_distance` are loaded for the first time.
+
+```rust
+App::new()
+    .add_plugins(VoxelPlugin)
+    .add_plugins(LoadingPlugin);
+```
+
+Detect `WorldReady` to transition out of a loading screen:
+
+```rust
+fn loading_system(mut ready: MessageReader<WorldReady>) {
+    for _ in ready.read() {
+        // Transition out of loading screen
+    }
+}
+```
+
+Drive a progress bar with `LoadingProgress`:
+
+```rust
+fn progress_system(mut progress_events: MessageReader<LoadingProgress>) {
+    for ev in progress_events.read() {
+        println!("Loading: {}/{} ({:.0}%)", ev.loaded, ev.total, ev.progress * 100.0);
+    }
+}
+```
+
+`WorldLoadingState` is also available as a resource if you prefer polling over event handling:
+
+```rust
+fn check_ready(state: Res<WorldLoadingState>) {
+    if state.ready {
+        // world is loaded
+    }
+}
 ```
 
 ## Coordinate Utilities
