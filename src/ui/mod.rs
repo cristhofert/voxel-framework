@@ -628,6 +628,9 @@ impl<I: ItemType> Plugin for PickupNotificationPlugin<I> {
     }
 }
 
+mod pause_menu;
+pub use pause_menu::{PauseMenuPlugin, PauseMenuState};
+
 // ─── UiPlugin (umbrella) ──────────────────────────────────────────────────────
 
 use crate::items::inventory::DefaultItem;
