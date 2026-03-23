@@ -77,15 +77,49 @@ use world::placement::PlacementPlugin;
 use world::occlusion::OcclusionPlugin;
 use world::{WorldConfigPlugin, WorldPlugin};
 
-/// Top-level plugin that registers all voxel framework systems and resources
-/// for the default [`DefaultVoxel`] type.
+/// Core voxel engine plugin — pure engine systems with no game-specific content.
 ///
-/// Adds the following sub-plugins:
+/// Registers the following sub-plugins:
 ///
-/// - [`WorldPlugin`] — [`world::ChunkManager`], [`world::ViewerPosition`], and
-///   lifecycle events plus the streaming system.
+/// - [`WorldPlugin`] — chunk manager, viewer position, lifecycle events and streaming.
+/// - [`WorldConfigPlugin`] — world configuration resource.
 /// - [`RenderPlugin<DefaultVoxel>`] — shared chunk material and startup system.
 /// - [`MeshPlugin<DefaultVoxel>`] — mesh generation and chunk despawn systems.
+/// - [`OcclusionPlugin<DefaultVoxel>`] — per-chunk occlusion culling.
+/// - [`MiningPlugin`] — voxel mining interactions.
+/// - [`PlacementPlugin`] — voxel placement interactions.
+/// - [`LoadingPlugin`] — world loading state machine.
+///
+/// **Not included** (opt-in):
+/// - [`generator::GeneratorPlugin`] — requires the caller to supply a
+///   [`generator::GeneratorResource`]; add it separately.
+/// - Game-specific plugins ([`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`],
+///   [`HotbarPlugin`], [`UiPlugin`]) — use [`VoxelPlugin`] for those.
+pub struct VoxelCorePlugin;
+
+impl Plugin for VoxelCorePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(WorldPlugin);
+        app.add_plugins(WorldConfigPlugin);
+        app.add_plugins(RenderPlugin::<DefaultVoxel>::new());
+        app.add_plugins(MeshPlugin::<DefaultVoxel>::new());
+        app.add_plugins(OcclusionPlugin::<DefaultVoxel>::new());
+        app.add_plugins(MiningPlugin);
+        app.add_plugins(PlacementPlugin);
+        app.add_plugins(LoadingPlugin);
+    }
+}
+
+/// Batteries-included plugin that registers all voxel framework systems,
+/// including game-specific content (UI, skybox, audio, items).
+///
+/// Internally uses [`VoxelCorePlugin`] for the engine layer and adds:
+///
+/// - [`FragmentPlugin`] — floating voxel fragment entities.
+/// - [`SkyboxPlugin`] — skybox and starfield rendering.
+/// - [`SfxPlugin`] — spatial audio effects.
+/// - [`HotbarPlugin`] — hotbar and item system.
+/// - [`UiPlugin`] — crosshair, loading screen, and HUD.
 ///
 /// [`generator::GeneratorPlugin`] is intentionally excluded because it requires
 /// the user to supply a [`generator::GeneratorResource`]. Add it separately:
@@ -110,14 +144,7 @@ pub struct VoxelPlugin;
 
 impl Plugin for VoxelPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(WorldPlugin);
-        app.add_plugins(WorldConfigPlugin);
-        app.add_plugins(RenderPlugin::<DefaultVoxel>::new());
-        app.add_plugins(MeshPlugin::<DefaultVoxel>::new());
-        app.add_plugins(OcclusionPlugin::<DefaultVoxel>::new());
-        app.add_plugins(MiningPlugin);
-        app.add_plugins(PlacementPlugin);
-        app.add_plugins(LoadingPlugin);
+        app.add_plugins(VoxelCorePlugin);
         app.add_plugins(FragmentPlugin);
         app.add_plugins(SkyboxPlugin);
         app.add_plugins(SfxPlugin);
