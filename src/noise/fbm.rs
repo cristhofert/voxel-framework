@@ -1,24 +1,65 @@
-//! Fractal Brownian Motion (FBM) built on 3D value noise.
+//! Fractal Brownian Motion (FBM) built on [`super::value_noise`].
+//!
+//! FBM layers multiple octaves of noise at geometrically increasing frequencies
+//! and decreasing amplitudes.  The result combines low-frequency large-scale
+//! shapes with high-frequency fine detail, producing the irregular, organic
+//! surfaces seen in terrain and asteroid generation.
+//!
+//! Each octave `i` is evaluated at frequency `frequency × lacunarity^i` and
+//! weighted by `amplitude × gain^i`.  The accumulated sum is divided by the
+//! total amplitude so the output stays in approximately `[-1.0, 1.0]` regardless
+//! of the number of octaves.
 
 use super::value::value_noise;
 
-/// Computes Fractal Brownian Motion by layering multiple octaves of value noise.
-///
-/// Each octave samples the noise at a higher frequency and lower amplitude than
-/// the previous one, producing natural-looking detail at multiple scales.
+/// Evaluates Fractal Brownian Motion at `(x, y, z)` by summing `octaves` layers
+/// of [`super::value_noise`].
 ///
 /// # Parameters
 ///
-/// - `x`, `y`, `z`: World-space coordinates (will be scaled by `frequency`).
-/// - `seed`: Base seed for the noise field.
-/// - `octaves`: Number of noise layers to accumulate (typically 3-6).
-/// - `frequency`: Initial sampling frequency (higher = more detail per unit distance).
-/// - `lacunarity`: Frequency multiplier per octave (typically 2.0).
-/// - `gain`: Amplitude multiplier per octave (typically 0.5, also called "persistence").
+/// - `x`, `y`, `z` — World-space sample coordinates.  The first octave is
+///   evaluated at `(x × frequency, y × frequency, z × frequency)`.
+/// - `seed` — Base seed for the noise field.  Each octave shifts the seed by a
+///   prime offset (`i × 7919`) to ensure octaves are statistically independent.
+/// - `octaves` — Number of noise layers.  Typical range: `2..=6`.  More octaves
+///   add finer detail at a linear cost in noise evaluations.
+/// - `frequency` — Initial sampling frequency.  Higher values produce more
+///   surface detail per world unit.  Typical value: `2.5`.
+/// - `lacunarity` — Frequency multiplier applied each octave.  A value of `2.0`
+///   doubles the frequency per octave, adding one extra detail level per doubling.
+///   Typical value: `2.0`.
+/// - `gain` — Amplitude multiplier per octave (also called *persistence*).  A
+///   value of `0.5` halves each successive octave's contribution, making finer
+///   detail progressively subtler.  Typical value: `0.5`.
 ///
-/// # Returns
+/// # Output range
 ///
-/// A value normalized to approximately `[-1.0, 1.0]`.
+/// Approximately `[-1.0, 1.0]`.  The normalization divides by the sum of all
+/// octave amplitudes (a geometric series), so the range is theoretically exact
+/// when `gain < 1.0`.  Floating-point rounding may produce values slightly
+/// outside `[-1.01, 1.01]` in practice.
+///
+/// # Determinism guarantee
+///
+/// Identical to [`super::value_noise`]: same inputs always produce the same
+/// output on all platforms.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use voxel_framework::noise::fbm;
+///
+/// // Sample surface displacement at world position (10.5, 0.0, -3.2).
+/// let displacement = fbm(
+///     10.5, 0.0, -3.2,
+///     /*seed=*/   42,
+///     /*octaves=*/ 4,
+///     /*frequency=*/ 2.5,
+///     /*lacunarity=*/ 2.0,
+///     /*gain=*/ 0.5,
+/// );
+/// assert!((-1.0..=1.0).contains(&displacement));
+/// ```
 #[allow(clippy::too_many_arguments)] // All parameters are semantically distinct FBM controls; a params struct would harm ergonomics.
 pub fn fbm(
     x: f32,

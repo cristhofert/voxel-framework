@@ -1,7 +1,54 @@
-//! World loading state tracking.
+//! Initial world loading lifecycle — progress tracking and the ready signal.
 //!
-//! Provides [`LoadingProgress`] messages and a [`WorldReady`] message
-//! emitted once the initial sphere of chunks around the viewer is loaded.
+//! # Overview
+//!
+//! When a world first starts, the streaming system begins requesting chunks
+//! around the viewer. This module tracks how many of those chunks have been
+//! fully generated and meshed, and fires a one-shot signal when the world is
+//! ready to display.
+//!
+//! # What "loaded" means
+//!
+//! A chunk is considered **loaded** when it is registered in [`ChunkManager`]
+//! via [`ChunkManager::register`] — meaning voxel data has been generated
+//! **and** the renderable mesh entity has been spawned. The total number of
+//! chunks expected in the initial load sphere is computed once from
+//! `load_distance` using [`count_chunks_in_sphere`].
+//!
+//! # Event flow
+//!
+//! ```text
+//! WorldPlugin starts
+//!     │
+//!     ▼
+//! loading_progress_system runs each frame (after GeneratorSystems)
+//!     │
+//!     ├─ emits LoadingProgress { loaded, total, progress }  every frame
+//!     │
+//!     └─ when progress >= 1.0:
+//!            emits WorldReady (once)
+//!            sets WorldLoadingState::ready = true → system becomes a no-op
+//! ```
+//!
+//! # Usage
+//!
+//! Add [`LoadingPlugin`] to your [`App`] alongside [`super::WorldPlugin`].
+//! Subscribe to [`LoadingProgress`] to drive a loading screen, and to
+//! [`WorldReady`] to transition out of it:
+//!
+//! ```rust,no_run
+//! use bevy::prelude::*;
+//! use voxel_framework::world::{WorldPlugin, LoadingPlugin, LoadingProgress, WorldReady};
+//!
+//! fn on_world_ready(_trigger: Trigger<WorldReady>) {
+//!     println!("world is ready!");
+//! }
+//!
+//! App::new()
+//!     .add_plugins((WorldPlugin, LoadingPlugin))
+//!     .add_observer(on_world_ready)
+//!     .run();
+//! ```
 
 use bevy::prelude::*;
 
@@ -12,8 +59,29 @@ use super::ChunkManager;
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
-/// Emitted every frame while the initial chunks are loading.
-/// `progress` is 0.0–1.0.
+/// Emitted every frame while the initial chunk sphere is still loading.
+///
+/// [`loading_progress_system`] writes this message once per frame from the
+/// moment the world starts until [`WorldReady`] fires. Once [`WorldReady`] has
+/// been emitted, this message is no longer written.
+///
+/// - `loaded` — number of chunks currently registered in [`ChunkManager`].
+/// - `total` — expected chunk count for the full load sphere (computed once
+///   from `load_distance` on the first frame).
+/// - `progress` — `loaded / total`, clamped to `[0.0, 1.0]`.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::world::LoadingProgress;
+///
+/// fn show_progress(mut reader: EventReader<LoadingProgress>) {
+///     for msg in reader.read() {
+///         println!("loading: {:.0}%", msg.progress * 100.0);
+///     }
+/// }
+/// ```
 #[derive(Message, Debug, Clone)]
 pub struct LoadingProgress {
     pub loaded: u32,
@@ -21,18 +89,55 @@ pub struct LoadingProgress {
     pub progress: f32,
 }
 
-/// Emitted once when all chunks within `load_distance` are loaded for the
-/// first time. After this fires, the world is ready to display.
+/// One-shot signal emitted when the initial chunk sphere is fully loaded.
+///
+/// [`loading_progress_system`] emits this message exactly once, on the first
+/// frame that [`LoadingProgress::progress`] reaches `1.0`. After it fires,
+/// [`WorldLoadingState::ready`] is set to `true` and the progress system
+/// becomes a no-op — no further [`LoadingProgress`] or `WorldReady` messages
+/// are written.
+///
+/// Use this event to transition your app out of a loading screen, enable
+/// gameplay input, or trigger any one-time "world is ready" logic.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::world::WorldReady;
+///
+/// fn on_world_ready(_trigger: Trigger<WorldReady>) {
+///     println!("all chunks generated — entering gameplay");
+/// }
+///
+/// # fn main() {
+/// App::new()
+///     .add_observer(on_world_ready)
+///     .run();
+/// # }
+/// ```
 #[derive(Message, Debug, Clone)]
 pub struct WorldReady;
 
 // ─── Resource ─────────────────────────────────────────────────────────────────
 
-/// Tracks whether [`WorldReady`] has already been emitted.
+/// Internal resource that guards the one-shot [`WorldReady`] emission.
+///
+/// Inserted by [`LoadingPlugin`] via `init_resource`. [`loading_progress_system`]
+/// reads and mutates this resource each frame:
+///
+/// - `expected` is computed once on the first frame from [`ChunkManager::load_distance`]
+///   and cached here to avoid recomputing it every tick.
+/// - `ready` is set to `true` after [`WorldReady`] fires, turning the system
+///   into a no-op for the remainder of the session.
+///
+/// This resource is not intended to be mutated by user code. To check whether
+/// the world has finished loading, subscribe to [`WorldReady`] instead.
 #[derive(Resource, Default)]
 pub struct WorldLoadingState {
+    /// Set to `true` after [`WorldReady`] has been emitted.
     pub ready: bool,
-    /// Total chunks expected in the initial load sphere.
+    /// Total chunks expected in the initial load sphere (computed once).
     pub expected: u32,
 }
 
@@ -69,10 +174,19 @@ pub(crate) fn compute_progress(loaded: u32, expected: u32) -> f32 {
 
 // ─── System ───────────────────────────────────────────────────────────────────
 
-/// Tracks initial chunk loading and emits [`LoadingProgress`] and
-/// [`WorldReady`] messages.
+/// Tracks initial chunk loading and emits [`LoadingProgress`] and [`WorldReady`].
 ///
-/// Runs in [`Update`], ordered after [`GeneratorSystems`].
+/// Scheduled in [`Update`], ordered after [`GeneratorSystems`] so that any
+/// chunks completed in the current frame are already counted before progress
+/// is computed.
+///
+/// On the first invocation, the expected chunk count is derived from
+/// [`ChunkManager::load_distance`] and cached in [`WorldLoadingState::expected`].
+/// Subsequent frames skip this computation and go straight to the progress
+/// check.
+///
+/// Once [`WorldLoadingState::ready`] is `true` (set after [`WorldReady`]
+/// fires), the system returns immediately without writing any messages.
 pub fn loading_progress_system(
     manager: Res<ChunkManager>,
     mut loading_state: ResMut<WorldLoadingState>,
@@ -108,8 +222,32 @@ pub fn loading_progress_system(
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-/// Plugin that tracks initial world loading and emits [`LoadingProgress`] and
-/// [`WorldReady`] messages.
+/// Plugin that tracks initial world loading and emits [`LoadingProgress`] and [`WorldReady`].
+///
+/// Registers the following on the Bevy [`App`]:
+///
+/// - [`WorldLoadingState`] resource (via `init_resource`).
+/// - [`LoadingProgress`] and [`WorldReady`] messages.
+/// - [`loading_progress_system`] scheduled in [`Update`] after [`GeneratorSystems`].
+///
+/// Must be used together with [`super::WorldPlugin`], which provides the
+/// [`ChunkManager`] resource this plugin reads.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::world::{WorldPlugin, LoadingPlugin, WorldReady};
+///
+/// fn on_ready(_trigger: Trigger<WorldReady>) {
+///     println!("world ready — starting gameplay");
+/// }
+///
+/// App::new()
+///     .add_plugins((WorldPlugin, LoadingPlugin))
+///     .add_observer(on_ready)
+///     .run();
+/// ```
 pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {

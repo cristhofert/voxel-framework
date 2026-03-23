@@ -1,9 +1,56 @@
-//! Procedural chunk generation traits and plugin.
+//! Procedural chunk generation trait, async pipeline, and Bevy plugin.
 //!
-//! This module defines the [`ChunkGenerator`] trait for implementing procedural
-//! world generation strategies, and provides the [`GeneratorPlugin`] for Bevy
-//! integration. The [`AsteroidGenerator`] is the default implementation that
-//! creates asteroid-shaped voxel formations.
+//! # Architecture
+//!
+//! World generation is split across two systems that run every frame inside
+//! [`GeneratorSystems`]:
+//!
+//! 1. **[`chunk_request_system`]** — receives [`crate::world::ChunkLoadRequest`]
+//!    messages.  It first tries to restore the chunk from disk (when
+//!    [`crate::world::PersistenceConfig`] is present); on a cache miss it
+//!    clones the [`Arc`]-wrapped generator and offloads work to Bevy's
+//!    [`bevy::tasks::AsyncComputeTaskPool`], storing the returned [`Task`] as a
+//!    [`ChunkTask<V>`] component on a new entity.
+//!
+//! 2. **[`chunk_task_poll_system`]** — polls every in-flight [`ChunkTask<V>`]
+//!    with a single non-blocking `poll_once`.  When a task resolves it removes
+//!    the task component, inserts the completed [`crate::chunk::Chunk<V>`], and
+//!    emits [`crate::world::ChunkModified`] so that the mesh system in
+//!    [`crate::mesh`] can build geometry on the same frame.
+//!
+//! # The `ChunkGenerator` contract
+//!
+//! Every implementation of [`ChunkGenerator<V>`] runs on a worker thread from
+//! `AsyncComputeTaskPool`.  It **must not** access the Bevy [`bevy::ecs::world::World`]
+//! or any `Res<T>` — the generator `Arc` is the only shared state it may touch.
+//! The trait bounds `Send + Sync + 'static` enforce this at compile time.
+//!
+//! # Wiring into a Bevy app
+//!
+//! ```rust,no_run
+//! use std::sync::Arc;
+//! use bevy::prelude::*;
+//! use voxel_framework::{
+//!     generator::{AsteroidGenerator, GeneratorPlugin, GeneratorResource},
+//!     mesh::MeshPlugin,
+//!     voxel::DefaultVoxel,
+//!     VoxelPlugin,
+//! };
+//! use voxel_framework::generator::asteroid::AsteroidConfig;
+//!
+//! App::new()
+//!     .add_plugins(DefaultPlugins)
+//!     .add_plugins(VoxelPlugin)
+//!     .insert_resource(GeneratorResource::<DefaultVoxel> {
+//!         generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
+//!     })
+//!     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
+//!     .add_plugins(MeshPlugin::<DefaultVoxel>::new())
+//!     .run();
+//! ```
+//!
+//! [`Arc`]: std::sync::Arc
+//! [`Task`]: bevy::tasks::Task
 
 pub mod asteroid;
 pub mod systems;
@@ -24,40 +71,121 @@ use crate::voxel::VoxelType;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GeneratorSystems;
 
-/// Trait for procedural chunk generation strategies.
+/// Contract for procedural chunk generation strategies.
 ///
-/// Implementors produce voxel data for a given chunk coordinate.
-/// The framework calls `generate` on background threads via `AsyncComputeTaskPool`,
-/// so implementations must be `Send + Sync` and must not access the Bevy `World`.
+/// An implementation receives an empty [`Chunk<V>`] and a chunk-grid coordinate,
+/// and fills the chunk with whatever voxel data the strategy produces.  The
+/// framework stores implementations behind an [`std::sync::Arc`] and calls
+/// [`ChunkGenerator::generate`] on worker threads from Bevy's
+/// [`bevy::tasks::AsyncComputeTaskPool`].
+///
+/// # Thread safety contract
+///
+/// `generate` is called from a **background thread** — never from the Bevy main
+/// thread.  Implementations **must not**:
+///
+/// - access any [`bevy::ecs::world::World`] data (queries, resources, etc.),
+/// - hold non-`Send` types, or
+/// - perform blocking I/O on the calling thread.
+///
+/// The `Send + Sync + 'static` bounds on the trait enforce these constraints at
+/// compile time.  Internal state may be freely read (shared references via
+/// `Arc`), but must not be mutated without interior synchronization.
+///
+/// # Coordinate space
+///
+/// `coord` is in **chunk-grid space**: each axis unit corresponds to
+/// `CHUNK_SIZE` world units.  Convert to world space with
+/// `coord.as_vec3() * CHUNK_SIZE as f32`.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use bevy::math::IVec3;
+/// use voxel_framework::{
+///     chunk::Chunk,
+///     generator::ChunkGenerator,
+///     voxel::DefaultVoxel,
+/// };
+///
+/// struct FlatWorldGenerator {
+///     ground_level: i32,
+/// }
+///
+/// impl ChunkGenerator<DefaultVoxel> for FlatWorldGenerator {
+///     fn generate(&self, coord: IVec3, chunk: &mut Chunk<DefaultVoxel>) {
+///         // Fill voxels below ground_level with rock, leave the rest as air.
+///         if coord.y < self.ground_level {
+///             for x in 0..voxel_framework::chunk::CHUNK_SIZE {
+///                 for y in 0..voxel_framework::chunk::CHUNK_SIZE {
+///                     for z in 0..voxel_framework::chunk::CHUNK_SIZE {
+///                         chunk.set(x, y, z, DefaultVoxel::Rock);
+///                     }
+///                 }
+///             }
+///         }
+///     }
+/// }
+/// ```
 pub trait ChunkGenerator<V: VoxelType>: Send + Sync + 'static {
-    /// Fill the chunk at the given coordinate with voxel data.
+    /// Fills `chunk` with voxel data for the chunk at `coord`.
     ///
-    /// Called on a background thread. Must not access the Bevy World.
-    /// The `coord` is in chunk-grid space (each unit = `CHUNK_SIZE` world units).
+    /// `coord` is in chunk-grid space; each unit equals `CHUNK_SIZE` world units.
+    ///
+    /// **Called on a background thread. Must not access the Bevy `World`.**
     fn generate(&self, coord: IVec3, chunk: &mut Chunk<V>);
 }
 
-/// Resource wrapping the active chunk generator.
+/// Bevy [`Resource`] that holds the active [`ChunkGenerator<V>`].
 ///
-/// Users insert this resource into the Bevy app to provide the generation
-/// strategy. It holds an `Arc<dyn ChunkGenerator<V>>` so it can be cheaply
-/// cloned into async tasks.
+/// Insert this resource before adding [`GeneratorPlugin<V>`] to provide the
+/// generation strategy.  The inner [`std::sync::Arc`] is cloned cheaply into
+/// each async task so that the generator is shared without blocking or copying.
+///
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use bevy::prelude::*;
+/// use voxel_framework::{
+///     generator::{AsteroidGenerator, GeneratorResource},
+///     voxel::DefaultVoxel,
+/// };
+/// use voxel_framework::generator::asteroid::AsteroidConfig;
+///
+/// fn main() {
+///     App::new()
+///         .insert_resource(GeneratorResource::<DefaultVoxel> {
+///             generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
+///         })
+///         // ... add other plugins ...
+///         .run();
+/// }
+/// ```
 #[derive(Resource)]
 pub struct GeneratorResource<V: VoxelType> {
-    /// The active chunk generator, wrapped in an `Arc` for thread-safe sharing.
+    /// The active chunk generator, shared across worker threads via [`std::sync::Arc`].
     pub generator: Arc<dyn ChunkGenerator<V>>,
 }
 
-/// Plugin that registers the generator system.
+/// Bevy [`Plugin`] that registers the async chunk generation pipeline for
+/// voxel type `V`.
 ///
-/// Users must insert [`GeneratorResource<V>`] into the app separately,
-/// either before or after adding this plugin.
+/// Adds two systems to the [`Update`] schedule inside [`GeneratorSystems`],
+/// chained so that poll results are available to downstream systems in the same
+/// frame:
+///
+/// 1. [`chunk_request_system`] — converts [`crate::world::ChunkLoadRequest`]
+///    messages into async tasks (or immediate disk loads).
+/// 2. [`chunk_task_poll_system`] — harvests completed tasks and attaches
+///    [`crate::chunk::Chunk<V>`] components.
+///
+/// [`GeneratorResource<V>`] must be inserted separately; the plugin does not
+/// require it at registration time (the system accepts it as `Option<Res<_>>`).
 pub struct GeneratorPlugin<V: VoxelType> {
     _marker: std::marker::PhantomData<V>,
 }
 
 impl<V: VoxelType> GeneratorPlugin<V> {
-    /// Creates a new `GeneratorPlugin`.
+    /// Creates a new [`GeneratorPlugin`] for voxel type `V`.
     pub fn new() -> Self {
         Self {
             _marker: std::marker::PhantomData,

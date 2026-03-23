@@ -1,15 +1,87 @@
-//! World streaming, chunk management, and lifecycle events.
+//! World streaming, chunk lifecycle, and runtime configuration.
 //!
-//! This module provides [`ChunkManager`], the central registry for tracking
-//! which chunks are loaded, pending load, or pending unload. It also defines
-//! the three lifecycle events that drive the streaming system:
+//! # Overview
 //!
-//! - [`ChunkLoadRequest`] — emitted when a chunk coord enters load range.
-//! - [`ChunkUnloadRequest`] — emitted when a chunk coord exits unload range.
-//! - [`ChunkModified`] — emitted when voxel data in a loaded chunk changes.
+//! The world module owns three concerns:
 //!
-//! Register [`WorldPlugin`] to get all resources and events registered on
-//! the Bevy `App` automatically.
+//! - **Chunk registry** — [`ChunkManager`] tracks which chunks are fully
+//!   loaded, which are in-flight, and the configured streaming distances.
+//! - **Viewer tracking** — [`ViewerPosition`] is a lightweight resource that
+//!   your player/camera system updates every frame. The streaming system reads
+//!   it to decide which chunks to load or unload.
+//! - **Lifecycle events** — [`ChunkLoadRequest`], [`ChunkUnloadRequest`], and
+//!   [`ChunkModified`] are the message bus between the streaming system and
+//!   the rest of the engine (generation, meshing, persistence).
+//!
+//! Add [`WorldPlugin`] to your [`App`] to register all of the above
+//! automatically.
+//!
+//! # The Streaming Pipeline
+//!
+//! Every frame the [`systems::streaming_system`] executes the following steps:
+//!
+//! ```text
+//! ┌─────────────────────┐
+//! │   ViewerPosition    │  updated by your camera/player system each frame
+//! └────────┬────────────┘
+//!          │ read by streaming_system
+//!          ▼
+//! ┌─────────────────────┐
+//! │  Distance check     │  iterate cube of radius ceil(load_distance/CHUNK_SIZE)
+//! │  around viewer      │  compute world-space center distance per coord
+//! └────────┬────────────┘
+//!          │
+//!     ┌────┴─────┐
+//!     │          │
+//!     ▼          ▼
+//! ChunkLoad   ChunkUnload
+//! Request     Request
+//!  (enter      (exit
+//!  sphere)     sphere)
+//!     │          │
+//!     ▼          ▼
+//! Generator  Despawn
+//! system     system
+//! (async)
+//!     │
+//!     ▼
+//! ChunkModified  ←── voxel edits (mining, placement, etc.)
+//!     │
+//!     ▼
+//! Mesh rebuild system
+//! ```
+//!
+//! 1. [`ViewerPosition`] is updated by your player/camera system.
+//! 2. [`systems::streaming_system`] converts it to chunk-grid space and
+//!    iterates every coordinate within a bounding cube of radius
+//!    `ceil(load_distance / CHUNK_SIZE)`.
+//! 3. For each coordinate inside the load sphere that is neither loaded nor
+//!    pending, the system emits [`ChunkLoadRequest`] and marks the coord
+//!    pending in [`ChunkManager`].
+//! 4. For each currently loaded chunk whose center has drifted beyond
+//!    `unload_distance`, the system emits [`ChunkUnloadRequest`].
+//! 5. An external generation system receives [`ChunkLoadRequest`], generates
+//!    voxel data asynchronously, spawns the entity, and calls
+//!    [`ChunkManager::register`].
+//! 6. Whenever voxel data changes (mining, placement, etc.), the responsible
+//!    system emits [`ChunkModified`], which triggers mesh regeneration for
+//!    that chunk and its affected neighbors.
+//!
+//! # Events and Messages
+//!
+//! | Event | When it fires | Who consumes it |
+//! |---|---|---|
+//! | [`ChunkLoadRequest`] | Chunk coord enters `load_distance` sphere | Generation system |
+//! | [`ChunkUnloadRequest`] | Loaded chunk center exits `unload_distance` sphere | Despawn system |
+//! | [`ChunkModified`] | Voxel data written to a loaded chunk | Mesh rebuild system |
+//!
+//! # World Configuration
+//!
+//! [`config::WorldConfig`] is loaded from `world.toml` in the working
+//! directory at startup by [`config::WorldConfigPlugin`]. It is inserted as a
+//! Bevy [`Resource`] and its `load_distance` / `unload_distance` values are
+//! applied directly to [`ChunkManager`]. If the file is absent or malformed,
+//! [`config::WorldConfig::default`] is used silently.
 
 pub mod collision;
 pub mod config;
@@ -48,54 +120,120 @@ use crate::chunk::ChunkCoord;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-/// Default radius (world units) within which chunks are loaded.
+/// Default radius in world units within which chunks are loaded (150.0).
+///
+/// Used as the initial value for [`ChunkManager::load_distance`] when no
+/// [`config::WorldConfig`] overrides it. Can be overridden per-instance via
+/// [`ChunkManager::new`] or by loading a `world.toml` with
+/// [`config::WorldConfigPlugin`].
 pub const DEFAULT_LOAD_DISTANCE: f32 = 150.0;
 
-/// Default radius (world units) beyond which chunks are unloaded.
+/// Default radius in world units beyond which chunks are unloaded (200.0).
 ///
-/// Must be greater than [`DEFAULT_LOAD_DISTANCE`] to create a hysteresis band
-/// that prevents rapid load/unload cycling near the boundary.
+/// Used as the initial value for [`ChunkManager::unload_distance`]. The
+/// 50-unit gap between this constant and [`DEFAULT_LOAD_DISTANCE`] creates a
+/// **hysteresis band**: chunks that have been loaded are not immediately
+/// unloaded when the viewer steps back past the load boundary. This prevents
+/// rapid load/unload cycling ("thrashing") near the edge of the streaming
+/// sphere.
 pub const DEFAULT_UNLOAD_DISTANCE: f32 = 200.0;
 
 // ─── Events ──────────────────────────────────────────────────────────────────
 
-/// Emitted when a chunk coordinate enters the load range and should be spawned.
+/// Fired by [`systems::streaming_system`] when a chunk coordinate enters the
+/// load sphere and must be generated and spawned.
 ///
-/// Consumers (e.g., a generation system) should respond by generating voxel
-/// data and spawning the corresponding entity, then registering it with
-/// [`ChunkManager::register`].
+/// The wrapped [`ChunkCoord`] identifies the chunk-grid position that should
+/// be populated. Upon receiving this event, a generation system should:
+///
+/// 1. Generate voxel data for the coordinate (typically on a thread pool).
+/// 2. Spawn a Bevy entity with the resulting mesh and voxel components.
+/// 3. Call [`ChunkManager::register`] with the coord and new entity so the
+///    streaming system considers the chunk fully loaded.
+///
+/// The coord is guaranteed to be neither already loaded nor pending at the
+/// moment the event is written.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkLoadRequest(pub ChunkCoord);
 
-/// Emitted when a chunk coordinate exits the unload range and should be despawned.
+/// Fired by [`systems::streaming_system`] when a loaded chunk's world-space
+/// center drifts beyond [`ChunkManager::unload_distance`].
 ///
-/// Consumers should despawn the entity and remove it from [`ChunkManager`].
+/// The wrapped [`ChunkCoord`] identifies the chunk to remove. Upon receiving
+/// this event, a despawn system should despawn the entity returned by
+/// [`ChunkManager::get_entity`] and call [`ChunkManager::unregister`] so the
+/// coord becomes eligible for reloading in the future.
+///
+/// Note that the 50-unit hysteresis gap between [`DEFAULT_LOAD_DISTANCE`] and
+/// [`DEFAULT_UNLOAD_DISTANCE`] means this event fires noticeably later than
+/// the chunk first became "out of load range".
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkUnloadRequest(pub ChunkCoord);
 
-/// Emitted when voxel data in a loaded chunk has been modified.
+/// Fired whenever voxel data inside a loaded chunk is written.
 ///
-/// Consumers (e.g., mesh generation) should respond by regenerating the mesh
-/// for this chunk and its affected neighbors.
+/// The wrapped [`ChunkCoord`] identifies the modified chunk. Consumers
+/// — typically the mesh rebuild system — should regenerate the mesh for this
+/// chunk and re-evaluate the face visibility of its six face-adjacent
+/// neighbors, because a voxel change at a chunk boundary affects the neighbor's
+/// exposed faces as well.
+///
+/// This event is emitted by high-level operations such as [`mining`] and
+/// [`placement`], and also by any system that calls [`voxel_ops::set_voxel_at`]
+/// directly.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkModified(pub ChunkCoord);
 
 // ─── ChunkManager ─────────────────────────────────────────────────────────────
 
-/// Central registry for the chunk streaming system.
+/// Central registry that tracks the state of every chunk in the streaming system.
 ///
-/// Tracks which chunks are fully loaded (have an entity with mesh), which are
-/// pending load (queued or in-flight), and the configured streaming distances.
+/// `ChunkManager` is inserted as a Bevy [`Resource`] by [`WorldPlugin`] and
+/// updated by [`systems::streaming_system`] every frame. It maintains two
+/// internal sets:
 ///
-/// # Example
+/// - **Loaded** — chunks that have a live Bevy entity with a built mesh. Query
+///   membership with [`is_loaded`](ChunkManager::is_loaded) and retrieve the
+///   entity with [`get_entity`](ChunkManager::get_entity).
+/// - **Pending** — chunk coordinates for which a [`ChunkLoadRequest`] has been
+///   emitted but whose generation is not yet complete. Query membership with
+///   [`is_pending`](ChunkManager::is_pending).
+///
+/// The two public distance fields, [`load_distance`](ChunkManager::load_distance)
+/// and [`unload_distance`](ChunkManager::unload_distance), are read every frame
+/// by the streaming system. They default to [`DEFAULT_LOAD_DISTANCE`] and
+/// [`DEFAULT_UNLOAD_DISTANCE`] respectively, and can be overridden at runtime
+/// or by loading a [`config::WorldConfig`].
+///
+/// # Querying chunks
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
 /// use voxel_framework::world::ChunkManager;
 ///
-/// fn my_system(mut manager: ResMut<ChunkManager>) {
-///     let coord = IVec3::new(0, 0, 0);
-///     manager.mark_pending(coord);
+/// fn inspect_chunks(manager: Res<ChunkManager>) {
+///     println!("loaded: {}, pending: {}", manager.loaded_count(), manager.pending_count());
+///
+///     for (coord, entity) in manager.iter_loaded() {
+///         println!("chunk {:?} → entity {:?}", coord, entity);
+///     }
+/// }
+/// ```
+///
+/// # Registering a generated chunk
+///
+/// After generating voxel data and spawning the entity, call
+/// [`register`](ChunkManager::register) to promote the coord from pending to
+/// loaded:
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::world::ChunkManager;
+///
+/// fn finish_generation(mut manager: ResMut<ChunkManager>, mut commands: Commands) {
+///     let coord = IVec3::new(1, 0, 0);
+///     let entity = commands.spawn_empty().id();
+///     manager.register(coord, entity);
 /// }
 /// ```
 #[derive(Resource, Debug)]
@@ -190,20 +328,28 @@ impl Default for ChunkManager {
 
 // ─── WorldPlugin ─────────────────────────────────────────────────────────────
 
-/// Plugin that registers world streaming resources and events.
+/// Plugin that wires up the world streaming system.
 ///
-/// Adds [`ChunkManager`] as an [`init_resource`] and registers the three
-/// lifecycle events: [`ChunkLoadRequest`], [`ChunkUnloadRequest`], and
-/// [`ChunkModified`].
+/// Registers the following on the Bevy [`App`]:
+///
+/// - [`ChunkManager`] resource (via `init_resource`, defaults to
+///   [`DEFAULT_LOAD_DISTANCE`] / [`DEFAULT_UNLOAD_DISTANCE`]).
+/// - [`ViewerPosition`] resource (via `init_resource`, defaults to the origin).
+/// - [`ChunkLoadRequest`], [`ChunkUnloadRequest`], and [`ChunkModified`]
+///   messages.
+/// - [`systems::streaming_system`] scheduled in [`Update`].
+///
+/// For configuration loading, add [`config::WorldConfigPlugin`] as well. For
+/// initial-load progress tracking, add [`loading::LoadingPlugin`].
 ///
 /// # Example
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
-/// use voxel_framework::world::WorldPlugin;
+/// use voxel_framework::world::{WorldPlugin, config::WorldConfigPlugin};
 ///
 /// App::new()
-///     .add_plugins(WorldPlugin)
+///     .add_plugins((WorldPlugin, WorldConfigPlugin))
 ///     .run();
 /// ```
 pub struct WorldPlugin;

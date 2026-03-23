@@ -1,8 +1,25 @@
-//! Streaming system that drives chunk load/unload based on viewer position.
+//! Bevy systems that implement the chunk streaming loop.
 //!
-//! The [`streaming_system`] runs every frame, computes which chunk coordinates
-//! fall within the load sphere around [`ViewerPosition`], and emits
-//! [`ChunkLoadRequest`] or [`ChunkUnloadRequest`] messages accordingly.
+//! # Systems in this module
+//!
+//! | System | Schedule | Reads | Writes / Emits |
+//! |---|---|---|---|
+//! | [`streaming_system`] | [`Update`] | [`ViewerPosition`], [`ChunkManager`] | [`ChunkLoadRequest`], [`ChunkUnloadRequest`], `ChunkManager` pending set |
+//!
+//! # Execution order
+//!
+//! [`streaming_system`] has no explicit ordering constraints relative to other
+//! `Update` systems. It should run **after** your camera/player system has
+//! updated [`ViewerPosition`] for the current frame. If you need a hard
+//! ordering guarantee, use `.after(YourMovementSystem)` when adding the plugin
+//! or configure a system set.
+//!
+//! # Authoring note
+//!
+//! [`ViewerPosition`] is defined here (alongside the system that consumes it)
+//! because both share the same module-level concern: mapping a world-space
+//! position to chunk-grid decisions. It is re-exported from the crate root via
+//! [`super`].
 
 use bevy::prelude::*;
 
@@ -12,11 +29,26 @@ use super::{ChunkLoadRequest, ChunkManager, ChunkUnloadRequest};
 
 // ─── ViewerPosition ───────────────────────────────────────────────────────────
 
-/// World-space position of the primary viewer (player / camera).
+/// World-space position of the primary viewer (player or camera).
 ///
-/// Update this resource every frame to drive the chunk streaming system.
-/// The [`streaming_system`] reads it each tick to determine which chunk
-/// coordinates should be loaded or unloaded.
+/// This resource is read by [`streaming_system`] every frame to decide which
+/// chunk coordinates lie within the load sphere and which loaded chunks have
+/// drifted beyond the unload sphere. It **must be updated every frame** by
+/// your player or camera system — if it is stale, the streaming system will
+/// not respond to player movement and chunks near the new position will never
+/// be requested.
+///
+/// The resource defaults to the origin (`Vec3::ZERO`). [`WorldPlugin`]
+/// registers it via `init_resource`, so it is always present when the plugin
+/// is active.
+///
+/// # What happens if it is not updated?
+///
+/// The streaming system will continue to evaluate distances against the last
+/// written position. No new [`ChunkLoadRequest`] events will be emitted for
+/// the region around the player's actual position, and no
+/// [`ChunkUnloadRequest`] events will fire for chunks the player has left
+/// behind. The world will appear frozen at the last known viewer position.
 ///
 /// # Example
 ///
@@ -24,11 +56,28 @@ use super::{ChunkLoadRequest, ChunkManager, ChunkUnloadRequest};
 /// use bevy::prelude::*;
 /// use voxel_framework::world::ViewerPosition;
 ///
-/// fn move_camera(mut viewer: ResMut<ViewerPosition>, transform: Query<&Transform, With<Camera3d>>) {
-///     if let Ok(t) = transform.single() {
-///         viewer.position = t.translation;
+/// fn sync_viewer_to_camera(
+///     mut viewer: ResMut<ViewerPosition>,
+///     camera: Query<&Transform, With<Camera3d>>,
+/// ) {
+///     if let Ok(transform) = camera.single() {
+///         viewer.position = transform.translation;
 ///     }
 /// }
+/// ```
+///
+/// Register your sync system in [`Update`] before the streaming system runs:
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::world::ViewerPosition;
+///
+/// # fn sync_viewer_to_camera() {}
+/// # fn main() {
+/// App::new()
+///     .add_systems(Update, sync_viewer_to_camera)
+///     .run();
+/// # }
 /// ```
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct ViewerPosition {
@@ -40,14 +89,23 @@ pub struct ViewerPosition {
 
 /// Drives chunk load and unload decisions based on [`ViewerPosition`].
 ///
-/// Each frame this system:
-/// 1. Converts `viewer.position` to a chunk-grid coordinate.
-/// 2. Iterates every integer coord within a bounding cube of radius
-///    `ceil(load_distance / CHUNK_SIZE)` around the viewer chunk.
-/// 3. Emits [`ChunkLoadRequest`] for coords inside the load sphere that are
-///    neither already loaded nor pending.
-/// 4. Emits [`ChunkUnloadRequest`] for all currently loaded chunks whose
-///    world-space center has drifted beyond the unload sphere.
+/// Scheduled in [`Update`] by [`super::WorldPlugin`]. Each frame this system:
+///
+/// 1. Reads [`ViewerPosition`] and converts it to fractional chunk-grid space
+///    by dividing by `CHUNK_SIZE`.
+/// 2. Computes `load_radius_chunks = ceil(load_distance / CHUNK_SIZE)` and
+///    iterates every integer coordinate in the `[-r, r]³` bounding cube.
+/// 3. For each coordinate whose world-space center is within `load_distance`
+///    and that is neither already loaded nor pending in [`ChunkManager`]:
+///    - calls [`ChunkManager::mark_pending`] to prevent duplicate requests,
+///    - writes a [`ChunkLoadRequest`] for the generation system to consume.
+/// 4. Collects all currently loaded chunk coordinates whose world-space center
+///    distance exceeds `unload_distance`, then writes one
+///    [`ChunkUnloadRequest`] per coordinate.
+///
+/// The unload pass uses a separate `Vec` to avoid holding a shared borrow on
+/// [`ChunkManager`] while emitting messages that may mutate it in the same
+/// frame.
 pub fn streaming_system(
     viewer: Res<ViewerPosition>,
     mut manager: ResMut<ChunkManager>,

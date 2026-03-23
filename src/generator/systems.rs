@@ -1,13 +1,32 @@
-//! Async chunk generation pipeline systems.
+//! Systems that implement the two-stage async chunk generation pipeline.
 //!
-//! Two systems form the pipeline:
+//! # Pipeline overview
 //!
-//! - [`chunk_request_system`] — listens for [`ChunkLoadRequest`] messages and
-//!   spawns an async generation task on [`AsyncComputeTaskPool`] for each one.
-//! - [`chunk_task_poll_system`] — polls in-flight tasks every frame; when a
-//!   task finishes it attaches the [`Chunk<V>`] to the entity, registers it in
-//!   [`ChunkManager`], and emits a [`ChunkModified`] message so the mesh
-//!   system knows to build geometry.
+//! Stage 1 — **[`chunk_request_system`]**: runs first in [`super::GeneratorSystems`].
+//! It drains [`ChunkLoadRequest`] messages and for each one:
+//!
+//! - Attempts a synchronous disk restore when [`PersistenceConfig`] is present.
+//!   On success the entity is spawned and [`ChunkModified`] is emitted
+//!   immediately — no async task is needed.
+//! - On a cache miss (or when persistence is absent) it clones the
+//!   [`super::GeneratorResource`]'s `Arc`, spawns a new bare entity, and
+//!   offloads the [`super::ChunkGenerator::generate`] call to
+//!   [`AsyncComputeTaskPool`].  The returned [`bevy::tasks::Task`] is stored
+//!   as a [`ChunkTask<V>`] component.
+//!
+//! Stage 2 — **[`chunk_task_poll_system`]**: runs second, chained after stage 1.
+//! It iterates every entity with a [`ChunkTask<V>`] component and calls
+//! `poll_once` — a non-blocking single-frame check.  When a task resolves:
+//!
+//! - The [`ChunkTask<V>`] component is removed.
+//! - The generated [`Chunk<V>`] and [`ChunkCoordComp`] are inserted.
+//! - [`ChunkManager::register`] is called to make the chunk queryable.
+//! - [`ChunkModified`] is emitted so [`crate::mesh::systems::chunk_mesh_system`]
+//!   builds geometry on the same frame.
+//!
+//! The two-stage design keeps the main thread free: generation work happens
+//! entirely on worker threads, and the main thread only pays a `poll_once` cost
+//! per in-flight task per frame.
 
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
@@ -20,10 +39,15 @@ use super::GeneratorResource;
 
 // ─── ChunkTask ────────────────────────────────────────────────────────────────
 
-/// Component that holds an in-flight async chunk generation task.
+/// ECS component that tracks an in-flight async chunk generation task.
 ///
-/// Spawned onto a chunk entity by [`chunk_request_system`] and removed by
-/// [`chunk_task_poll_system`] once the task completes.
+/// [`chunk_request_system`] attaches this component to the chunk entity when
+/// it offloads generation to [`AsyncComputeTaskPool`].  The entity has no other
+/// meaningful components until [`chunk_task_poll_system`] resolves the task and
+/// replaces this component with the fully populated [`Chunk<V>`].
+///
+/// The inner [`Task`] yields `(ChunkCoord, Chunk<V>)` so the coord is
+/// available after the task completes without requiring an additional query.
 #[derive(Component)]
 pub struct ChunkTask<V: VoxelType> {
     /// The async task producing a fully populated [`Chunk<V>`].

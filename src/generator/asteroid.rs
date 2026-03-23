@@ -1,9 +1,32 @@
-//! Asteroid chunk generator for [`DefaultVoxel`].
+//! Procedural asteroid generator for [`DefaultVoxel`].
 //!
-//! Produces asteroid-shaped voxel formations using FBM noise for surface
-//! deformation and mineral vein distribution. Asteroid positions and radii
-//! are deterministically derived from the seed using the noise module's
-//! [`hash3`] function (no `rand` crate dependency).
+//! # Algorithm
+//!
+//! [`AsteroidGenerator`] populates chunks using a density-field approach:
+//!
+//! 1. **Asteroid placement** — at construction time, [`AsteroidConfig::asteroid_count`]
+//!    asteroid centers and radii are derived deterministically from the seed
+//!    using [`hash3`] with decorrelated per-component inputs.  No `rand` crate
+//!    is involved, which avoids version-drift and guarantees identical output
+//!    across platforms.  The first asteroid is always pinned at the world
+//!    origin so there is always a guaranteed spawn point.
+//!
+//! 2. **Surface deformation** — for each voxel candidate the distance to the
+//!    nearest asteroid center is computed.  A surface displacement is sampled
+//!    from an FBM noise field (using [`fbm`] with configurable octaves,
+//!    frequency, and amplitude) evaluated at world-space coordinates normalized
+//!    by `2 × radius`.  The density is `radius − dist + surface_displacement`;
+//!    voxels with positive density are solid.
+//!
+//! 3. **Mineral distribution** — three independent FBM passes with seed offsets
+//!    of `+100`, `+200`, and `+300` produce separate noise fields for rare
+//!    minerals, silicon crystals, and iron ore respectively.  Threshold
+//!    comparisons on those fields determine which [`DefaultVoxel`] variant is
+//!    placed (see [`MineralFrequencies`] for the default thresholds).
+//!
+//! 4. **First-asteroid-wins** — when multiple asteroids overlap, the first one
+//!    in the precomputed list claims the voxel.  This keeps the logic O(n) per
+//!    voxel and produces seamless asteroid interiors.
 
 use bevy::math::{IVec3, Vec3};
 
@@ -14,19 +37,34 @@ use crate::voxel::DefaultVoxel;
 
 use super::ChunkGenerator;
 
-/// Distribution frequencies for mineral types.
+/// Approximate volumetric distribution frequencies for each mineral type within
+/// a solid asteroid.
 ///
-/// Values should sum to approximately 1.0. Each value represents the
-/// cumulative probability band for that mineral type.
+/// The values are not used as direct probability weights; rather they document
+/// the intended proportions that the FBM noise thresholds in
+/// [`AsteroidGenerator::determine_mineral`] were tuned to produce.  Changing
+/// these fields alone has no effect — they are for documentation and future
+/// tooling that may auto-tune thresholds to match target frequencies.
+///
+/// Values represent the fraction of solid voxels expected to contain each
+/// mineral.  The sum should be approximately `1.0`.
 #[derive(Clone, Debug)]
 pub struct MineralFrequencies {
-    /// Frequency of rare mineral nodes (default: 0.05).
+    /// Expected fraction of solid voxels that are rare mineral nodes.
+    ///
+    /// Default: `0.05` (~5 %).  Achieved by requiring `rare_noise > 0.55`.
     pub rare_mineral: f32,
-    /// Frequency of silicon crystal veins (default: 0.15).
+    /// Expected fraction of solid voxels that are silicon crystal veins.
+    ///
+    /// Default: `0.15` (~15 %).  Achieved by requiring `crystal_noise > 0.30`.
     pub silicon_crystal: f32,
-    /// Frequency of iron ore deposits (default: 0.25).
+    /// Expected fraction of solid voxels that are iron ore deposits.
+    ///
+    /// Default: `0.25` (~25 %).  Achieved by requiring `iron_noise > 0.20`.
     pub iron_ore: f32,
-    /// Frequency of common rock (default: 0.55).
+    /// Expected fraction of solid voxels that are common rock (the fallback).
+    ///
+    /// Default: `0.55` (~55 %).
     pub rock: f32,
 }
 
@@ -41,27 +79,69 @@ impl Default for MineralFrequencies {
     }
 }
 
-/// Configuration for asteroid generation.
+/// Configuration for the [`AsteroidGenerator`].
 ///
-/// Controls the number, size, and noise parameters of generated asteroids.
-/// All values are deterministic given the same seed.
+/// Controls asteroid count, size distribution, surface noise parameters, and
+/// mineral frequencies.  All generation is fully deterministic: the same
+/// `AsteroidConfig` always produces the same world.
+///
+/// Construct via [`AsteroidConfig::default`] and override individual fields:
+///
+/// ```rust,no_run
+/// use voxel_framework::generator::asteroid::AsteroidConfig;
+///
+/// let config = AsteroidConfig {
+///     seed: 42,
+///     asteroid_count: 12,
+///     min_radius: 15.0,
+///     max_radius: 80.0,
+///     ..AsteroidConfig::default()
+/// };
+/// ```
 #[derive(Clone, Debug)]
 pub struct AsteroidConfig {
-    /// Global seed for deterministic generation.
+    /// Seed for the hash-based pseudo-random number generator.
+    ///
+    /// Changing the seed produces a completely different asteroid field.
     pub seed: u32,
-    /// Number of asteroids to generate.
+
+    /// Number of asteroids to pre-compute and place in the world.
+    ///
+    /// The first asteroid is always at the origin.  Valid range: `1..`.
     pub asteroid_count: usize,
+
     /// Minimum asteroid radius in world units.
+    ///
+    /// Must satisfy `min_radius ≤ max_radius`.  Valid range: `> 0.0`.
     pub min_radius: f32,
+
     /// Maximum asteroid radius in world units.
+    ///
+    /// Must satisfy `max_radius ≥ min_radius`.
     pub max_radius: f32,
-    /// Number of FBM octaves for surface deformation (typically 4).
+
+    /// Number of FBM octaves used for surface deformation.
+    ///
+    /// More octaves add finer surface detail at the cost of more noise
+    /// evaluations per voxel.  Typical range: `2..=6`.  Default: `4`.
     pub noise_octaves: u32,
-    /// Base frequency for surface FBM noise (typically 2.5).
+
+    /// Base sampling frequency for the surface FBM field.
+    ///
+    /// Higher values produce a rougher, more pitted surface.  The field is
+    /// sampled at world coordinates divided by `2 × radius`, so the actual
+    /// spatial frequency scales with asteroid size.  Default: `2.5`.
     pub noise_frequency: f32,
-    /// Surface noise amplitude as a fraction of radius (typically 0.34).
+
+    /// Surface displacement amplitude as a fraction of the asteroid radius.
+    ///
+    /// A value of `0.34` means the surface can deviate by up to ±34 % of the
+    /// radius.  Valid range: `0.0..=1.0`.  Default: `0.34`.
     pub noise_amplitude: f32,
-    /// Mineral distribution frequencies.
+
+    /// Intended mineral distribution frequencies (documentation only).
+    ///
+    /// See [`MineralFrequencies`] for details.
     pub mineral_frequencies: MineralFrequencies,
 }
 
@@ -91,21 +171,41 @@ struct Asteroid {
     flatten_y: f32,
 }
 
-/// Procedural asteroid generator for [`DefaultVoxel`].
+/// Procedural generator that fills the world with asteroid-shaped voxel
+/// formations, implementing [`ChunkGenerator<DefaultVoxel>`].
 ///
-/// Creates asteroid-shaped voxel formations with FBM-deformed surfaces and
-/// noise-driven mineral distribution. Asteroid positions are deterministically
-/// computed from the seed at construction time.
+/// See the [module-level documentation](self) for a full description of the
+/// generation algorithm.  Asteroid positions and radii are computed once at
+/// construction time via [`AsteroidGenerator::new`]; subsequent calls to
+/// [`ChunkGenerator::generate`] are read-only and safe to call concurrently
+/// from multiple worker threads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use voxel_framework::generator::{AsteroidGenerator, GeneratorResource};
+/// use voxel_framework::generator::asteroid::AsteroidConfig;
+/// use voxel_framework::voxel::DefaultVoxel;
+///
+/// let config = AsteroidConfig { seed: 99, asteroid_count: 5, ..AsteroidConfig::default() };
+/// let generator = Arc::new(AsteroidGenerator::new(config));
+///
+/// // Insert into Bevy as a resource:
+/// // app.insert_resource(GeneratorResource::<DefaultVoxel> { generator });
+/// ```
 pub struct AsteroidGenerator {
     config: AsteroidConfig,
     asteroids: Vec<Asteroid>,
 }
 
 impl AsteroidGenerator {
-    /// Creates a new asteroid generator with the given configuration.
+    /// Creates an [`AsteroidGenerator`] from the given [`AsteroidConfig`].
     ///
-    /// Asteroid positions and radii are computed deterministically from the
-    /// config seed using hash-based pseudo-random generation (no `rand` crate).
+    /// All `config.asteroid_count` asteroid centers and radii are computed
+    /// immediately using [`hash3`]-based pseudo-random generation.  Construction
+    /// is O(n) in `asteroid_count` and allocates a single `Vec`; it is fast
+    /// enough to run on the main thread at app startup.
     pub fn new(config: AsteroidConfig) -> Self {
         let asteroids = Self::build_asteroids(&config);
         Self { config, asteroids }

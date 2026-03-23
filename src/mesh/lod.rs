@@ -1,15 +1,29 @@
-//! LOD level computation for chunk meshing.
+//! Level-of-detail (LOD) computation for chunk meshing.
 //!
-//! Provides [`compute_lod`], which maps the Euclidean distance between a
-//! chunk's world-space center and the viewer to one of two discrete levels:
+//! Distance-based LOD reduces GPU triangle load for chunks that are far from
+//! the viewer.  Rather than storing separate mesh assets per level, the greedy
+//! mesher's `step` parameter is used directly: a step of `2` makes each
+//! super-voxel cover a `2×2×2` region, halving linear resolution and roughly
+//! quartering the triangle count for typical terrain.
 //!
-//! | Level | Distance        | Greedy-mesh step |
-//! |-------|-----------------|-----------------|
-//! | `0`   | < 200.0 units   | 1 (full detail) |
-//! | `1`   | ≥ 200.0 units   | 2 (half detail) |
+//! # Levels
 //!
-//! Only two levels are used to avoid visible seams and large flat quads
-//! that appear with more aggressive LOD steps.
+//! Only two discrete levels are used.  More levels were prototyped but
+//! discarded because steps larger than `2` produce visually jarring flat quads
+//! and make seam-free stitching between neighboring chunks more complex.
+//!
+//! | Level | Step | Viewer distance        |
+//! |-------|------|------------------------|
+//! | `0`   | `1`  | < [`LOD0_MAX_DISTANCE`] |
+//! | `1`   | `2`  | ≥ [`LOD0_MAX_DISTANCE`] |
+//!
+//! # Hysteresis
+//!
+//! A chunk exactly at the 200-unit boundary would switch LOD level every frame
+//! as floating-point distance fluctuates.  [`compute_lod_with_hysteresis`]
+//! adds a dead band: upgrading to a finer level requires moving *inside* the
+//! threshold by at least `hysteresis` units, and downgrading requires moving
+//! *outside* by the same amount.  The system uses a ±5-unit band.
 
 use bevy::prelude::Vec3;
 
@@ -17,17 +31,32 @@ use bevy::prelude::Vec3;
 /// At or beyond this distance LOD 1 (step=2) is used.
 pub const LOD0_MAX_DISTANCE: f32 = 200.0;
 
-/// Compute the LOD level for a chunk given the chunk's world-space position
-/// and the viewer's world-space position.
+/// Computes the LOD level for a chunk from its world-space position and the
+/// viewer's world-space position.
 ///
-/// The distance is measured from the viewer to the **center** of the chunk's
-/// minimum-corner position. Callers that want center-to-center distance should
-/// offset `chunk_world_pos` by half a chunk before calling.
+/// The distance is the Euclidean distance between `chunk_world_pos` and
+/// `viewer_pos`.  Pass the chunk's **center** (minimum corner + half-chunk
+/// offset) so that all six faces are equidistant from the viewer; passing the
+/// minimum corner biases the result toward finer LOD for large chunks.
+///
+/// For LOD transitions that should not flicker, use
+/// [`compute_lod_with_hysteresis`] instead.
 ///
 /// # Returns
 ///
-/// * `0` — distance < 200.0 units (step=1, full detail)
-/// * `1` — distance ≥ 200.0 units (step=2, half detail)
+/// - `0` — distance < [`LOD0_MAX_DISTANCE`] → step `1` (full detail)
+/// - `1` — distance ≥ [`LOD0_MAX_DISTANCE`] → step `2` (half detail)
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use bevy::math::Vec3;
+/// use voxel_framework::mesh::lod::compute_lod;
+///
+/// let chunk_center = Vec3::new(150.0, 0.0, 0.0);
+/// let viewer = Vec3::ZERO;
+/// assert_eq!(compute_lod(chunk_center, viewer), 0); // close chunk, full detail
+/// ```
 #[inline]
 pub fn compute_lod(chunk_world_pos: Vec3, viewer_pos: Vec3) -> u8 {
     let dist = chunk_world_pos.distance(viewer_pos);
@@ -38,14 +67,24 @@ pub fn compute_lod(chunk_world_pos: Vec3, viewer_pos: Vec3) -> u8 {
     }
 }
 
-/// Same as [`compute_lod`] but with a hysteresis band to prevent oscillation.
+/// Computes the LOD level with a hysteresis dead band to prevent rapid
+/// level oscillation as the viewer moves along the threshold boundary.
 ///
-/// The new LOD is only adopted if the distance has moved PAST the threshold
-/// by at least `hysteresis` units.
+/// The returned level only changes when the viewer has moved `hysteresis` units
+/// past the threshold in the direction of the transition:
 ///
-/// Rules:
-/// - Upgrade to finer LOD (1→0): distance must be < LOD0_MAX_DISTANCE - hysteresis
-/// - Downgrade to coarser LOD (0→1): distance must be > LOD0_MAX_DISTANCE + hysteresis
+/// - **Upgrade** (`1 → 0`, coarse → fine): requires `distance < LOD0_MAX_DISTANCE − hysteresis`
+/// - **Downgrade** (`0 → 1`, fine → coarse): requires `distance > LOD0_MAX_DISTANCE + hysteresis`
+///
+/// If neither condition is met, `current_lod` is returned unchanged.  The
+/// [`super::systems::lod_update_system`] uses a `hysteresis` of `5.0` units.
+///
+/// # Parameters
+///
+/// - `chunk_world_pos` — world-space position to measure from (typically chunk center).
+/// - `viewer_pos` — current viewer world-space position.
+/// - `current_lod` — the LOD level currently assigned to this chunk.
+/// - `hysteresis` — dead-band width in world units (must be ≥ 0.0).
 pub fn compute_lod_with_hysteresis(
     chunk_world_pos: Vec3,
     viewer_pos: Vec3,
@@ -72,12 +111,16 @@ pub fn compute_lod_with_hysteresis(
     }
 }
 
-/// Convert a LOD level to the greedy-mesher step size.
+/// Converts a LOD level to the `step` parameter expected by
+/// [`super::generate_chunk_mesh`] and [`super::generate_chunk_mesh_with_neighbors`].
 ///
-/// | LOD | Step |
-/// |-----|------|
-/// | 0   | 1    |
-/// | _   | 2    | (any level ≥ 1 uses half-detail)
+/// | LOD | Step | Resolution                   |
+/// |-----|------|------------------------------|
+/// | `0` | `1`  | Full — one voxel per cell    |
+/// | ≥ 1 | `2`  | Half — `2×2×2` super-voxels  |
+///
+/// Any level above `0` maps to step `2`; the framework currently defines only
+/// two levels, but this function is forward-compatible with additional levels.
 #[inline]
 pub fn lod_to_step(lod: u8) -> usize {
     if lod == 0 { 1 } else { 2 }

@@ -1,15 +1,50 @@
-//! Optional pause menu plugin with settings submenu.
+//! Optional pause menu with a settings submenu for FOV and SFX volume.
 //!
-//! Add [`PauseMenuPlugin`] to your app to get a pause menu triggered by Escape.
-//! The plugin manages its own [`PauseMenuState`] — gate your game systems on it:
+//! This module implements a self-contained pause flow driven by the
+//! [`PauseMenuState`] state machine. Add [`PauseMenuPlugin`] to wire it up;
+//! then gate your own gameplay systems on [`PauseMenuState::Playing`] so they
+//! freeze automatically when the player pauses.
+//!
+//! # State machine
+//!
+//! ```text
+//!                  Escape
+//! ┌─────────┐ ──────────────► ┌────────┐
+//! │ Playing │                 │ Paused │ ◄─────────────────┐
+//! └─────────┘ ◄────────────── └────────┘                   │
+//!                Resume btn /       │ Settings btn          │
+//!                Escape             ▼                       │
+//!                             ┌──────────┐  ← Back btn     │
+//!                             │ Settings │ ────────────────►┘
+//!                             └──────────┘
+//! ```
+//!
+//! **Cursor management:** entering `Paused` releases the cursor
+//! (`CursorGrabMode::None`, visible). Returning to `Playing` re-locks it
+//! (`CursorGrabMode::Locked`, hidden). Do not combine this plugin with
+//! [`player_cursor_system`](crate::player::player_cursor_system), which
+//! implements a conflicting two-stage Escape handler.
+//!
+//! # Integration
+//!
+//! Gate all gameplay systems on [`PauseMenuState::Playing`]:
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
-//! use voxel_framework::ui::PauseMenuState;
+//! use voxel_framework::prelude::*;
+//! use voxel_framework::player::{spawn_player, player_look, player_move,
+//!     player_resolve_collision};
+//! use voxel_framework::ui::{PauseMenuPlugin, PauseMenuState};
 //!
 //! App::new()
+//!     .add_plugins(DefaultPlugins)
+//!     .add_plugins(VoxelPlugin)
+//!     .add_plugins(PauseMenuPlugin)
+//!     .add_systems(Startup, spawn_player)
 //!     .add_systems(Update,
-//!         my_gameplay_system.run_if(in_state(PauseMenuState::Playing)),
+//!         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+//!             .chain()
+//!             .run_if(in_state(PauseMenuState::Playing)),
 //!     );
 //! ```
 
@@ -19,17 +54,43 @@ use crate::audio::{SfxConfig, SfxEvent, SfxRequest};
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-/// Internal state managed by [`PauseMenuPlugin`].
+/// Bevy state enum that drives the pause menu lifecycle.
 ///
-/// Use this to gate your game systems so they pause correctly:
+/// [`PauseMenuPlugin`] registers this as a Bevy `State` and transitions between
+/// variants automatically. Your own systems should use `run_if(in_state(…))`
+/// to participate in the pause flow.
+///
+/// # Variant transitions
+///
+/// | From | Trigger | To |
+/// |------|---------|-----|
+/// | `Playing` | Escape key | `Paused` |
+/// | `Paused` | Resume button or Escape | `Playing` |
+/// | `Paused` | Settings button | `Settings` |
+/// | `Settings` | Back button | `Paused` |
+///
+/// # Gating gameplay systems
+///
 /// ```rust,no_run
-/// .run_if(in_state(PauseMenuState::Playing))
+/// # use bevy::prelude::*;
+/// # use voxel_framework::ui::PauseMenuState;
+/// # fn my_gameplay_system() {}
+/// App::new()
+///     .add_systems(Update,
+///         my_gameplay_system.run_if(in_state(PauseMenuState::Playing)),
+///     );
 /// ```
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum PauseMenuState {
+    /// The game is running normally. Player input is active and the pause
+    /// menu is not visible. This is the default starting state.
     #[default]
     Playing,
+    /// The game is paused. The pause menu overlay is displayed and gameplay
+    /// systems gated on `Playing` are inactive. The cursor is free.
     Paused,
+    /// The settings submenu is open. The pause menu overlay is replaced by the
+    /// settings panel. FOV and SFX volume can be adjusted here.
     Settings,
 }
 
@@ -55,22 +116,29 @@ enum SettingsButton { FovInc, FovDec, VolumeInc, VolumeDec, Back }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-/// Configuration for [`PauseMenuPlugin`].
+/// Visual configuration for [`PauseMenuPlugin`].
 ///
-/// Insert before adding the plugin to override defaults:
+/// Insert this resource before adding [`PauseMenuPlugin`] to supply a custom
+/// font. If omitted, the plugin initializes with [`Handle::default()`], which
+/// resolves to Bevy's built-in monospace font.
+///
+/// # Example
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
 /// use voxel_framework::ui::PauseMenuConfig;
 ///
-/// App::new()
-///     .insert_resource(PauseMenuConfig {
+/// fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+///     commands.insert_resource(PauseMenuConfig {
 ///         font: asset_server.load("fonts/MyFont.ttf"),
 ///     });
+/// }
 /// ```
 #[derive(Resource, Clone)]
 pub struct PauseMenuConfig {
-    /// Font handle used for all pause menu text. Default: Bevy's built-in font.
+    /// Font handle used for every text element in both the pause menu and the
+    /// settings submenu (title, button labels, slider values). Defaults to
+    /// [`Handle::default()`], which Bevy resolves to its built-in font.
     pub font: Handle<Font>,
 }
 
@@ -82,17 +150,38 @@ impl Default for PauseMenuConfig {
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-/// Optional pause menu plugin.
+/// Plugin that adds a full-screen pause menu with a settings submenu.
 ///
-/// Adds [`PauseMenuState`] and wires Escape to toggle between Playing and Paused.
-/// The Settings submenu lets the player adjust FOV and SFX volume at runtime.
+/// Registers [`PauseMenuState`] and wires all transitions, UI spawning, and
+/// cursor management. The settings submenu exposes real-time controls for FOV
+/// (±5° per click, clamped to `50°`–`120°`) and SFX volume (±10% per click,
+/// clamped to `0%`–`100%`).
 ///
-/// # Usage
+/// **Does not** include [`player_cursor_system`](crate::player::player_cursor_system).
+/// If you use this plugin, omit that system — this plugin handles cursor locking
+/// and releasing as part of the `Playing ↔ Paused` transition.
+///
+/// # Simple usage
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
 /// use voxel_framework::prelude::*;
-/// use voxel_framework::player::PlayerPlugin;
+/// use voxel_framework::ui::{PauseMenuPlugin, PauseMenuState};
+///
+/// App::new()
+///     .add_plugins(DefaultPlugins)
+///     .add_plugins(VoxelPlugin)
+///     .add_plugins(PauseMenuPlugin)
+///     .run();
+/// ```
+///
+/// # With state-gated player systems
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::prelude::*;
+/// use voxel_framework::player::{spawn_player, player_look, player_move,
+///     player_resolve_collision};
 /// use voxel_framework::ui::{PauseMenuPlugin, PauseMenuState};
 ///
 /// App::new()
@@ -131,6 +220,10 @@ impl Plugin for PauseMenuPlugin {
 
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
 
+/// Releases the cursor when entering [`PauseMenuState::Paused`].
+///
+/// Called via `OnEnter(Paused)`. Sets `CursorGrabMode::None` and makes the
+/// cursor visible so the player can interact with the menu buttons.
 fn release_cursor(mut windows: Query<&mut bevy::window::CursorOptions>) {
     for mut cursor in &mut windows {
         cursor.grab_mode = bevy::window::CursorGrabMode::None;
@@ -138,6 +231,11 @@ fn release_cursor(mut windows: Query<&mut bevy::window::CursorOptions>) {
     }
 }
 
+/// Re-locks the cursor when returning to [`PauseMenuState::Playing`].
+///
+/// Called as a plain function (not a system) from [`escape_to_resume`] and
+/// [`handle_pause_buttons`] so that cursor re-lock and state transition happen
+/// in the same frame without a one-frame gap.
 fn lock_cursor(windows: &mut Query<&mut bevy::window::CursorOptions>) {
     for mut cursor in windows.iter_mut() {
         cursor.grab_mode = bevy::window::CursorGrabMode::Locked;
@@ -147,6 +245,10 @@ fn lock_cursor(windows: &mut Query<&mut bevy::window::CursorOptions>) {
 
 // ─── Toggle pause ─────────────────────────────────────────────────────────────
 
+/// Transitions from `Playing` → `Paused` when Escape is pressed.
+///
+/// Runs only in [`PauseMenuState::Playing`]. Also fires a
+/// [`SfxEvent::PauseOpen`] sound request.
 fn toggle_pause(
     keys: Res<ButtonInput<KeyCode>>,
     mut next: ResMut<NextState<PauseMenuState>>,
@@ -158,6 +260,10 @@ fn toggle_pause(
     }
 }
 
+/// Transitions from `Paused` → `Playing` when Escape is pressed.
+///
+/// Runs only in [`PauseMenuState::Paused`]. Re-locks the cursor via
+/// [`lock_cursor`] in the same frame and fires [`SfxEvent::PauseClose`].
 fn escape_to_resume(
     keys: Res<ButtonInput<KeyCode>>,
     mut next: ResMut<NextState<PauseMenuState>>,
@@ -220,6 +326,10 @@ fn overlay_node() -> (Node, BackgroundColor) {
 
 // ─── Pause menu ───────────────────────────────────────────────────────────────
 
+/// Spawns the pause menu overlay when entering [`PauseMenuState::Paused`].
+///
+/// Builds a full-screen semi-transparent overlay with three buttons: Resume,
+/// Settings, and Quit. Runs via `OnEnter(Paused)`.
 fn spawn_pause_menu(mut commands: Commands, config: Res<PauseMenuConfig>) {
     let (node, bg) = overlay_node();
     commands.spawn((PauseMenuRoot, node, bg)).with_children(|p| {
@@ -235,10 +345,19 @@ fn spawn_pause_menu(mut commands: Commands, config: Res<PauseMenuConfig>) {
     });
 }
 
+/// Despawns the pause menu overlay when leaving [`PauseMenuState::Paused`].
+///
+/// Runs via `OnExit(Paused)`, which fires for both `Paused → Playing` and
+/// `Paused → Settings` transitions.
 fn despawn_pause_menu(mut commands: Commands, q: Query<Entity, With<PauseMenuRoot>>) {
     for e in &q { commands.entity(e).despawn(); }
 }
 
+/// Handles hover/press styling and click actions for pause menu buttons.
+///
+/// Runs every frame in [`PauseMenuState::Paused`]. Updates button background
+/// colors on hover and press, then on `Pressed` dispatches: Resume → `Playing`
+/// (re-locks cursor), Settings → `Settings`, Quit → [`AppExit`].
 fn handle_pause_buttons(
     mut q: Query<(&Interaction, &mut BackgroundColor, &PauseButton),
                  (Changed<Interaction>, With<Button>)>,
@@ -268,6 +387,11 @@ fn handle_pause_buttons(
 
 // ─── Settings menu ────────────────────────────────────────────────────────────
 
+/// Spawns the settings overlay when entering [`PauseMenuState::Settings`].
+///
+/// Reads the current FOV from the [`Camera3d`] projection and the current SFX
+/// volume from [`SfxConfig`] to initialize the slider labels. Runs via
+/// `OnEnter(Settings)`.
 fn spawn_settings_menu(
     mut commands: Commands,
     sfx_config: Res<SfxConfig>,
@@ -338,10 +462,22 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
         });
 }
 
+/// Despawns the settings overlay when leaving [`PauseMenuState::Settings`].
+///
+/// Runs via `OnExit(Settings)`. The only exit transition is `Settings → Paused`
+/// via the Back button.
 fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsMenuRoot>>) {
     for e in &q { commands.entity(e).despawn(); }
 }
 
+/// Handles hover/press styling and click actions for settings menu buttons.
+///
+/// Runs every frame in [`PauseMenuState::Settings`]. Adjusts values on press:
+/// - `FovInc` / `FovDec`: changes FOV by ±5° (clamped `50°`–`120°`) and updates
+///   [`FovLabel`] text and the [`Camera3d`] perspective projection.
+/// - `VolumeInc` / `VolumeDec`: changes [`SfxConfig::volume`] by ±0.1 (clamped
+///   `0.0`–`1.0`) and updates [`VolumeLabel`] text.
+/// - `Back`: transitions to [`PauseMenuState::Paused`].
 fn handle_settings_buttons(
     mut q: Query<(&Interaction, &mut BackgroundColor, &SettingsButton),
                  (Changed<Interaction>, With<Button>)>,

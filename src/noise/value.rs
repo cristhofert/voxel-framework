@@ -1,10 +1,40 @@
-//! 3D value noise with deterministic hashing and trilinear interpolation.
+//! 3-D value noise via deterministic integer hashing and trilinear interpolation.
+//!
+//! # Algorithm
+//!
+//! Given a floating-point coordinate `(x, y, z)`:
+//!
+//! 1. The integer part of each axis is used to index into a virtual infinite
+//!    lattice.  [`hash3`] maps each of the eight surrounding lattice corners to
+//!    a pseudo-random float in `[0.0, 1.0]`.
+//! 2. A quintic smoothstep (Ken Perlin's fade function: `6t⁵ − 15t⁴ + 10t³`)
+//!    is applied to the fractional part of each axis so that first and second
+//!    derivatives are zero at cell boundaries, eliminating visible grid artifacts.
+//! 3. Trilinear interpolation blends the eight corner values.
+//! 4. The result is remapped from `[0.0, 1.0]` to `[-1.0, 1.0]`.
+//!
+//! The hash function uses a MurmurHash3-style bit finalizer seeded with an
+//! integer `seed`, so independent noise fields at the same coordinates are
+//! produced by passing different seeds.
 
-/// Deterministic hash of three integer coordinates and a seed, returning a
-/// value in the range `[0.0, 1.0]`.
+/// Maps three integer lattice coordinates and a `seed` to a pseudo-random float
+/// in `[0.0, 1.0]`.
 ///
-/// Uses multiplicative constants and a MurmurHash3-style bit finalizer to
-/// produce a well-distributed pseudorandom float.
+/// The function XORs each coordinate into an accumulator using the golden-ratio
+/// constant `0x9e3779b9` (from Knuth's multiplicative hashing) and then applies
+/// the MurmurHash3 bit finalizer to spread the bits.  The lower 24 bits of the
+/// result are divided by `0x00FF_FFFF` to produce the output float, keeping the
+/// mantissa precision high without bias from floating-point rounding.
+///
+/// # Determinism guarantee
+///
+/// Given the same `(x, y, z, seed)`, this function always returns the same value
+/// on all platforms and compiler versions.  No thread-local state or external
+/// entropy is used.
+///
+/// # Output range
+///
+/// `[0.0, 1.0]` (inclusive on both ends for integer inputs).
 #[inline]
 pub fn hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {
     let mut h = seed;
@@ -37,10 +67,25 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + t * (b - a)
 }
 
-/// 3D value noise with trilinear interpolation.
+/// Evaluates 3-D value noise at `(x, y, z)` with the given `seed`.
 ///
-/// Returns a value in the range `[-1.0, 1.0]`. The `seed` parameter allows
-/// multiple independent noise fields from the same coordinates.
+/// Hashes the eight corners of the unit cube surrounding `(x, y, z)` using
+/// [`hash3`] and trilinearly interpolates between them after applying the quintic
+/// fade function to the fractional coordinates.  The result is remapped to
+/// `[-1.0, 1.0]`.
+///
+/// Pass different `seed` values to produce statistically independent noise fields
+/// at the same coordinate, which is useful for mineral vein generation where
+/// multiple independent fields are needed simultaneously.
+///
+/// # Output range
+///
+/// `[-1.0, 1.0]`.  The extremes are only approached (not reached) for typical
+/// non-integer inputs due to the smooth interpolation.
+///
+/// # Determinism guarantee
+///
+/// Identical to [`hash3`]: same inputs, same output on all platforms.
 #[inline]
 pub fn value_noise(x: f32, y: f32, z: f32, seed: u32) -> f32 {
     let xi = x.floor() as i32;

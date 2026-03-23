@@ -1,9 +1,32 @@
-//! Greedy meshing algorithm for voxel chunks.
+//! Core greedy meshing algorithm for voxel chunks.
 //!
-//! Processes each of the 6 face directions independently. For each slice
-//! perpendicular to the current axis, a 2D mask is built indicating which
-//! voxels have a visible face. Adjacent same-type cells are greedily merged
-//! into the largest possible rectangle, each emitted as a single quad.
+//! # Algorithm
+//!
+//! Greedy meshing eliminates redundant geometry by merging adjacent coplanar
+//! faces of identical voxel type into a single large quad.  The implementation
+//! follows the classic Mikola Lysenko approach adapted for a cubic grid:
+//!
+//! 1. **Iterate over face directions** — the six cardinal axes (`±X`, `±Y`,
+//!    `±Z`) are processed independently via [`FACE_DIRS`].
+//! 2. **Build a 2-D mask** per slice — for each depth `d` along the face's
+//!    primary axis, a `size × size` mask records `Some(voxel)` when the
+//!    super-voxel at that cell is solid *and* its outward face is visible
+//!    (i.e., the neighbor cell is air).  The `face_visible` callback is
+//!    injected so the neighbor-aware variant can plug in its own logic without
+//!    duplicating the merge loop.
+//! 3. **Greedy merge** — the mask is scanned row by row.  For each non-empty
+//!    cell the algorithm extends a rectangle as wide as possible in `u`, then
+//!    as tall as possible in `v`, while every cell in the rectangle matches the
+//!    same voxel type.  The merged region is cleared in the mask and a single
+//!    quad is emitted.
+//!
+//! # LOD super-voxels
+//!
+//! The `step` parameter coarsens the grid: each super-voxel covers a
+//! `step × step × step` region.  [`super_voxel`] picks the first solid voxel
+//! within the region, so a coarser LOD level collapses fine detail but retains
+//! the presence of solid material.  This is a "representative sample" strategy
+//! chosen for its O(step³) simplicity and acceptable visual quality at distance.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
@@ -80,8 +103,16 @@ pub(crate) const FACE_DIRS: [FaceDir; 6] = [
     },
 ];
 
-/// Returns the first solid voxel found in a `step`-sized cube starting at
-/// `(sx, sy, sz)`, or the air voxel if all are air or out of bounds.
+/// Returns the representative voxel for a `step × step × step` region rooted
+/// at `(sx, sy, sz)`.
+///
+/// Iterates over the region in XYZ order and returns the first solid voxel
+/// found.  If the entire region is air or out of bounds, returns [`VoxelType::air`].
+///
+/// This "first-solid-wins" strategy is used rather than majority voting because
+/// it is O(1) in the common case (the first cell is solid), avoids allocations,
+/// and produces correct LOD at chunk borders where the region may be partially
+/// out of bounds.
 #[inline]
 pub(crate) fn super_voxel<V: VoxelType>(
     chunk: &Chunk<V>,
@@ -108,18 +139,45 @@ pub(crate) fn super_voxel<V: VoxelType>(
     V::air()
 }
 
-/// Generates a mesh for a single chunk using greedy meshing.
+/// Generates a [`Mesh`] for a single chunk using greedy meshing.
 ///
-/// # Arguments
+/// This is the standalone variant: border faces that exit the chunk boundary
+/// are always emitted as visible.  When adjacent chunks are loaded and their
+/// data is available, prefer [`super::generate_chunk_mesh_with_neighbors`] to
+/// avoid single-voxel gaps at chunk seams.
 ///
-/// * `chunk` — The chunk to mesh.
-/// * `step` — LOD step size. `1` for full detail (LOD 0), `2` for half
-///   detail (LOD 1). Each super-voxel covers a `step x step x step` region.
+/// # Parameters
+///
+/// - `chunk` — The [`Chunk<V>`] to mesh.
+/// - `step` — LOD step size.  `1` produces one voxel per grid cell (full
+///   detail, LOD 0).  `2` groups each `2×2×2` block into a single super-voxel
+///   (half detail, LOD 1).  Use [`super::lod::lod_to_step`] to convert a LOD
+///   level to this value.
 ///
 /// # Returns
 ///
-/// A Bevy [`Mesh`] with `PrimitiveTopology::TriangleList` containing
-/// positions, normals, UVs, vertex colors, and indices.
+/// A Bevy [`Mesh`] with [`bevy::mesh::PrimitiveTopology::TriangleList`]
+/// topology.  The mesh contains the following vertex attributes:
+///
+/// - `ATTRIBUTE_POSITION` (`Float32x3`) — positions in chunk-local space.
+/// - `ATTRIBUTE_NORMAL` (`Float32x3`) — outward face normals.
+/// - `ATTRIBUTE_UV_0` (`Float32x2`) — UVs scaled by the merged quad size in
+///   voxels, suitable for tiling textures.
+/// - `ATTRIBUTE_COLOR` (`Float32x4`) — per-vertex color from [`VoxelType::color`].
+/// - `U32` index buffer — CCW triangle winding in Bevy's right-hand coordinate system.
+///
+/// An all-air chunk produces a mesh with zero vertices and no index buffer entries.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use voxel_framework::{chunk::Chunk, mesh::generate_chunk_mesh, voxel::DefaultVoxel};
+///
+/// let mut chunk = Chunk::<DefaultVoxel>::new();
+/// // ... fill chunk with voxel data ...
+/// let mesh = generate_chunk_mesh(&chunk, 1); // full detail
+/// let mesh_lod1 = generate_chunk_mesh(&chunk, 2); // half detail
+/// ```
 pub fn generate_chunk_mesh<V: VoxelType>(chunk: &Chunk<V>, step: usize) -> Mesh {
     build_mesh(chunk, step, &default_face_visible::<V>)
 }

@@ -1,10 +1,29 @@
-//! 6DOF player system (jetpack / astronaut — zero gravity).
+//! Six-degrees-of-freedom (6DOF) player controller for zero-gravity environments.
 //!
-//! Provides a first-person camera that can fly freely in any direction,
-//! including full 360° roll and pitch, and resolves capsule collisions
-//! against solid voxels.
+//! This module implements a first-person camera-player that moves freely in all
+//! six directions with no gravity, no floor constraint, and no pitch clamp — the
+//! equivalent of an astronaut or jetpack pilot. The camera entity IS the player:
+//! there is no separate hierarchy between the logical player and the rendered
+//! view.
 //!
-//! # Quick start
+//! Collisions are resolved against loaded voxel chunks using a capsule-vs-AABB
+//! algorithm that correctly handles any 6DOF orientation, including full roll and
+//! inverted pitch.
+//!
+//! # Physics model
+//!
+//! Velocity is smoothed each frame using exponential lerp:
+//!
+//! - **Accelerating** (key held): `velocity = lerp(velocity, target, ACCEL * dt)`
+//! - **Decelerating** (no input): `velocity = lerp(velocity, Vec3::ZERO, DECEL * dt)`
+//!
+//! This gives snappy starts and a natural coast-to-stop feel without requiring a
+//! fixed physics timestep.
+//!
+//! # Quick start — [`PlayerPlugin`]
+//!
+//! The simplest integration: add [`PlayerPlugin`] and everything is wired
+//! automatically. Systems run unconditionally every frame.
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
@@ -19,6 +38,41 @@
 //!     .run();
 //! ```
 //!
+//! # AppState integration — manual systems
+//!
+//! When your game has an `AppState` enum, skip [`PlayerPlugin`] and register the
+//! systems manually so they only run during gameplay:
+//!
+//! ```rust,no_run
+//! # use bevy::prelude::*;
+//! # use voxel_framework::player::{spawn_player, player_look, player_move, player_cursor_system};
+//! # use voxel_framework::player::player_resolve_collision;
+//! # use voxel_framework::voxel::DefaultVoxel;
+//! # #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
+//! # enum AppState { #[default] Playing }
+//! App::new()
+//!     .add_systems(Startup, spawn_player)
+//!     .add_systems(Update,
+//!         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+//!             .chain()
+//!             .run_if(in_state(AppState::Playing)),
+//!     )
+//!     .add_systems(Update, player_cursor_system);
+//! ```
+//!
+//! # Cursor management contract
+//!
+//! [`spawn_player`] locks the cursor immediately on startup. [`player_cursor_system`]
+//! then maintains the lock state at runtime:
+//!
+//! - **Left click** while cursor is free → locks cursor and hides it.
+//! - **First Escape** while cursor is locked → releases cursor (makes it visible).
+//! - **Second Escape** while cursor is already free → closes the window.
+//!
+//! If you use [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) alongside this
+//! module, do **not** add [`player_cursor_system`] — the pause menu handles cursor
+//! management itself.
+//!
 //! # Controls
 //!
 //! | Input        | Action                              |
@@ -30,27 +84,7 @@
 //! | Space        | Move along local up                 |
 //! | Shift        | Move along local down               |
 //! | Left click   | Lock cursor                         |
-//! | Escape       | Release cursor (second: close window)|
-//!
-//! # State integration
-//!
-//! [`PlayerPlugin`] adds systems unconditionally to `Startup` and `Update`.
-//! If your game uses an `AppState`, wrap the systems in `.run_if(in_state(…))`:
-//!
-//! ```rust,no_run
-//! # use bevy::prelude::*;
-//! # use voxel_framework::player::{player_look, player_move};
-//! # use voxel_framework::voxel::DefaultVoxel;
-//! # use voxel_framework::player::player_resolve_collision;
-//! # #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
-//! # enum AppState { #[default] Playing }
-//! App::new()
-//!     .add_systems(Update,
-//!         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
-//!             .chain()
-//!             .run_if(in_state(AppState::Playing)),
-//!     );
-//! ```
+//! | Escape       | Release cursor (second press: close window) |
 
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
@@ -61,11 +95,19 @@ use crate::world::ViewerPosition;
 
 // ─── Physics constants ────────────────────────────────────────────────────────
 
-/// Radius of the player's collision capsule (world units).
+/// Radius of the player's collision capsule in world units (≈ 0.6 voxels).
+///
+/// Each hemispherical end cap of the capsule has this radius. The value keeps
+/// the player from clipping single-voxel corners while still fitting through
+/// one-voxel-wide gaps when combined with [`PLAYER_HALF_HEIGHT`].
 pub const PLAYER_RADIUS: f32 = 0.6;
 
-/// Half-height of the capsule's cylindrical spine (world units).
-/// The full capsule height is `2 * (PLAYER_HALF_HEIGHT + PLAYER_RADIUS)`.
+/// Half-height of the capsule's cylindrical spine in world units (≈ 1.8 voxels).
+///
+/// The spine runs along the player's local Y axis between offsets
+/// `−PLAYER_HALF_HEIGHT` and `+PLAYER_HALF_HEIGHT` from the entity origin.
+/// The total capsule height is `2 × (PLAYER_HALF_HEIGHT + PLAYER_RADIUS)` ≈ 4.8
+/// world units. In 6DOF mode this axis rolls with the player's orientation.
 pub const PLAYER_HALF_HEIGHT: f32 = 1.8;
 
 /// Lerp factor applied when the player is accelerating.
@@ -76,18 +118,40 @@ const DECEL: f32 = 7.0;
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-/// Player component. Attach together with `Camera3d` on the same entity.
+/// State component that marks the player camera entity.
 ///
-/// The camera entity IS the player — there is no separate hierarchy.
+/// Attach this alongside [`Camera3d`] on a single entity. The camera entity
+/// IS the player — there is no separate logical-player / camera hierarchy.
+/// All player systems query for this component to locate the controlled entity.
+///
+/// Prefer constructing through [`PlayerConfig`] via [`spawn_player`] rather
+/// than inserting [`Player`] directly, which also sets the initial transform and
+/// projection from the resource.
+///
+/// # Default values
+///
+/// | Field         | Default  |
+/// |---------------|----------|
+/// | `speed`       | `4.0`    |
+/// | `sensitivity` | `0.0015` |
+/// | `roll_speed`  | `1.5`    |
+/// | `velocity`    | `ZERO`   |
 #[derive(Component, Debug, Clone)]
 pub struct Player {
-    /// Maximum flight speed in world units per second.
+    /// Maximum flight speed in world units per second. Clamped implicitly by
+    /// the lerp target: actual speed never exceeds this value regardless of
+    /// frame rate.
     pub speed: f32,
-    /// Mouse sensitivity (radians per pixel).
+    /// Mouse sensitivity in radians per pixel of cursor movement. Lower values
+    /// feel slower and more precise; values above `0.003` feel very fast for
+    /// most players.
     pub sensitivity: f32,
-    /// Roll speed in radians per second (Q / E keys).
+    /// Roll angular speed in radians per second applied while Q (roll left) or
+    /// E (roll right) is held.
     pub roll_speed: f32,
-    /// Current velocity, accumulated frame-to-frame.
+    /// Current world-space velocity in world units per second. Smoothed each
+    /// frame by [`player_move`] using an exponential lerp; do not set this
+    /// directly unless you want to override the current momentum.
     pub velocity: Vec3,
 }
 
@@ -104,9 +168,13 @@ impl Default for Player {
 
 // ─── Configuration resource ───────────────────────────────────────────────────
 
-/// Configuration resource consumed by [`spawn_player`].
+/// Startup configuration for [`spawn_player`].
 ///
-/// Insert this before adding [`PlayerPlugin`] to override defaults:
+/// Insert this resource before [`PlayerPlugin`] (or before the `Startup`
+/// schedule runs) to override any default. Fields are consumed once by
+/// [`spawn_player`]; changing the resource after spawn has no effect.
+///
+/// # Example
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
@@ -116,22 +184,42 @@ impl Default for Player {
 ///     .insert_resource(PlayerConfig {
 ///         spawn_position: Vec3::new(0.0, 50.0, 150.0),
 ///         speed: 8.0,
+///         fov_degrees: 80.0,
 ///         ..Default::default()
 ///     });
 /// ```
+///
+/// # Default values
+///
+/// | Field           | Default                   |
+/// |-----------------|---------------------------|
+/// | `spawn_position`| `(0.0, 0.0, 30.0)`        |
+/// | `speed`         | `4.0` wu/s                |
+/// | `sensitivity`   | `0.0015` rad/px           |
+/// | `roll_speed`    | `1.5` rad/s               |
+/// | `look_at`       | `Vec3::ZERO`              |
+/// | `fov_degrees`   | `90.0`                    |
 #[derive(Resource, Debug, Clone)]
 pub struct PlayerConfig {
-    /// World-space position where the player spawns.
+    /// World-space position at which the player entity is spawned.
     pub spawn_position: Vec3,
-    /// Maximum flight speed (world units / s).
+    /// Maximum flight speed in world units per second. Copied into
+    /// [`Player::speed`] on spawn.
     pub speed: f32,
-    /// Mouse sensitivity (radians / pixel).
+    /// Mouse sensitivity in radians per pixel. Copied into
+    /// [`Player::sensitivity`] on spawn.
     pub sensitivity: f32,
-    /// Roll speed (radians / s).
+    /// Roll angular speed in radians per second. Copied into
+    /// [`Player::roll_speed`] on spawn.
     pub roll_speed: f32,
-    /// Initial look-at target (used to orient the camera on spawn).
+    /// World-space point the camera looks toward immediately after spawning.
+    /// Only affects the initial orientation; the player can look anywhere
+    /// afterwards via mouse input.
     pub look_at: Vec3,
-    /// Vertical field-of-view in degrees.
+    /// Vertical field-of-view in degrees. Valid range: `50.0`–`120.0`.
+    /// Converted to radians and stored in the [`PerspectiveProjection`] on
+    /// spawn; runtime changes must be made directly on the [`Projection`]
+    /// component (e.g., via the Settings menu).
     pub fov_degrees: f32,
 }
 
@@ -150,10 +238,18 @@ impl Default for PlayerConfig {
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
-/// Spawns the player camera entity.
+/// Spawns the player camera entity configured by [`PlayerConfig`].
 ///
-/// The system is idempotent: if a [`Player`] entity already exists it returns
-/// immediately (safe to call on re-entry from pause / resume).
+/// This system is **idempotent**: if a [`Player`] entity already exists in the
+/// world it returns immediately without spawning a second one. This makes it
+/// safe to register on `Startup` even when transitioning through `AppState`
+/// variants that re-enter the startup flow.
+///
+/// **Side effect:** locks the cursor on spawn (`CursorGrabMode::Locked`,
+/// `visible = false`). This matches the expectation that the game begins in a
+/// mouse-captured state. To keep the cursor free on startup, set
+/// [`CrosshairConfig::visible`](crate::ui::CrosshairConfig) to `false` and manage
+/// cursor state yourself.
 pub fn spawn_player(
     mut commands: Commands,
     config: Res<PlayerConfig>,
@@ -190,13 +286,22 @@ pub fn spawn_player(
     ));
 }
 
-/// Updates the player's orientation from mouse motion and Q/E roll keys.
+/// Updates the player orientation from mouse movement and Q/E roll keys.
 ///
-/// Implements true 6DOF rotation — no pitch clamp. The player can rotate
-/// 360° around any axis like an astronaut.
+/// Implements **true 6DOF rotation** with no pitch clamp. Each axis rotates
+/// around the entity's *local* frame:
 ///
-/// Uses `MessageReader<MouseMotion>` and accumulates the delta each frame
-/// to avoid inter-frame drift.
+/// - Mouse X → `rotate_local_y` (yaw relative to current up)
+/// - Mouse Y → `rotate_local_x` (pitch relative to current right)
+/// - Q / E   → `rotate_local_z` (roll at [`Player::roll_speed`] rad/s)
+///
+/// Rotating in local space means all three axes compose correctly regardless
+/// of the accumulated orientation — the player can pitch past vertical, roll
+/// upside-down, and continue steering intuitively without gimbal lock.
+///
+/// All [`MouseMotion`] events for the frame are accumulated into a single
+/// delta before applying rotation, preventing inter-frame jitter at high
+/// polling rates.
 pub fn player_look(
     mut query: Query<(&Player, &mut Transform)>,
     mut mouse_motion: MessageReader<MouseMotion>,
@@ -234,11 +339,25 @@ pub fn player_look(
     }
 }
 
-/// Applies player movement relative to the current 6DOF orientation.
+/// Translates the player based on keyboard input and updates [`ViewerPosition`].
 ///
-/// Velocity is smoothed with a lerp: [`ACCEL`] when input is held,
-/// [`DECEL`] when no key is pressed. Also updates [`ViewerPosition`] so
-/// the chunk streaming system keeps up.
+/// Movement axes are derived from the current entity rotation, so all six
+/// directions (forward, back, left, right, up, down) are always relative to
+/// wherever the player is currently looking — including after roll and pitch.
+///
+/// **Velocity smoothing** uses exponential lerp clamped to `[0, 1]`:
+///
+/// ```text
+/// factor = if moving { ACCEL } else { DECEL }
+/// velocity = lerp(velocity, target, (factor * dt).min(1.0))
+/// ```
+///
+/// This is frame-rate-independent for reasonable frame times and produces a
+/// snappy start with a natural coast-to-stop deceleration.
+///
+/// After translating the entity, the system writes the new world position to
+/// [`ViewerPosition`] so the chunk streaming system can load/unload chunks
+/// around the player without querying the player transform directly.
 pub fn player_move(
     mut query: Query<(&mut Player, &mut Transform)>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -290,14 +409,25 @@ pub fn player_move(
     viewer.position = transform.translation;
 }
 
-/// Resolves capsule-vs-voxel collisions for the player.
+/// Resolves capsule-vs-voxel AABB collisions and repositions the player.
 ///
-/// The capsule spine follows the player's LOCAL Y axis, so it correctly
-/// handles any 6DOF orientation (roll / pitch do not break collision).
+/// The collision shape is a capsule whose spine runs along the player's **local
+/// Y axis** between `±PLAYER_HALF_HEIGHT`. Because the spine follows the
+/// entity rotation, roll and pitch do not break collision detection — the
+/// capsule tilts with the player.
 ///
-/// Iterates every loaded chunk and checks the voxels within the bounding
-/// box of the capsule. For each solid voxel the player is pushed out via
-/// [`push_capsule_out`].
+/// **Algorithm (per chunk, per solid voxel in the AABB):**
+///
+/// 1. Compute the axis-aligned bounding box of the capsule in chunk-local space.
+/// 2. Clamp the AABB to the chunk bounds to skip out-of-range voxels.
+/// 3. For each solid voxel in the range, call [`push_capsule_out`] which:
+///    a. Finds the closest point on the capsule spine to the voxel AABB center.
+///    b. Treats that point as a sphere center of radius [`PLAYER_RADIUS`].
+///    c. Computes the minimum separation vector from the sphere to the voxel AABB.
+///    d. Accumulates the push into the running position.
+///
+/// The final corrected position is written back to the player transform. This
+/// system should always run **after** [`player_move`] in the same frame.
 pub fn player_resolve_collision<V: VoxelType>(
     mut player_q: Query<&mut Transform, With<Player>>,
     chunk_q: Query<(&Chunk<V>, &Transform), Without<Player>>,
@@ -350,7 +480,20 @@ pub fn player_resolve_collision<V: VoxelType>(
 
 // ─── Cursor grab ──────────────────────────────────────────────────────────────
 
-/// Locks cursor on left click; first Escape releases, second closes the window.
+/// Manages cursor lock state and window close on Escape.
+///
+/// This system implements a two-stage Escape behavior common in first-person
+/// games:
+///
+/// | Trigger | Cursor state before | Effect |
+/// |---------|---------------------|--------|
+/// | Left click | Free (`None`) | Locks cursor, hides it |
+/// | Escape | Locked | Releases cursor, shows it |
+/// | Escape | Free | Despawns the window entity (closes the app) |
+///
+/// Do **not** add this system when using [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin),
+/// which provides its own cursor management and a richer Escape flow
+/// (Playing → Paused → Playing).
 pub fn player_cursor_system(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -378,11 +521,22 @@ pub fn player_cursor_system(
 
 // ─── Push helper ─────────────────────────────────────────────────────────────
 
-/// Pushes `pos` (capsule center) out of a solid voxel AABB.
+/// Returns the corrected capsule-center position after pushing out of a solid voxel.
 ///
-/// Projects the capsule spine onto the nearest point, finds the closest
-/// point on that sphere to the AABB, and applies the minimum separation
-/// vector needed to clear the surface.
+/// The algorithm treats the capsule as a swept sphere along the spine segment
+/// `[pos − up*PLAYER_HALF_HEIGHT, pos + up*PLAYER_HALF_HEIGHT]`:
+///
+/// 1. Find the point on the spine segment closest to the voxel AABB center
+///    (clamped parametric projection, `t ∈ [0, 1]`).
+/// 2. Treat that spine point as a sphere center `sphere_c` with radius
+///    [`PLAYER_RADIUS`].
+/// 3. Find the point on the voxel AABB closest to `sphere_c`.
+/// 4. If the sphere overlaps the AABB (distance² < `PLAYER_RADIUS²`), compute
+///    the minimum translation vector and apply it to `pos`.
+///
+/// A degenerate case (sphere center exactly inside the voxel) is handled by
+/// pushing along the dominant axis of the relative offset to avoid a zero-
+/// length normal.
 fn push_capsule_out(
     pos: Vec3,
     up: Vec3,
@@ -440,14 +594,42 @@ fn push_capsule_out(
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-/// 6DOF player plugin.
+/// Plugin that wires up the complete 6DOF player controller.
 ///
-/// Adds [`spawn_player`] on `Startup` and the three update systems
-/// (`player_look` → `player_move` → `player_resolve_collision`) chained
-/// in order each `Update` frame.
+/// Registers [`PlayerConfig`] as an init resource, spawns the player camera
+/// on `Startup`, and chains the three frame-update systems in the correct
+/// dependency order every `Update`:
 ///
-/// Systems run unconditionally. To gate them behind an `AppState`, add the
-/// systems manually with `.run_if(in_state(…))` and omit this plugin.
+/// ```text
+/// player_look → player_move → player_resolve_collision<V>
+/// ```
+///
+/// [`player_cursor_system`] is added as a separate, un-chained `Update` system
+/// so cursor events are processed independently of the movement pipeline.
+///
+/// All systems run **unconditionally** every frame. If your game requires
+/// state-gated player control (e.g., pausing during a menu), skip this plugin
+/// and register the systems manually:
+///
+/// ```rust,no_run
+/// # use bevy::prelude::*;
+/// # use voxel_framework::player::{spawn_player, player_look, player_move,
+/// #     player_resolve_collision};
+/// # use voxel_framework::voxel::DefaultVoxel;
+/// # #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
+/// # enum AppState { #[default] Playing }
+/// App::new()
+///     .add_systems(Startup, spawn_player)
+///     .add_systems(Update,
+///         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+///             .chain()
+///             .run_if(in_state(AppState::Playing)),
+///     );
+/// ```
+///
+/// The generic parameter `V` must match the [`VoxelType`] used by the loaded
+/// [`Chunk`](crate::chunk::Chunk) entities so the collision system can read
+/// solid-voxel data.
 pub struct PlayerPlugin<V: VoxelType> {
     _marker: std::marker::PhantomData<V>,
 }

@@ -1,10 +1,33 @@
-//! World configuration loaded from a TOML file.
+//! World configuration loaded from `world.toml` at startup.
 //!
-//! [`WorldConfig`] is a Bevy [`Resource`] that controls seeding, streaming
-//! distances, asteroid generation, and scene lighting. On startup,
-//! [`WorldConfigPlugin`] attempts to read `world.toml` from the working
-//! directory and falls back to [`Default`] values when the file is absent or
-//! malformed.
+//! # Overview
+//!
+//! [`WorldConfig`] is a Bevy [`Resource`] that centralises every
+//! data-driven parameter the engine needs at startup: the world seed,
+//! streaming distances, asteroid generation settings, scene lighting, and
+//! skybox mode.
+//!
+//! # Where it is read from
+//!
+//! [`WorldConfigPlugin`] runs a [`Startup`] system that calls
+//! [`WorldConfig::from_file`] with the path `"world.toml"`, resolved relative
+//! to the **process working directory**. For games launched via `cargo run`,
+//! this is the workspace root. For distributed builds it is the directory
+//! containing the executable.
+//!
+//! # Fallback behavior
+//!
+//! If `world.toml` is absent, unreadable, or contains invalid TOML,
+//! [`WorldConfig::default`] is used and a diagnostic message is printed to
+//! stderr. No panic occurs. The fallback values are documented on each field
+//! of [`WorldConfig`].
+//!
+//! # When it is applied
+//!
+//! After loading (or falling back), the plugin inserts [`WorldConfig`] as a
+//! Bevy [`Resource`] and copies `load_distance` / `unload_distance` into the
+//! existing [`ChunkManager`] resource so the streaming system uses the
+//! configured distances immediately.
 
 use bevy::prelude::*;
 
@@ -14,20 +37,30 @@ use crate::world::ChunkManager;
 
 // ─── Config structs ───────────────────────────────────────────────────────────
 
-/// Asteroid-generation parameters as read from TOML.
+/// Asteroid-generation parameters as read from the `[asteroids]` TOML section.
 ///
-/// These are separate from [`crate::generator::asteroid::AsteroidConfig`] to
-/// keep TOML deserialization decoupled from the runtime generator type (which
-/// uses `u32` seeds and `usize` counts internally).
+/// This is a serialization-only mirror of
+/// [`crate::generator::asteroid::AsteroidConfig`], kept separate to avoid
+/// coupling TOML deserialization to the runtime generator type (which uses
+/// `u32` seeds and `usize` counts internally). Call
+/// [`WorldConfig::build_asteroid_generator`] to convert this into an
+/// [`crate::generator::asteroid::AsteroidGenerator`].
+///
+/// | Field | Default | Description |
+/// |---|---|---|
+/// | `seed` | `42` | `u64` seed truncated to `u32` for the PRNG |
+/// | `count` | `20` | Number of asteroids to place |
+/// | `min_radius` | `15.0` | Minimum asteroid radius in world units |
+/// | `max_radius` | `40.0` | Maximum asteroid radius in world units |
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct AsteroidConfigToml {
-    /// Seed for deterministic asteroid placement.
+    /// Seed for deterministic asteroid placement. Truncated to `u32` at runtime.
     pub seed: u64,
-    /// Number of asteroids to generate.
+    /// Number of asteroids to generate. Default: `20`.
     pub count: u32,
-    /// Minimum asteroid radius in world units.
+    /// Minimum asteroid radius in world units. Default: `15.0`.
     pub min_radius: f32,
-    /// Maximum asteroid radius in world units.
+    /// Maximum asteroid radius in world units. Default: `40.0`.
     pub max_radius: f32,
 }
 
@@ -42,16 +75,27 @@ impl Default for AsteroidConfigToml {
     }
 }
 
-/// Skybox parameters as read from TOML.
+/// Skybox parameters as read from the `[skybox]` TOML section.
+///
+/// Converted into a [`crate::skybox::SkyboxConfig`] at startup by
+/// [`WorldConfig::build_skybox_config`].
+///
+/// | Field | Default | Description |
+/// |---|---|---|
+/// | `mode` | `"starfield"` | `"starfield"` or `"color"` |
+/// | `star_count` | `800` | Number of point-light stars (starfield mode only) |
+/// | `star_radius` | `900.0` | Distance of stars from the origin in world units |
+/// | `background_color` | `None` | RGBA clear color as `[r, g, b, a]` (color mode only) |
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct SkyboxConfigToml {
-    /// "starfield" or "color". Default: "starfield"
+    /// Skybox rendering mode: `"starfield"` or `"color"`. Default: `"starfield"`.
     pub mode: String,
-    /// Number of stars (used when mode = "starfield"). Default: 800
+    /// Number of stars rendered in starfield mode. Default: `800`.
     pub star_count: u32,
-    /// Distance of stars from origin (used when mode = "starfield"). Default: 900.0
+    /// Radius at which stars are placed from the world origin. Default: `900.0`.
     pub star_radius: f32,
-    /// Background color as RGBA (used when mode = "color"). Default: None
+    /// Clear color in `[r, g, b, a]` format, used only in `"color"` mode.
+    /// Defaults to opaque black `[0.0, 0.0, 0.0, 1.0]` when `None`.
     pub background_color: Option<[f32; 4]>,
 }
 
@@ -66,12 +110,17 @@ impl Default for SkyboxConfigToml {
     }
 }
 
-/// Scene lighting parameters.
+/// Scene lighting parameters as read from the `[lighting]` TOML section.
+///
+/// | Field | Default | Description |
+/// |---|---|---|
+/// | `sun_illuminance` | `15000.0` | Directional sun light illuminance in lux |
+/// | `ambient_brightness` | `0.1` | Global ambient light intensity (0 = dark, 1 = full) |
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct LightingConfig {
-    /// Illuminance of the directional sun light in lux.
+    /// Illuminance of the directional sun light in lux. Default: `15000.0`.
     pub sun_illuminance: f32,
-    /// Brightness of the ambient light.
+    /// Brightness of the scene's ambient light, in the range `[0.0, 1.0]`. Default: `0.1`.
     pub ambient_brightness: f32,
 }
 
@@ -84,10 +133,31 @@ impl Default for LightingConfig {
     }
 }
 
-/// Top-level world configuration resource.
+/// Top-level world configuration loaded from `world.toml`.
 ///
-/// Loaded from `world.toml` at startup by [`WorldConfigPlugin`]. Falls back to
-/// [`Default`] when the file is absent or cannot be parsed.
+/// Inserted as a Bevy [`Resource`] by [`WorldConfigPlugin`] during the
+/// [`Startup`] schedule. If `world.toml` is absent or malformed,
+/// [`WorldConfig::default`] is used and an error is printed to stderr — no
+/// panic occurs. See the [module docs](self) for the full fallback and
+/// application flow.
+///
+/// After loading, call the builder helpers to construct runtime types:
+/// - [`build_asteroid_generator`](WorldConfig::build_asteroid_generator) →
+///   [`crate::generator::asteroid::AsteroidGenerator`]
+/// - [`build_skybox_config`](WorldConfig::build_skybox_config) →
+///   [`crate::skybox::SkyboxConfig`]
+///
+/// # Field defaults (when `world.toml` is absent)
+///
+/// | Field | Default |
+/// |---|---|
+/// | `seed` | `42` |
+/// | `spawn_position` | `[0.0, 0.0, 0.0]` |
+/// | `load_distance` | `150.0` |
+/// | `unload_distance` | `200.0` |
+/// | `asteroids` | see [`AsteroidConfigToml::default`] |
+/// | `lighting` | see [`LightingConfig::default`] |
+/// | `skybox` | see [`SkyboxConfigToml::default`] |
 ///
 /// # Example
 ///
@@ -96,22 +166,30 @@ impl Default for LightingConfig {
 ///
 /// let config = WorldConfig::from_file("world.toml").unwrap_or_default();
 /// println!("seed = {}", config.seed);
+/// println!("load_distance = {}", config.load_distance);
 /// ```
 #[derive(Resource, Debug, Clone, serde::Deserialize)]
 pub struct WorldConfig {
-    /// Global world seed used for deterministic generation.
+    /// Global world seed used for all deterministic generation. Default: `42`.
     pub seed: u64,
-    /// Player/viewer spawn position as `[x, y, z]`.
+    /// Player/viewer spawn position in world space as `[x, y, z]`. Default: `[0.0, 0.0, 0.0]`.
     pub spawn_position: [f32; 3],
-    /// Radius (world units) within which chunks are loaded.
+    /// Radius in world units within which chunks are loaded. Default: `150.0`.
+    ///
+    /// Copied into [`ChunkManager::load_distance`] by [`WorldConfigPlugin`].
     pub load_distance: f32,
-    /// Radius (world units) beyond which chunks are unloaded.
+    /// Radius in world units beyond which chunks are unloaded. Default: `200.0`.
+    ///
+    /// Must be greater than [`load_distance`](WorldConfig::load_distance) to
+    /// maintain the hysteresis band. Copied into
+    /// [`ChunkManager::unload_distance`] by [`WorldConfigPlugin`].
     pub unload_distance: f32,
-    /// Asteroid generation parameters.
+    /// Asteroid generation parameters from the `[asteroids]` section.
     pub asteroids: AsteroidConfigToml,
-    /// Scene lighting parameters.
+    /// Scene lighting parameters from the `[lighting]` section.
     pub lighting: LightingConfig,
-    /// Skybox configuration.
+    /// Skybox configuration from the `[skybox]` section. Defaults to a
+    /// starfield when the section is absent.
     #[serde(default)]
     pub skybox: SkyboxConfigToml,
 }
@@ -131,11 +209,29 @@ impl Default for WorldConfig {
 }
 
 impl WorldConfig {
-    /// Build an [`AsteroidGenerator`] from the asteroid settings in this config.
+    /// Constructs an [`AsteroidGenerator`] from the `[asteroids]` configuration.
     ///
-    /// The TOML `seed` (`u64`) is truncated to `u32` and `count` (`u32`) is
-    /// cast to `usize`. All other fields that are not present in
-    /// [`AsteroidConfigToml`] are filled from [`AsteroidConfig::default()`].
+    /// Bridges the TOML-friendly [`AsteroidConfigToml`] (which uses `u64` for
+    /// the seed and `u32` for the count) to the runtime
+    /// [`crate::generator::asteroid::AsteroidConfig`] type (which uses `u32`
+    /// and `usize` respectively). The seed is truncated — values above
+    /// `u32::MAX` wrap silently.
+    ///
+    /// Fields not present in [`AsteroidConfigToml`] (e.g. noise octaves) are
+    /// filled from [`crate::generator::asteroid::AsteroidConfig::default`].
+    ///
+    /// Call this once during startup, typically inside the system that sets up
+    /// the world generator:
+    ///
+    /// ```rust,no_run
+    /// use bevy::prelude::*;
+    /// use voxel_framework::world::WorldConfig;
+    ///
+    /// fn setup(config: Res<WorldConfig>) {
+    ///     let generator = config.build_asteroid_generator();
+    ///     // hand `generator` to your chunk generation system
+    /// }
+    /// ```
     pub fn build_asteroid_generator(&self) -> AsteroidGenerator {
         AsteroidGenerator::new(AsteroidConfig {
             seed: self.asteroids.seed as u32,
@@ -168,7 +264,23 @@ impl WorldConfig {
 
     /// Loads a [`WorldConfig`] from a TOML file at `path`.
     ///
-    /// Returns an error if the file cannot be read or the TOML is invalid.
+    /// # Errors
+    ///
+    /// Returns an error in either of these two situations:
+    ///
+    /// - **I/O failure** — the file does not exist, is not readable, or the
+    ///   process lacks permission to open it.
+    /// - **Parse failure** — the file content is not valid TOML, or a required
+    ///   top-level field (`seed`, `spawn_position`, `load_distance`,
+    ///   `unload_distance`, `asteroids`, `lighting`) is missing.
+    ///
+    /// The typical usage pattern is to fall back to [`Default`] on any error:
+    ///
+    /// ```rust,no_run
+    /// use voxel_framework::world::WorldConfig;
+    ///
+    /// let config = WorldConfig::from_file("world.toml").unwrap_or_default();
+    /// ```
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         Self::from_toml_str(&content)
@@ -201,18 +313,25 @@ fn load_world_config(mut commands: Commands, mut chunk_manager: ResMut<ChunkMana
 
 /// Plugin that loads [`WorldConfig`] from `world.toml` on startup.
 ///
-/// If `world.toml` is absent or malformed, [`WorldConfig::default`] is used.
-/// Either way, [`WorldConfig`] is inserted as a Bevy resource and the
-/// [`ChunkManager`]'s streaming distances are updated to match.
+/// Registers a [`Startup`] system (`load_world_config`) that:
 ///
-/// # Example
+/// 1. Calls [`WorldConfig::from_file`]`("world.toml")`.
+/// 2. Falls back to [`WorldConfig::default`] and logs to stderr if the file is
+///    absent or malformed.
+/// 3. Inserts the resolved [`WorldConfig`] as a Bevy [`Resource`].
+/// 4. Copies `load_distance` and `unload_distance` into the existing
+///    [`ChunkManager`] resource so the streaming system honours them from the
+///    very first [`Update`] tick.
+///
+/// Must be added **after** [`super::WorldPlugin`] (which inserts
+/// [`ChunkManager`]):
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
-/// use voxel_framework::world::WorldConfigPlugin;
+/// use voxel_framework::world::{WorldPlugin, WorldConfigPlugin};
 ///
 /// App::new()
-///     .add_plugins(WorldConfigPlugin)
+///     .add_plugins((WorldPlugin, WorldConfigPlugin))
 ///     .run();
 /// ```
 pub struct WorldConfigPlugin;

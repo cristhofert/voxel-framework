@@ -1,13 +1,55 @@
-//! UI overlay components for voxel games.
+//! HUD overlay plugins for voxel game user interfaces.
 //!
-//! Provides four ready-to-use HUD plugins:
+//! This module provides four composable HUD plugins that cover the most common
+//! in-game overlay needs. Each plugin is self-contained and can be added
+//! independently; [`UiPlugin`] is an umbrella that adds all four at once using
+//! [`DefaultItem`] as the item type.
 //!
-//! - [`CrosshairPlugin`] — center-screen crosshair made of four `Node` quads.
-//! - [`LoadingScreenPlugin`] — overlay that shows while the world is loading.
-//! - [`HotbarUiPlugin`] — bottom-center hotbar slot row.
-//! - [`PickupNotificationPlugin`] — temporary pop-up text when items are picked up.
+//! # Available plugins
 //!
-//! Use [`UiPlugin`] to add all four at once, or add each plugin individually.
+//! | Plugin | What it provides |
+//! |--------|-----------------|
+//! | [`CrosshairPlugin`] | Center-screen crosshair rendered as four `Node` quads |
+//! | [`LoadingScreenPlugin`] | Full-screen overlay with progress bar while the world loads |
+//! | [`HotbarUiPlugin`] | Bottom-center row of inventory slots |
+//! | [`PickupNotificationPlugin`] | Timed top-right pop-up text on item pickup |
+//!
+//! # Choosing between [`UiPlugin`] and individual plugins
+//!
+//! Use [`UiPlugin`] when your game uses [`DefaultItem`] and wants all four HUD
+//! elements with zero configuration:
+//!
+//! ```rust,no_run
+//! use bevy::prelude::*;
+//! use voxel_framework::ui::UiPlugin;
+//!
+//! App::new().add_plugins(UiPlugin);
+//! ```
+//!
+//! Use individual plugins when you need a custom item type for pickup
+//! notifications, want to omit specific HUD elements, or need to insert
+//! configuration resources before the plugin initializes them:
+//!
+//! ```rust,no_run
+//! use bevy::prelude::*;
+//! use voxel_framework::ui::{CrosshairPlugin, CrosshairConfig, HotbarUiPlugin};
+//!
+//! App::new()
+//!     .insert_resource(CrosshairConfig {
+//!         color: [1.0, 0.3, 0.3, 1.0],
+//!         size: 14.0,
+//!         ..Default::default()
+//!     })
+//!     .add_plugins(CrosshairPlugin)
+//!     .add_plugins(HotbarUiPlugin);
+//! ```
+//!
+//! # Pause menu
+//!
+//! The optional [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) lives in the
+//! `pause_menu` submodule and is re-exported from this module. It is **not**
+//! included in [`UiPlugin`] because it manages its own [`PauseMenuState`] and
+//! cursor lifetime, which must be coordinated with your game's state machine.
 
 use bevy::prelude::*;
 
@@ -18,18 +60,39 @@ use crate::world::loading::{LoadingProgress, WorldLoadingState};
 
 // ─── Crosshair ────────────────────────────────────────────────────────────────
 
-/// Configuration for the crosshair overlay.
+/// Visual configuration for the [`CrosshairPlugin`] overlay.
+///
+/// Insert this resource before adding [`CrosshairPlugin`] to override any
+/// default. The crosshair is spawned once on `Startup`; changes made after
+/// that point have no effect unless you despawn and re-spawn the crosshair
+/// nodes.
+///
+/// # Default values
+///
+/// | Field       | Default              | Notes |
+/// |-------------|----------------------|-------|
+/// | `color`     | `[1,1,1,1]` (white)  | RGBA, linear |
+/// | `size`      | `20.0` px            | Half-length of each arm |
+/// | `gap`       | `4.0` px             | Empty space between center and arm start |
+/// | `thickness` | `2.0` px             | Width of each arm quad |
+/// | `visible`   | `true`               | `false` skips spawning entirely |
 #[derive(Resource, Debug, Clone)]
 pub struct CrosshairConfig {
-    /// RGBA color of the crosshair lines.
+    /// RGBA color of the four crosshair arm quads in linear sRGB.
+    /// Alpha controls overall transparency of the overlay.
     pub color: [f32; 4],
-    /// Half-length of each arm in logical pixels.
+    /// Half-length of each arm in logical (UI) pixels. The total visual width
+    /// of the crosshair is approximately `2 × (gap + size)`.
     pub size: f32,
-    /// Gap between the crosshair center and the start of each arm.
+    /// Empty gap in logical pixels between the screen center and the start of
+    /// each arm. Increase this to leave a clear center dot.
     pub gap: f32,
-    /// Thickness of each arm in logical pixels.
+    /// Width of each arm quad in logical pixels. Thicker values (`4.0`–`6.0`)
+    /// are easier to see on busy backgrounds.
     pub thickness: f32,
-    /// Whether the crosshair is visible.
+    /// When `false`, [`CrosshairPlugin`] returns early from `spawn_crosshair`
+    /// without creating any entities. Useful for games that manage their own
+    /// reticle or disable the crosshair entirely in certain modes.
     pub visible: bool,
 }
 
@@ -127,10 +190,29 @@ fn spawn_crosshair(mut commands: Commands, config: Res<CrosshairConfig>) {
         });
 }
 
-/// Plugin that spawns a configurable crosshair at screen center.
+/// Plugin that renders a fixed center-screen crosshair using four UI quads.
 ///
-/// Insert [`CrosshairConfig`] as a resource before adding this plugin to
-/// customize the appearance.
+/// The crosshair is built from four [`Node`] rectangles (left, right, top,
+/// bottom arms) positioned with `PositionType::Absolute` relative to a full-
+/// screen container. No images or asset loading are required.
+///
+/// Customize appearance by inserting [`CrosshairConfig`] before adding this
+/// plugin. If [`CrosshairConfig::visible`] is `false`, no entities are spawned.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::{CrosshairPlugin, CrosshairConfig};
+///
+/// App::new()
+///     .insert_resource(CrosshairConfig {
+///         color: [0.0, 1.0, 0.0, 0.9],
+///         gap: 6.0,
+///         ..Default::default()
+///     })
+///     .add_plugins(CrosshairPlugin);
+/// ```
 pub struct CrosshairPlugin;
 
 impl Plugin for CrosshairPlugin {
@@ -142,16 +224,33 @@ impl Plugin for CrosshairPlugin {
 
 // ─── Loading Screen ───────────────────────────────────────────────────────────
 
-/// Configuration for the loading screen overlay.
+/// Visual configuration for the [`LoadingScreenPlugin`] overlay.
+///
+/// Insert this resource before adding [`LoadingScreenPlugin`] to override
+/// defaults. Values are read once on `Startup` when the overlay is spawned.
+///
+/// # Default values
+///
+/// | Field              | Default                                   |
+/// |--------------------|-------------------------------------------|
+/// | `background_color` | `[0.05, 0.05, 0.05, 0.95]` (near-black)  |
+/// | `text_color`       | `[1, 1, 1, 1]` (white)                    |
+/// | `title`            | `"Loading..."`                             |
+/// | `show_progress_bar`| `true`                                    |
 #[derive(Resource, Debug, Clone)]
 pub struct LoadingScreenConfig {
-    /// Background RGBA color of the overlay.
+    /// RGBA background color of the full-screen overlay in linear sRGB. The
+    /// default near-black with high alpha (`0.95`) fully obscures the 3D scene
+    /// while the world loads.
     pub background_color: [f32; 4],
-    /// RGBA color of the loading text.
+    /// RGBA color of the loading title text in linear sRGB.
     pub text_color: [f32; 4],
-    /// Title shown on the overlay.
+    /// Text displayed in the center of the overlay. Updated dynamically with
+    /// `"Loading… X/Y chunks"` as [`LoadingProgress`] messages arrive.
     pub title: String,
-    /// Whether to show a progress bar under the text.
+    /// When `true`, a 400×20 px progress bar is rendered below the title text.
+    /// The bar fill advances from 0 % to 100 % as [`LoadingProgress::progress`]
+    /// increases from `0.0` to `1.0`.
     pub show_progress_bar: bool,
 }
 
@@ -296,10 +395,29 @@ fn despawn_loading_overlay_on_ready(
     }
 }
 
-/// Plugin that shows a full-screen loading overlay while the world loads.
+/// Plugin that displays a full-screen loading overlay during world generation.
 ///
-/// The overlay is hidden and despawned automatically once
-/// [`WorldLoadingState::ready`] becomes `true`.
+/// The overlay is spawned on `Startup` and updates every frame by reading
+/// [`LoadingProgress`] messages broadcast by the chunk streaming system. Once
+/// [`WorldLoadingState::ready`] flips to `true`, the overlay is hidden and then
+/// despawned to free the UI node tree.
+///
+/// Customize appearance via [`LoadingScreenConfig`] inserted before this plugin.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::{LoadingScreenPlugin, LoadingScreenConfig};
+///
+/// App::new()
+///     .insert_resource(LoadingScreenConfig {
+///         title: "Generating universe…".to_string(),
+///         show_progress_bar: false,
+///         ..Default::default()
+///     })
+///     .add_plugins(LoadingScreenPlugin);
+/// ```
 pub struct LoadingScreenPlugin;
 
 impl Plugin for LoadingScreenPlugin {
@@ -315,18 +433,34 @@ impl Plugin for LoadingScreenPlugin {
 
 // ─── Hotbar UI ────────────────────────────────────────────────────────────────
 
-/// Configuration for the hotbar HUD.
+/// Visual configuration for the [`HotbarUiPlugin`] slot row.
+///
+/// Insert this resource before adding [`HotbarUiPlugin`] to customize the
+/// hotbar. Values are consumed on `Startup`; runtime slot-count changes are not
+/// supported (the hotbar is a static layout).
+///
+/// # Default values
+///
+/// | Field            | Default                             |
+/// |------------------|-------------------------------------|
+/// | `visible`        | `true`                              |
+/// | `slot_size`      | `50.0` px                           |
+/// | `slot_gap`       | `4.0` px                            |
+/// | `slot_color`     | `[0.15, 0.15, 0.15, 0.85]` (dark)  |
+/// | `selected_color` | `[0.45, 0.45, 0.45, 0.95]` (light) |
 #[derive(Resource, Debug, Clone)]
 pub struct HotbarUiConfig {
-    /// Whether the hotbar is visible.
+    /// When `false`, the hotbar is not spawned. Use this to disable the hotbar
+    /// entirely without removing [`HotbarUiPlugin`] from the app.
     pub visible: bool,
-    /// Width and height of each slot in logical pixels.
+    /// Width and height of each square slot node in logical pixels.
     pub slot_size: f32,
-    /// Gap between slots in logical pixels.
+    /// Horizontal gap between adjacent slot nodes in logical pixels.
     pub slot_gap: f32,
-    /// Background RGBA color for unselected slots.
+    /// RGBA background color applied to unselected hotbar slots in linear sRGB.
     pub slot_color: [f32; 4],
-    /// Background RGBA color for the selected slot.
+    /// RGBA background color applied to the currently selected slot in linear
+    /// sRGB. Updated in real time when a [`HotbarSelectionChanged`] message fires.
     pub selected_color: [f32; 4],
 }
 
@@ -445,9 +579,28 @@ fn update_hotbar_selection(
     }
 }
 
-/// Plugin that spawns a hotbar slot row at the bottom of the screen.
+/// Plugin that renders a horizontal hotbar at the bottom center of the screen.
 ///
-/// Reacts to [`HotbarSelectionChanged`] messages to highlight the active slot.
+/// Reads [`HotbarState`] on startup to determine the number of slots, spawns
+/// one [`Node`] quad per slot, and listens for [`HotbarSelectionChanged`]
+/// messages to update the selected-slot highlight in real time.
+///
+/// Customize via [`HotbarUiConfig`] inserted before this plugin.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::{HotbarUiPlugin, HotbarUiConfig};
+///
+/// App::new()
+///     .insert_resource(HotbarUiConfig {
+///         slot_size: 64.0,
+///         slot_gap: 6.0,
+///         ..Default::default()
+///     })
+///     .add_plugins(HotbarUiPlugin);
+/// ```
 pub struct HotbarUiPlugin;
 
 impl Plugin for HotbarUiPlugin {
@@ -460,16 +613,33 @@ impl Plugin for HotbarUiPlugin {
 
 // ─── Pickup Notification ──────────────────────────────────────────────────────
 
-/// Configuration for item pickup notifications.
+/// Visual configuration for the [`PickupNotificationPlugin`] pop-up system.
+///
+/// Insert this resource before adding [`PickupNotificationPlugin`] to override
+/// defaults. Configuration is read once per notification spawn.
+///
+/// # Default values
+///
+/// | Field               | Default              |
+/// |---------------------|----------------------|
+/// | `visible`           | `true`               |
+/// | `duration_secs`     | `3.0` s              |
+/// | `text_color`        | `[1, 1, 1, 1]` (white) |
+/// | `max_notifications` | `5`                  |
 #[derive(Resource, Debug, Clone)]
 pub struct PickupNotificationConfig {
-    /// Whether notifications are shown.
+    /// When `false`, no notification entities are spawned even when
+    /// [`ItemPickedUp`] messages fire.
     pub visible: bool,
-    /// How many seconds each notification stays on screen.
+    /// How long each notification text persists on screen in seconds before
+    /// being automatically despawned. Applied per-notification via a
+    /// [`Timer`](bevy::time::Timer).
     pub duration_secs: f32,
-    /// RGBA text color.
+    /// RGBA color of the notification text in linear sRGB.
     pub text_color: [f32; 4],
-    /// Maximum simultaneous notifications on screen.
+    /// Maximum number of notifications displayed at the same time. When a new
+    /// pickup would exceed this limit, the oldest visible notification is
+    /// despawned first to make room.
     pub max_notifications: usize,
 }
 
@@ -588,14 +758,30 @@ fn tick_notifications(
     }
 }
 
-/// Plugin that shows temporary pickup notifications at the top-right of the
-/// screen when [`ItemPickedUp<I>`] messages fire.
+/// Plugin that displays timed item-pickup notifications at the top-right corner.
 ///
-/// Generic over the item type. Use [`UiPlugin`] for [`DefaultItem`], or add
-/// this plugin manually with your own item type:
+/// Listens for [`ItemPickedUp<I>`] messages and spawns a text node formatted as
+/// `"+N ItemName"` for each pickup. Notifications fade out after
+/// [`PickupNotificationConfig::duration_secs`] and are despawned automatically.
 ///
-/// ```rust,ignore
-/// app.add_plugins(PickupNotificationPlugin::<MyItem>::new());
+/// When the number of simultaneous notifications would exceed
+/// [`PickupNotificationConfig::max_notifications`], the oldest notifications are
+/// despawned first.
+///
+/// The plugin is **generic over the item type** `I: ItemType`. Use [`UiPlugin`]
+/// for the built-in [`DefaultItem`], or add this plugin manually with a custom
+/// item type:
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::PickupNotificationPlugin;
+/// # use voxel_framework::items::inventory::ItemType;
+/// # #[derive(Clone)] struct MyItem;
+/// # impl ItemType for MyItem {
+/// #     fn name(&self) -> &str { "item" }
+/// # }
+///
+/// App::new().add_plugins(PickupNotificationPlugin::<MyItem>::new());
 /// ```
 pub struct PickupNotificationPlugin<I: ItemType> {
     _marker: std::marker::PhantomData<I>,
@@ -635,10 +821,27 @@ pub use pause_menu::{PauseMenuConfig, PauseMenuPlugin, PauseMenuState};
 
 use crate::items::inventory::DefaultItem;
 
-/// Umbrella plugin that adds all four UI sub-plugins using [`DefaultItem`].
+/// Umbrella plugin that adds all four HUD sub-plugins with [`DefaultItem`].
 ///
-/// To use a custom item type for pickup notifications, add
-/// [`PickupNotificationPlugin::<YourItem>::new()`] individually instead.
+/// Equivalent to adding [`CrosshairPlugin`], [`LoadingScreenPlugin`],
+/// [`HotbarUiPlugin`], and [`PickupNotificationPlugin::<DefaultItem>`] in one
+/// call. Configuration resources for each sub-plugin can still be inserted
+/// individually before `UiPlugin` is added to override their defaults.
+///
+/// To use a custom item type for pickup notifications, skip `UiPlugin` and add
+/// [`PickupNotificationPlugin::<YourItem>::new()`] alongside the other plugins
+/// individually.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::UiPlugin;
+///
+/// App::new()
+///     .add_plugins(DefaultPlugins)
+///     .add_plugins(UiPlugin);
+/// ```
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {

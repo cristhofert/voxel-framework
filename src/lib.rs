@@ -1,26 +1,82 @@
-//! A reusable voxel engine framework built on Bevy.
+//! # voxel-framework
 //!
-//! `voxel-framework` provides the core building blocks for voxel-based games:
-//! chunk storage, procedural noise generation, voxel type abstractions,
-//! greedy meshing, procedural generation, world streaming, and PBR rendering.
+//! A reusable voxel engine library built on [Bevy](https://bevyengine.org/),
+//! providing all the infrastructure needed to build voxel-based games and
+//! simulations: chunk storage, procedural generation, greedy meshing, world
+//! streaming, PBR rendering, and player interaction.
 //!
-//! # Quick start
+//! ## Overview
 //!
-//! Add [`VoxelPlugin`] to your Bevy app to register all framework resources
-//! and events in one step:
+//! The framework is built around three core abstractions:
 //!
-//! ```rust,no_run
-//! use bevy::prelude::*;
-//! use voxel_framework::VoxelPlugin;
+//! - **[`VoxelType`]** — a trait that every voxel palette must implement.
+//!   It describes whether a voxel is solid, what color it renders as, and how
+//!   it serializes to and from a single byte for persistence. The built-in
+//!   [`voxel::DefaultVoxel`] palette covers five material types (Air, Rock,
+//!   IronOre, SiliconCrystal, RareMineral) and is ready to use out of the box.
 //!
-//! App::new()
-//!     .add_plugins(DefaultPlugins)
-//!     .add_plugins(VoxelPlugin)
-//!     .run();
+//! - **[`chunk::Chunk<V>`]** — the fundamental storage unit. A 16×16×16 flat
+//!   array of voxels stored on the heap. All generation, meshing, and I/O
+//!   operate on chunks identified by a [`chunk::ChunkCoord`] (an `IVec3`
+//!   where one unit equals `CHUNK_SIZE` world-space units).
+//!
+//! - **[`generator::ChunkGenerator`]** — an async-safe trait implemented by
+//!   procedural generators. Generators run on a Bevy `AsyncComputeTaskPool`
+//!   thread and produce fully populated [`chunk::Chunk<V>`] values, which are
+//!   then handed back to the main world for meshing and insertion.
+//!
+//! ## Plugin Architecture
+//!
+//! Two plugins cover most use cases:
+//!
+//! | Plugin | Purpose |
+//! |--------|---------|
+//! | [`VoxelCorePlugin`] | Engine systems only — chunk management, streaming, meshing, rendering, mining, placement. No game-specific content. |
+//! | [`VoxelPlugin`] | Everything in [`VoxelCorePlugin`] plus game content: skybox, audio, hotbar, UI, fragment entities. |
+//!
+//! [`generator::GeneratorPlugin`] is always **opt-in** because it is generic
+//! over `V: VoxelType` and requires the caller to supply a
+//! [`generator::GeneratorResource`] holding a concrete generator. Add it
+//! separately after either core plugin.
+//!
+//! ## The Chunk Pipeline
+//!
+//! The full data flow from viewer movement to rendered geometry:
+//!
+//! ```text
+//! ViewerPosition update
+//!        │
+//!        ▼
+//! WorldPlugin — streaming system
+//!   Computes which chunks are within the configured render distance.
+//!   Emits ChunkRequested events for chunks not yet loaded.
+//!        │
+//!        ▼
+//! GeneratorPlugin — async generation (AsyncComputeTaskPool)
+//!   Spawns a task per requested chunk. Each task calls
+//!   ChunkGenerator::generate(coord) → Chunk<V>.
+//!   When the task completes, inserts the Chunk<V> component and emits
+//!   ChunkModified so downstream systems are notified.
+//!        │
+//!        ▼
+//! MeshPlugin — greedy mesh generation
+//!   Reacts to ChunkModified. Iterates the chunk with a configurable LOD
+//!   step, runs the greedy meshing algorithm, and uploads a Bevy Mesh asset.
+//!        │
+//!        ▼
+//! RenderPlugin — PBR material + entity spawn
+//!   Attaches a shared chunk PBR material and a MeshBundle to the chunk
+//!   entity so Bevy's renderer picks it up on the next frame.
+//!        │
+//!        ▼
+//! OcclusionPlugin — visibility culling
+//!   Each frame, tests chunk entities against the camera frustum and sets
+//!   Visibility accordingly to skip GPU draw calls for off-screen chunks.
 //! ```
 //!
-//! For a fully functional voxel world with async generation and mesh output,
-//! also add the generic plugins:
+//! ## Quick Start
+//!
+//! A minimal working world using the built-in asteroid generator:
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
@@ -28,7 +84,6 @@
 //!     VoxelPlugin,
 //!     generator::{GeneratorPlugin, GeneratorResource},
 //!     generator::asteroid::{AsteroidConfig, AsteroidGenerator},
-//!     mesh::MeshPlugin,
 //!     voxel::DefaultVoxel,
 //! };
 //! use std::sync::Arc;
@@ -37,12 +92,26 @@
 //!     .add_plugins(DefaultPlugins)
 //!     .add_plugins(VoxelPlugin)
 //!     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
-//!     .add_plugins(MeshPlugin::<DefaultVoxel>::new())
 //!     .insert_resource(GeneratorResource::<DefaultVoxel> {
 //!         generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
 //!     })
 //!     .run();
 //! ```
+//!
+//! Use [`VoxelCorePlugin`] instead of [`VoxelPlugin`] when you want the engine
+//! layer without the bundled game content (skybox, audio, hotbar, UI).
+//!
+//! ## Extending the Framework
+//!
+//! To use a custom voxel palette, implement [`VoxelType`] on your own type and
+//! substitute it wherever the framework is generic over `V: VoxelType`:
+//!
+//! - [`generator::GeneratorPlugin::<YourVoxel>::new()`][`generator::GeneratorPlugin`]
+//! - [`mesh::MeshPlugin::<YourVoxel>::new()`][`mesh::MeshPlugin`]
+//! - [`render::RenderPlugin::<YourVoxel>::new()`][`render::RenderPlugin`]
+//!
+//! To drive generation, implement [`generator::ChunkGenerator`] and wrap it in
+//! a [`generator::GeneratorResource`].
 //!
 //! See [`prelude`] for the most commonly used re-exports.
 
@@ -77,24 +146,56 @@ use world::placement::PlacementPlugin;
 use world::occlusion::OcclusionPlugin;
 use world::{WorldConfigPlugin, WorldPlugin};
 
-/// Core voxel engine plugin — pure engine systems with no game-specific content.
+/// Engine-only plugin with no game-specific content.
 ///
-/// Registers the following sub-plugins:
+/// `VoxelCorePlugin` wires up the complete voxel engine layer — world
+/// streaming, chunk lifecycle, meshing, PBR rendering, occlusion culling, and
+/// player interactions — without any game-specific subsystems (skybox, audio,
+/// hotbar, UI). It is the right choice when you are building your own game
+/// layer on top of the framework and want full control over what gets added.
 ///
-/// - [`WorldPlugin`] — chunk manager, viewer position, lifecycle events and streaming.
-/// - [`WorldConfigPlugin`] — world configuration resource.
-/// - [`RenderPlugin<DefaultVoxel>`] — shared chunk material and startup system.
-/// - [`MeshPlugin<DefaultVoxel>`] — mesh generation and chunk despawn systems.
-/// - [`OcclusionPlugin<DefaultVoxel>`] — per-chunk occlusion culling.
-/// - [`MiningPlugin`] — voxel mining interactions.
-/// - [`PlacementPlugin`] — voxel placement interactions.
-/// - [`LoadingPlugin`] — world loading state machine.
+/// # Included systems
 ///
-/// **Not included** (opt-in):
-/// - [`generator::GeneratorPlugin`] — requires the caller to supply a
-///   [`generator::GeneratorResource`]; add it separately.
-/// - Game-specific plugins ([`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`],
-///   [`HotbarPlugin`], [`UiPlugin`]) — use [`VoxelPlugin`] for those.
+/// | Plugin | Responsibility |
+/// |--------|----------------|
+/// | [`WorldPlugin`] | [`world::ChunkManager`], [`world::systems::ViewerPosition`], chunk lifecycle events, and streaming |
+/// | [`WorldConfigPlugin`] | Inserts the [`world::WorldConfig`] resource |
+/// | `RenderPlugin<DefaultVoxel>` | Shared chunk PBR material and entity spawn |
+/// | `MeshPlugin<DefaultVoxel>` | Greedy mesh generation and chunk despawn |
+/// | `OcclusionPlugin<DefaultVoxel>` | Per-chunk frustum culling |
+/// | [`world::mining::MiningPlugin`] | Raycast voxel removal |
+/// | [`world::placement::PlacementPlugin`] | Raycast voxel placement |
+/// | [`world::loading::LoadingPlugin`] | World loading state machine |
+///
+/// # Not included (opt-in)
+///
+/// - [`generator::GeneratorPlugin`] — generic over `V: VoxelType`; requires
+///   the caller to supply a [`generator::GeneratorResource`].
+/// - [`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`], [`HotbarPlugin`],
+///   [`UiPlugin`] — use [`VoxelPlugin`] to get all of these at once.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::{VoxelCorePlugin, generator::{GeneratorPlugin, GeneratorResource}};
+/// use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
+/// use voxel_framework::voxel::DefaultVoxel;
+/// use std::sync::Arc;
+///
+/// App::new()
+///     .add_plugins(DefaultPlugins)
+///     .add_plugins(VoxelCorePlugin)
+///     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
+///     .insert_resource(GeneratorResource::<DefaultVoxel> {
+///         generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
+///     })
+///     .run();
+/// ```
+///
+/// # See also
+///
+/// - [`VoxelPlugin`] — batteries-included variant that also adds game content.
 pub struct VoxelCorePlugin;
 
 impl Plugin for VoxelCorePlugin {
@@ -110,19 +211,28 @@ impl Plugin for VoxelCorePlugin {
     }
 }
 
-/// Batteries-included plugin that registers all voxel framework systems,
-/// including game-specific content (UI, skybox, audio, items).
+/// Batteries-included plugin that registers the full voxel framework.
 ///
-/// Internally uses [`VoxelCorePlugin`] for the engine layer and adds:
+/// `VoxelPlugin` is the quickest way to add a complete voxel world to a Bevy
+/// application. It composes [`VoxelCorePlugin`] (engine systems) with the
+/// game-facing subsystems listed below. Prefer [`VoxelCorePlugin`] when you
+/// need fine-grained control over which subsystems are active.
 ///
-/// - [`FragmentPlugin`] — floating voxel fragment entities.
-/// - [`SkyboxPlugin`] — skybox and starfield rendering.
-/// - [`SfxPlugin`] — spatial audio effects.
-/// - [`HotbarPlugin`] — hotbar and item system.
-/// - [`UiPlugin`] — crosshair, loading screen, and HUD.
+/// # Included beyond [`VoxelCorePlugin`]
 ///
-/// [`generator::GeneratorPlugin`] is intentionally excluded because it requires
-/// the user to supply a [`generator::GeneratorResource`]. Add it separately:
+/// | Plugin | Responsibility |
+/// |--------|----------------|
+/// | [`FragmentPlugin`] | Floating voxel debris entities ejected on mining |
+/// | [`SkyboxPlugin`] | Procedural starfield and skybox rendering |
+/// | [`SfxPlugin`] | Positional audio effects for mining and placement |
+/// | [`HotbarPlugin`] | Player hotbar, item switching, and held-item state |
+/// | [`UiPlugin`] | Crosshair, loading screen, and HUD overlays |
+///
+/// # Generator not included
+///
+/// [`generator::GeneratorPlugin`] is intentionally excluded because it is
+/// generic over `V: VoxelType` and requires the caller to supply a concrete
+/// [`generator::GeneratorResource`]. Always add it separately:
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
@@ -140,6 +250,11 @@ impl Plugin for VoxelCorePlugin {
 ///     })
 ///     .run();
 /// ```
+///
+/// # See also
+///
+/// - [`VoxelCorePlugin`] — engine-only variant without game content.
+/// - [`prelude`] — commonly used re-exports for convenience imports.
 pub struct VoxelPlugin;
 
 impl Plugin for VoxelPlugin {

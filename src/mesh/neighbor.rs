@@ -1,8 +1,25 @@
-//! Neighbor-aware mesh generation with border culling.
+//! Neighbor-aware greedy meshing with cross-chunk border culling.
 //!
-//! Identical to the basic greedy mesher, but when a voxel sits at the chunk
-//! border, the outward face is checked against the neighbor chunk's border
-//! slice rather than being unconditionally emitted.
+//! The standalone mesher in [`super::greedy`] always emits border faces as
+//! visible, which produces single-voxel cracks between adjacent loaded chunks.
+//! This module plugs a custom `face_visible` callback into [`super::greedy::build_mesh`]
+//! that consults [`super::ChunkNeighbors`] for voxels that cross chunk boundaries.
+//!
+//! # Culling strategy
+//!
+//! For each candidate face the callback checks whether the neighbor cell falls
+//! inside or outside the current chunk:
+//!
+//! - **Interior** — the neighbor is within bounds; the standard solid-check
+//!   (`!super_voxel.is_solid()`) is used, identical to the standalone mesher.
+//! - **Border** — the neighbor is outside bounds; the corresponding slot in
+//!   [`super::ChunkNeighbors::faces`] is consulted.  If the slot is `None`
+//!   (neighbor not loaded), the face is treated as visible.  If the slot is
+//!   `Some`, the voxel at the matching `(u, v)` position in the border slice
+//!   is checked; the face is culled when that voxel is solid.
+//!
+//! This approach requires no changes to the greedy merge loop itself — only
+//! the face-visibility predicate changes, making it zero-cost for interior faces.
 
 use bevy::mesh::Mesh;
 
@@ -12,21 +29,43 @@ use crate::voxel::VoxelType;
 use super::ChunkNeighbors;
 use super::greedy::{build_mesh, super_voxel, FaceDir};
 
-/// Generates a mesh for a chunk with neighbor-aware border culling.
+/// Generates a seam-free [`Mesh`] for a chunk by culling border faces against
+/// adjacent chunk data supplied in `neighbors`.
 ///
-/// When a voxel is at the edge of the chunk and its outward face would
-/// normally be emitted (because there is no neighbor *within* the chunk),
-/// this variant checks the corresponding neighbor border slice. If the
-/// adjacent voxel in the neighbor chunk is solid, the face is culled.
+/// This is the preferred meshing entry point for in-world rendering.  It
+/// produces the same greedy-merged geometry as [`super::generate_chunk_mesh`]
+/// but eliminates single-voxel gaps at chunk boundaries by consulting
+/// [`ChunkNeighbors`] before emitting any border face.
 ///
-/// If a neighbor slot is `None`, the border is treated as open air and the
-/// face is emitted normally.
+/// # Parameters
 ///
-/// # Arguments
+/// - `chunk` — The [`Chunk<V>`] to mesh.
+/// - `neighbors` — Border voxel data for the six adjacent chunks.  Slots set
+///   to `None` are treated as open air; the corresponding border faces are
+///   always emitted.  Build this from [`Chunk::border_slice`] on each loaded
+///   neighbor or use [`ChunkNeighbors::default`] to treat all borders as air.
+/// - `step` — LOD step size.  `1` = full detail; `2` = half detail.  Use
+///   [`super::lod::lod_to_step`] to derive this from a LOD level.
 ///
-/// * `chunk` — The chunk to mesh.
-/// * `neighbors` — Border data from the six adjacent chunks.
-/// * `step` — LOD step size (`1` for full detail, `2` for half).
+/// # Returns
+///
+/// See [`super::generate_chunk_mesh`] for the full attribute list.  The mesh
+/// is otherwise identical; only face culling at chunk borders differs.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use voxel_framework::{
+///     chunk::Chunk,
+///     mesh::{ChunkNeighbors, generate_chunk_mesh_with_neighbors},
+///     voxel::DefaultVoxel,
+/// };
+///
+/// let chunk = Chunk::<DefaultVoxel>::new();
+/// // All neighbors absent — borders treated as open air.
+/// let neighbors = ChunkNeighbors::<DefaultVoxel>::default();
+/// let mesh = generate_chunk_mesh_with_neighbors(&chunk, &neighbors, 1);
+/// ```
 pub fn generate_chunk_mesh_with_neighbors<V: VoxelType>(
     chunk: &Chunk<V>,
     neighbors: &ChunkNeighbors<V>,
