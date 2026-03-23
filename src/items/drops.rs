@@ -1,11 +1,33 @@
-//! Drop table and magnet/pickup systems.
+//! Drop table, world-entity lifecycle, and magnet pickup systems.
 //!
-//! [`DropTable`] maps voxel byte IDs to item drops and is queried by
-//! spawn_drops_system whenever a [`VoxelBroken`] message arrives.
+//! When a voxel is destroyed the mining subsystem emits a
+//! [`crate::world::VoxelBroken`] message.  This module listens to that message
+//! and drives the full item-drop pipeline:
 //!
-//! [`DropsPlugin`] is intentionally **not** added to [`VoxelPlugin`](crate::VoxelPlugin) — it is
-//! generic over the item type and must be added separately by game code,
-//! similar to [`GeneratorPlugin`](crate::generator::GeneratorPlugin).
+//! 1. **Spawn** — `spawn_drops_system` consults [`DropTable`] and spawns a
+//!    [`DroppedItem`] entity at the broken voxel's world position.
+//! 2. **Attract** — `magnet_system` applies a configurable acceleration toward
+//!    any entity tagged with [`ItemCollector`] once the item is within
+//!    [`MagnetConfig::radius`] world units.
+//! 3. **Collect** — when the item reaches within 0.5 units of the collector,
+//!    `magnet_system` calls [`crate::items::inventory::Inventory::add`], emits
+//!    [`crate::items::inventory::ItemPickedUp`], and despawns the entity.
+//! 4. **Expire** — items that are never collected despawn automatically after
+//!    their [`DroppedItem::lifetime`] reaches zero (default 60 seconds).
+//!
+//! # Plugin registration
+//!
+//! [`DropsPlugin`] is intentionally **not** bundled inside
+//! [`crate::VoxelPlugin`] because it is generic over `I: `[`ItemType`].
+//! Add it explicitly in game code, alongside
+//! [`crate::generator::GeneratorPlugin`]:
+//!
+//! ```rust,no_run
+//! use bevy::prelude::*;
+//! use voxel_framework::items::{DefaultItem, DropsPlugin};
+//!
+//! App::new().add_plugins(DropsPlugin::<DefaultItem>::new());
+//! ```
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -18,20 +40,33 @@ use super::inventory::{Inventory, ItemPickedUp, ItemType};
 
 // ─── DropTable ────────────────────────────────────────────────────────────────
 
-/// Maps voxel byte IDs to item drops.
+/// Mapping from voxel byte IDs to item drop definitions.
 ///
-/// # Example
+/// Each entry associates a voxel byte value (the `u8` returned by
+/// [`crate::voxel::VoxelType::to_byte`]) with an item type and a drop-count
+/// range `[min, max]`.  When a matching voxel is broken, `spawn_drops_system`
+/// queries this table and selects a count within the range using a
+/// deterministic LCG seeded from the voxel's world position.  If `min == max`
+/// the count is always fixed.
+///
+/// [`DropTable`] is initialized empty; register entries before the first
+/// [`crate::world::VoxelBroken`] message is processed.  It is available as a
+/// Bevy [`Resource`] after [`DropsPlugin`] is added.
+///
+/// # Examples
 ///
 /// ```rust,no_run
 /// use voxel_framework::items::{DropTable, DefaultItem};
 ///
 /// let mut table = DropTable::<DefaultItem>::new();
+/// // Voxel byte 1 drops 1–3 rock fragments.
 /// table.register(1, DefaultItem::RockFragment, 1, 3);
-/// table.register(2, DefaultItem::IronOre, 1, 2);
+/// // Voxel byte 2 always drops exactly 1 iron ore.
+/// table.register(2, DefaultItem::IronOre, 1, 1);
 /// ```
 #[derive(Resource, Debug, Clone)]
 pub struct DropTable<I: ItemType> {
-    /// voxel_byte → (item, count_min, count_max)
+    /// Internal map: `voxel_byte` → `(item, count_min, count_max)`.
     entries: HashMap<u8, (I, u32, u32)>,
 }
 
@@ -78,11 +113,33 @@ impl<I: ItemType> Default for DropTable<I> {
 // ─── MagnetConfig ─────────────────────────────────────────────────────────────
 
 /// Configuration for the magnetic item-attraction system.
+///
+/// This resource is inserted by [`DropsPlugin`] with [`Default`] values and
+/// can be overwritten after plugin registration to tune pickup feel.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::items::MagnetConfig;
+///
+/// fn setup(mut config: ResMut<MagnetConfig>) {
+///     config.radius = 8.0;
+///     config.force  = 16.0;
+/// }
+/// ```
 #[derive(Resource, Debug, Clone)]
 pub struct MagnetConfig {
-    /// Radius within which items are attracted to the [`ItemCollector`].
+    /// Distance (in world units) within which [`DroppedItem`] entities are
+    /// attracted toward the [`ItemCollector`].
+    ///
+    /// Items outside this radius are neither attracted nor collected.
+    /// Default: `4.0`.
     pub radius: f32,
-    /// Acceleration applied toward the collector (units/sec²).
+    /// Acceleration magnitude applied toward the collector each second
+    /// (world units/sec²).
+    ///
+    /// Higher values make items snap to the player faster.  Default: `8.0`.
     pub force: f32,
 }
 
@@ -97,22 +154,57 @@ impl Default for MagnetConfig {
 
 // ─── Components ───────────────────────────────────────────────────────────────
 
-/// A dropped item entity floating in the world.
+/// Component on a world entity representing an uncollected item drop.
+///
+/// `DroppedItem` entities are spawned by `spawn_drops_system` in response to
+/// [`crate::world::VoxelBroken`] messages and despawned by `magnet_system`
+/// when either collected or expired.
+///
+/// The entity has no [`Transform`] by default — `spawn_drops_system` creates
+/// the component without one.  Attaching a [`Transform`] enables spatial
+/// magnet logic; entities without one are skipped by the attraction phase but
+/// will still expire via `lifetime`.
+///
+/// # Lifecycle
+///
+/// 1. Spawned with `velocity` set to `(0, 2, 0)` (small upward bounce).
+/// 2. Attracted toward the [`ItemCollector`] once within [`MagnetConfig::radius`].
+/// 3. Collected (and despawned) when within 0.5 world units of the collector.
+/// 4. Despawned after `lifetime` seconds regardless of collection.
 #[derive(Component, Debug, Clone)]
 pub struct DroppedItem<I: ItemType> {
-    /// The item type.
+    /// The item type carried by this drop entity.
     pub item: I,
-    /// Stack size of this drop.
+    /// Number of items in this drop stack.  Always `>= 1`.
     pub count: u32,
-    /// Current velocity (world units/sec).
+    /// Current velocity in world space (units/sec).
+    ///
+    /// Updated by the magnet system each frame; game code can modify this to
+    /// apply custom physics (e.g. gravity or bounce).
     pub velocity: Vec3,
-    /// Remaining lifetime in seconds before the item despawns.
+    /// Seconds remaining before the entity is automatically despawned.
+    ///
+    /// Decremented each frame.  Default: `60.0`.
     pub lifetime: f32,
 }
 
-/// Tag component marking the entity that attracts and collects nearby items.
+/// Tag component marking the entity that attracts and collects nearby [`DroppedItem`] entities.
 ///
-/// Typically attached to the player entity.
+/// Add this component to the player entity after spawning it.  Only one
+/// collector entity is supported; `magnet_system` uses
+/// [`bevy::ecs::query::QuerySingleError`] and silently skips collection if
+/// zero or more than one entity carries this tag.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::items::ItemCollector;
+///
+/// fn spawn_player(mut commands: Commands) {
+///     commands.spawn((Transform::default(), ItemCollector));
+/// }
+/// ```
 #[derive(Component, Default)]
 pub struct ItemCollector;
 
@@ -223,15 +315,30 @@ fn magnet_system<I: ItemType>(
 
 // ─── DropsPlugin ─────────────────────────────────────────────────────────────
 
-/// Plugin that registers drop-table resources and systems for item type `I`.
+/// Plugin that wires up the full item-drop pipeline for item type `I`.
 ///
-/// **Not** added to [`VoxelPlugin`](crate::VoxelPlugin) — add it manually in game code alongside
-/// [`GeneratorPlugin`](crate::generator::GeneratorPlugin):
+/// Registering this plugin inserts the following resources (with defaults) and
+/// systems into the Bevy [`App`]:
+///
+/// | Resource | Purpose |
+/// |---|---|
+/// | [`DropTable<I>`] | Empty table; populate it in a `Startup` system |
+/// | [`MagnetConfig`] | Tunable attraction radius and force |
+/// | [`crate::items::inventory::Inventory<I>`] | Player's item storage |
+///
+/// It also registers the [`crate::items::inventory::ItemPickedUp<I>`] message
+/// type and adds `spawn_drops_system` and `magnet_system` to the `Update`
+/// schedule.
+///
+/// **This plugin is NOT included in [`crate::VoxelPlugin`]** — because it is
+/// generic over `I: `[`ItemType`], it must be added separately by game code.
+/// Add it alongside [`crate::generator::GeneratorPlugin`]:
 ///
 /// ```rust,no_run
-/// use voxel_framework::items::{DropsPlugin, DefaultItem};
+/// use bevy::prelude::*;
+/// use voxel_framework::items::{DefaultItem, DropsPlugin};
 ///
-/// // app.add_plugins(DropsPlugin::<DefaultItem>::new());
+/// App::new().add_plugins(DropsPlugin::<DefaultItem>::new());
 /// ```
 pub struct DropsPlugin<I: ItemType> {
     _marker: PhantomData<I>,

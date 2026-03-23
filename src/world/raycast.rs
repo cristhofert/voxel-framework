@@ -1,4 +1,46 @@
 //! DDA (Digital Differential Analysis) voxel raycasting.
+//!
+//! # Algorithm
+//!
+//! This module implements the classic 3-D DDA traversal introduced by Amanatides
+//! and Woo (1987).  Starting from `origin`, the algorithm maintains three
+//! "time-to-next-boundary" values (`t_max_x/y/z`).  At each iteration it
+//! advances across the voxel boundary that is reached soonest, records which
+//! axis was crossed (to reconstruct the face normal), and samples the new voxel.
+//! Because only one boundary is crossed per step, every solid voxel on the ray
+//! is guaranteed to be visited in order.
+//!
+//! # Coordinate space
+//!
+//! All positions are in **world space**, where each voxel occupies a
+//! `VOXEL_SIZE`-unit cube.  Integer grid coordinates correspond to voxel
+//! minimum corners; the center of voxel `(vx, vy, vz)` is at
+//! `(vx + 0.5, vy + 0.5, vz + 0.5)`.
+//!
+//! # Integration
+//!
+//! Call [`raycast`] from any Bevy system that has read access to
+//! [`crate::world::ChunkManager`] and the chunk query.  The returned
+//! [`RaycastHit`] gives you the chunk coordinate, local voxel index, world
+//! position, face normal, and travel distance — enough to drive both mining and
+//! block-placement logic.
+//!
+//! ```no_run
+//! # use bevy::prelude::*;
+//! # use voxel_framework::world::{ChunkManager, raycast::raycast};
+//! # use voxel_framework::voxel::DefaultVoxel;
+//! # use voxel_framework::chunk::Chunk;
+//! # fn example(
+//! #     manager: &ChunkManager,
+//! #     chunks: &Query<&Chunk<DefaultVoxel>>,
+//! # ) {
+//! let origin    = Vec3::new(0.0, 64.0, 0.0);
+//! let direction = Vec3::new(0.0, -1.0, 0.0); // straight down
+//! if let Some(hit) = raycast(origin, direction, 8.0, manager, chunks) {
+//!     println!("hit voxel {:?} at distance {:.2}", hit.local, hit.distance);
+//! }
+//! # }
+//! ```
 
 use bevy::prelude::*;
 
@@ -7,23 +49,88 @@ use crate::voxel::VoxelType;
 
 use super::ChunkManager;
 
-/// Result of a voxel raycast hit.
+/// Describes the first solid voxel intersected by a ray.
+///
+/// Returned by [`raycast`] when the ray hits a solid voxel before
+/// `max_distance` is exceeded.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use bevy::prelude::*;
+/// # use voxel_framework::world::{ChunkManager, raycast::raycast};
+/// # use voxel_framework::voxel::DefaultVoxel;
+/// # use voxel_framework::chunk::Chunk;
+/// # fn example(manager: &ChunkManager, chunks: &Query<&Chunk<DefaultVoxel>>) {
+/// if let Some(hit) = raycast(Vec3::ZERO, Vec3::X, 16.0, manager, chunks) {
+///     // Place a block one step back along the face normal.
+///     let place_pos = hit.position + hit.face_normal;
+///     println!("chunk {:?}, local {:?}", hit.chunk_coord, hit.local);
+/// }
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct RaycastHit {
-    /// World position of the hit voxel's center.
+    /// World-space center of the hit voxel, i.e. `(vx + 0.5, vy + 0.5, vz + 0.5)`.
     pub position: Vec3,
-    /// Chunk coordinate containing the hit voxel.
+    /// Integer chunk coordinate (in chunk-grid units) that contains the hit voxel.
+    ///
+    /// Multiply by `CHUNK_SIZE` to get the chunk's world-space origin.
     pub chunk_coord: ChunkCoord,
-    /// Local voxel coordinate within the chunk.
+    /// Local `(x, y, z)` index of the hit voxel within its chunk.
+    ///
+    /// Each component is in `[0, CHUNK_SIZE)`.
     pub local: (usize, usize, usize),
-    /// Face normal of the hit surface (unit vector).
+    /// Outward unit normal of the voxel face that was struck.
+    ///
+    /// One axis component is `±1.0`, the other two are `0.0`.
+    /// For a voxel entered from its origin (the ray starts inside), this is
+    /// `Vec3::ZERO`.
     pub face_normal: Vec3,
-    /// Distance from ray origin to the hit.
+    /// Travel distance along the ray from `origin` to the hit voxel boundary, in world units.
+    ///
+    /// `0.0` when the ray origin is already inside a solid voxel.
     pub distance: f32,
 }
 
-/// Cast a ray from `origin` in `direction` up to `max_distance` units.
-/// Returns the first solid voxel hit, or `None`.
+/// Cast a ray through the voxel world and return the first solid voxel hit.
+///
+/// Uses a 3-D DDA traversal so every voxel on the ray path is visited in
+/// order without skipping any.
+///
+/// # Parameters
+///
+/// - `origin` — World-space ray start position.
+/// - `direction` — Ray direction (need not be normalised; the function
+///   normalises it internally).
+/// - `max_distance` — Maximum travel distance in world units.  The traversal
+///   stops as soon as the current `t` value exceeds this limit.
+/// - `manager` — The chunk registry used to resolve world coordinates to
+///   chunk entities.
+/// - `chunks` — ECS query providing read access to chunk data.
+///
+/// # Return value
+///
+/// Returns `Some(RaycastHit)` for the **first** solid voxel the ray enters.
+/// Returns `None` when the ray travels `max_distance` without striking a
+/// solid voxel, or if all traversed chunks are unloaded.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use bevy::prelude::*;
+/// # use voxel_framework::world::{ChunkManager, raycast::raycast};
+/// # use voxel_framework::voxel::DefaultVoxel;
+/// # use voxel_framework::chunk::Chunk;
+/// # fn example(manager: &ChunkManager, chunks: &Query<&Chunk<DefaultVoxel>>) {
+/// let origin    = Vec3::new(8.0, 70.0, 8.0);
+/// let direction = Vec3::new(1.0, -0.2, 0.0);
+/// match raycast(origin, direction, 10.0, manager, chunks) {
+///     Some(hit) => println!("hit at distance {:.2}, face {:?}", hit.distance, hit.face_normal),
+///     None      => println!("no solid voxel in range"),
+/// }
+/// # }
+/// ```
 pub fn raycast<V: VoxelType>(
     origin: Vec3,
     direction: Vec3,

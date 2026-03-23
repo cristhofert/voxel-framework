@@ -1,7 +1,49 @@
-//! Animated voxel fragments.
+//! Voxel break-apart fragment effect.
 //!
-//! Spawns small cube debris when voxels are destroyed.
-//! Configure via [`FragmentConfig`]. Add [`FragmentPlugin`] to enable.
+//! When a voxel is destroyed, this module spawns a small burst of cube-shaped
+//! debris particles that fly outward, arc downward under simulated gravity,
+//! and automatically despawn after a configurable lifetime.
+//!
+//! # Lifecycle
+//!
+//! 1. **Spawn** — each `VoxelBroken` message
+//!    triggers the spawning of [`FragmentConfig::count`] fragment entities
+//!    centered at the broken voxel's world position.  Initial velocities are
+//!    distributed using a golden-angle spiral with pseudo-random jitter so
+//!    fragments fan out naturally rather than clustering.
+//! 2. **Physics update** — every `Update` tick, each fragment's velocity is
+//!    updated with a downward gravity acceleration
+//!    ([`FragmentConfig::gravity`]), its position is integrated, and its
+//!    remaining lifetime is decremented.
+//! 3. **Despawn** — once `lifetime_remaining` reaches zero the entity is
+//!    despawned immediately.
+//!
+//! # Pooled mesh assets
+//!
+//! All fragments share a single [`Mesh`] handle and a single
+//! [`StandardMaterial`] handle, both pre-allocated during `Startup` and stored
+//! in the [`FragmentAssets`] resource.  This avoids re-allocating GPU resources
+//! for every voxel break event.
+//!
+//! # Integration
+//!
+//! ```no_run
+//! use bevy::prelude::*;
+//! use voxel_framework::fragments::{FragmentConfig, FragmentPlugin};
+//!
+//! fn main() {
+//!     App::new()
+//!         .insert_resource(FragmentConfig {
+//!             count: 10,
+//!             initial_speed: 5.0,
+//!             gravity: 12.0,
+//!             lifetime: 1.2,
+//!             size: 0.15,
+//!         })
+//!         .add_plugins(FragmentPlugin)
+//!         .run();
+//! }
+//! ```
 
 use bevy::prelude::*;
 
@@ -10,18 +52,36 @@ use crate::world::VoxelBroken;
 
 // ─── Resources ───────────────────────────────────────────────────────────────
 
-/// Controls fragment appearance and behavior.
+/// Controls the appearance and physics behavior of voxel break fragments.
+///
+/// Insert a customized instance before adding [`FragmentPlugin`] to override
+/// the defaults, or rely on [`Default`] for sensible Minecraft-like values.
 #[derive(Resource, Debug, Clone)]
 pub struct FragmentConfig {
-    /// Number of fragments per broken voxel. Default: 6
+    /// Number of fragment entities spawned per broken voxel.
+    ///
+    /// Higher values produce a denser, more dramatic effect at the cost of
+    /// additional entity overhead per break event.  Default: `6`.
     pub count: u32,
-    /// Initial speed of fragments (units/sec). Default: 4.0
+    /// Magnitude of the initial outward velocity applied to each fragment,
+    /// in world units per second.
+    ///
+    /// The actual per-fragment speed is jittered in the range
+    /// `[0.7 × initial_speed, 1.3 × initial_speed]`.  Default: `4.0`.
     pub initial_speed: f32,
-    /// Downward gravity acceleration. Default: 9.8
+    /// Downward acceleration applied every tick, in world units per second².
+    ///
+    /// Analogous to gravitational acceleration.  Higher values make fragments
+    /// fall faster and arc more sharply.  Default: `9.8`.
     pub gravity: f32,
-    /// Fragment lifetime in seconds. Default: 1.5
+    /// Duration in seconds before a fragment entity is automatically despawned.
+    ///
+    /// Default: `1.5`.
     pub lifetime: f32,
-    /// Fragment cube size (world units). Default: 0.2
+    /// Side length of each fragment cube, in world units.
+    ///
+    /// Also controls the random spawn offset: fragments are displaced by up to
+    /// `±size` from the voxel center at spawn time.  Default: `0.2`.
     pub size: f32,
 }
 
@@ -37,22 +97,45 @@ impl Default for FragmentConfig {
     }
 }
 
-/// Shared mesh and material handles for fragment entities.
+/// Shared GPU asset handles used by all fragment entities.
 ///
-/// Initialized at startup by `setup_fragment_assets` and stored as a resource
-/// so that `spawn_fragments_system` can reuse them without re-allocating.
+/// All fragments in a scene share a single [`Mesh`] (a cube of side length
+/// [`FragmentConfig::size`]) and a single warm-grey unlit [`StandardMaterial`].
+/// Sharing these handles avoids creating a new GPU resource per broken voxel.
+///
+/// This resource is inserted automatically at `Startup` by the setup system
+/// registered in [`FragmentPlugin`].  It is available for queries from any
+/// subsequent system that needs to inspect or override the shared assets.
 #[derive(Resource)]
 pub struct FragmentAssets {
+    /// Handle to the shared cuboid mesh used by every fragment entity.
     pub mesh: Handle<Mesh>,
+    /// Handle to the shared unlit material used by every fragment entity.
+    ///
+    /// The base color is a warm grey (`srgb(0.55, 0.50, 0.47)`) with
+    /// `unlit: true` so fragments remain visible regardless of scene lighting.
     pub material: Handle<StandardMaterial>,
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-/// Component on a fragment entity — tracks remaining lifetime and velocity.
+/// Per-entity state component attached to each fragment particle.
+///
+/// The update system reads and writes both fields every tick.  Entities whose
+/// `lifetime_remaining` reaches zero or below are despawned immediately.
 #[derive(Component)]
 pub struct Fragment {
+    /// Current velocity of the fragment in world space, in units per second.
+    ///
+    /// Set at spawn time from [`FragmentConfig::initial_speed`] and the
+    /// outward direction computed by the golden-angle spiral.  Decremented
+    /// along the Y axis each frame by gravity
+    /// ([`FragmentConfig::gravity`] × delta time).
     pub velocity: Vec3,
+    /// Seconds remaining before this fragment entity is despawned.
+    ///
+    /// Initialized to [`FragmentConfig::lifetime`] at spawn.  Decremented by
+    /// `Time::delta_secs()` each `Update` tick.
     pub lifetime_remaining: f32,
 }
 
@@ -209,6 +292,36 @@ fn update_fragments_system(
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
+/// Plugin that enables the voxel break-apart fragment effect.
+///
+/// # What it registers
+///
+/// * [`FragmentConfig`] — initialized as a default resource.  Insert a
+///   pre-populated instance before adding this plugin to override the defaults.
+/// * A `Startup` system that allocates the shared mesh and material and inserts
+///   them as [`FragmentAssets`].
+/// * A `Update` system that listens for `VoxelBroken` messages and spawns
+///   fragment entities; ordered after `GeneratorSystems` to ensure world state
+///   is settled first.
+/// * A `Update` system that advances fragment physics and despawns expired
+///   entities.
+///
+/// # Examples
+///
+/// ```no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::fragments::{FragmentConfig, FragmentPlugin};
+///
+/// fn main() {
+///     App::new()
+///         .insert_resource(FragmentConfig {
+///             count: 8,
+///             ..Default::default()
+///         })
+///         .add_plugins(FragmentPlugin)
+///         .run();
+/// }
+/// ```
 pub struct FragmentPlugin;
 
 impl Plugin for FragmentPlugin {

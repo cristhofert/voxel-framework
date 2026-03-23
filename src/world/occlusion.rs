@@ -1,8 +1,40 @@
 //! Chunk occlusion culling.
 //!
-//! A chunk is occluded when all 6 of its face-adjacent neighbors are
-//! fully solid (every voxel is non-air). In that case none of its
-//! border faces are visible and the mesh can be hidden.
+//! # Six-neighbour check
+//!
+//! A chunk is considered **occluded** when every one of its six face-adjacent
+//! neighbours (±X, ±Y, ±Z) is **fully solid** — meaning every voxel in that
+//! neighbour chunk returns `is_solid()`.  When a chunk is occluded, none of
+//! its boundary faces can be seen from outside: the surrounding solid mass
+//! hides it completely.  The chunk's `Visibility` component is then set to
+//! `Hidden`, skipping both CPU culling and GPU rasterisation.
+//!
+//! # Performance benefit
+//!
+//! For underground or densely packed voxel worlds (e.g. caves, the interior
+//! of large structures) this can eliminate a large fraction of draw calls
+//! without any per-frame ray testing.  The check itself is O(1) per chunk
+//! (six neighbour lookups, one `is_fully_solid` call each).
+//!
+//! # Integration
+//!
+//! Re-evaluation is triggered by [`crate::world::ChunkModified`] events.
+//! Every time a chunk is modified, both that chunk and its six neighbours are
+//! re-evaluated so that newly placed or destroyed voxels propagate correctly
+//! to adjacent visibility.
+//!
+//! Add [`OcclusionPlugin`] to your app after
+//! [`crate::world::WorldPlugin`] and the generator plugin:
+//!
+//! ```no_run
+//! # use bevy::prelude::*;
+//! # use voxel_framework::{VoxelPlugin, world::occlusion::OcclusionPlugin, voxel::DefaultVoxel};
+//! App::new()
+//!     .add_plugins(DefaultPlugins)
+//!     .add_plugins(VoxelPlugin)
+//!     .add_plugins(OcclusionPlugin::<DefaultVoxel>::new())
+//!     .run();
+//! ```
 
 use bevy::prelude::*;
 
@@ -21,8 +53,35 @@ const NEIGHBOR_DIRS: [IVec3; 6] = [
     IVec3::new(0, 0, -1),
 ];
 
-/// Returns true if the chunk at `coord` is surrounded on all 6 sides
-/// by fully-solid chunks, meaning it has no visible border faces.
+/// Returns `true` if the chunk at `coord` is fully occluded by its neighbours.
+///
+/// A chunk is occluded when **all six** face-adjacent neighbours (±X, ±Y, ±Z)
+/// are loaded and every voxel in each neighbour is solid.  If any neighbour is
+/// missing (unloaded) or contains at least one non-solid voxel, the function
+/// returns `false` and the chunk remains visible.
+///
+/// # Parameters
+///
+/// - `coord` — Chunk-grid coordinate of the chunk to test.
+/// - `manager` — Chunk registry used to look up neighbour entities.
+/// - `chunks` — Read query for chunk voxel data.
+///
+/// # Return value
+///
+/// `true` if all six neighbours are fully solid, `false` otherwise.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use bevy::prelude::*;
+/// # use voxel_framework::world::{ChunkManager, occlusion::is_chunk_occluded};
+/// # use voxel_framework::chunk::Chunk;
+/// # use voxel_framework::voxel::DefaultVoxel;
+/// # fn example(manager: &ChunkManager, chunks: &Query<&Chunk<DefaultVoxel>>) {
+/// let occluded = is_chunk_occluded::<DefaultVoxel>(IVec3::new(2, 0, 2), manager, chunks);
+/// println!("chunk is occluded: {occluded}");
+/// # }
+/// ```
 pub fn is_chunk_occluded<V: VoxelType>(
     coord: IVec3,
     manager: &ChunkManager,
@@ -90,7 +149,12 @@ pub fn occlusion_update_system<V: VoxelType>(
 
 // ─── OcclusionPlugin ──────────────────────────────────────────────────────────
 
-/// Plugin that registers [`occlusion_update_system`] into the Bevy app.
+/// Bevy plugin that registers chunk occlusion culling into the app.
+///
+/// Adds [`occlusion_update_system`] to the `Update` schedule, running
+/// **after** `GeneratorSystems`.  The system listens for
+/// [`crate::world::ChunkModified`] events and re-evaluates the `Visibility`
+/// component for the modified chunk and all six of its face-adjacent neighbours.
 ///
 /// Add this plugin after [`crate::world::WorldPlugin`] and
 /// [`crate::generator::GeneratorPlugin`]:

@@ -1,8 +1,53 @@
 //! Voxel collision detection and resolution.
 //!
-//! Provides sphere-based collision against the loaded voxel world.
-//! Suitable for player movement, physics objects, or any entity
-//! that should not pass through solid voxels.
+//! # Primitives
+//!
+//! Two collision shapes are provided:
+//!
+//! | Shape | Functions | When to use |
+//! |-------|-----------|-------------|
+//! | **Sphere** | [`sphere_overlaps_voxels`], [`resolve_sphere_collision`] | Balls, projectiles, simple objects |
+//! | **Capsule** | [`capsule_overlaps_voxels`], [`resolve_capsule_collision`] | Humanoid players, NPCs, any tall entity |
+//!
+//! # Push-out algorithm
+//!
+//! Both resolve functions use an **accumulative push-out** approach:
+//!
+//! 1. Enumerate all voxels whose axis-aligned bounding box (AABB) overlaps the
+//!    shape's bounding box.
+//! 2. For each solid voxel, compute the **closest point** on the voxel AABB to
+//!    the shape's representative point (center for sphere, nearest spine point
+//!    for capsule).
+//! 3. If the distance from that point to the representative point is less than
+//!    `radius`, calculate the overlap depth and accumulate a push-out vector
+//!    along the separation direction.
+//! 4. When the representative point is fully **inside** the AABB (distance
+//!    ≈ 0), the minimum-penetration-depth axis is chosen for the push-out
+//!    instead.
+//! 5. The accumulated push-out is added to the input position and returned.
+//!
+//! The caller is responsible for velocity response (zeroing, reflecting, or
+//! sliding the velocity component along the contact normal).
+//!
+//! # Integration pattern
+//!
+//! ```no_run
+//! # use bevy::prelude::*;
+//! # use voxel_framework::world::collision::resolve_capsule_collision;
+//! # use voxel_framework::world::ChunkManager;
+//! # use voxel_framework::chunk::Chunk;
+//! # use voxel_framework::voxel::DefaultVoxel;
+//! fn move_player(
+//!     mut transform: Mut<Transform>,
+//!     manager:       Res<ChunkManager>,
+//!     chunks:        Query<&Chunk<DefaultVoxel>>,
+//! ) {
+//!     let bottom = transform.translation;
+//!     let top    = bottom + Vec3::Y * 1.8;
+//!     let resolved = resolve_capsule_collision(bottom, top, 0.4, &manager, &chunks);
+//!     transform.translation = resolved;
+//! }
+//! ```
 
 use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
@@ -11,13 +56,25 @@ use crate::chunk::{Chunk, VOXEL_SIZE, world_to_chunk_coord, world_to_local_coord
 use crate::voxel::VoxelType;
 use crate::world::ChunkManager;
 
-/// Check if a sphere centered at `center` with `radius` overlaps any solid voxel.
+/// Returns `true` if a sphere overlaps any solid voxel in the loaded world.
 ///
-/// Returns `true` if any voxel within the sphere's AABB is solid and the
-/// sphere-vs-AABB test passes for that voxel.
+/// Iterates all voxels within the sphere's axis-aligned bounding box and
+/// performs a sphere-vs-AABB intersection test for each solid one.  Stops
+/// at the first overlap found.
 ///
-/// The `F` query filter lets callers restrict which chunk entities are considered.
-/// Use `Query<&Chunk<V>>` (filter `()`) for the default case.
+/// # Parameters
+///
+/// - `center` — World-space center of the sphere.
+/// - `radius` — Radius of the sphere in world units.
+/// - `manager` — Chunk registry used to resolve coordinates to entities.
+/// - `chunks` — ECS query providing read access to chunk data.  The `F`
+///   query filter lets callers restrict which chunk entities are considered;
+///   pass `()` for the default (all loaded chunks).
+///
+/// # Return value
+///
+/// `true` if the sphere intersects at least one solid voxel, `false` otherwise.
+/// Unloaded chunks are treated as passable (no overlap).
 pub fn sphere_overlaps_voxels<V: VoxelType, F: QueryFilter>(
     center: Vec3,
     radius: f32,
@@ -50,14 +107,31 @@ pub fn sphere_overlaps_voxels<V: VoxelType, F: QueryFilter>(
     false
 }
 
-/// Resolve sphere collision against solid voxels.
+/// Resolve sphere collision against solid voxels and return the corrected position.
 ///
-/// Given the current `position` for a sphere of `radius`, returns the resolved
-/// position after sliding along voxel surfaces by accumulating push-out vectors.
-/// Does NOT modify velocity — the caller decides how to handle that.
+/// For each solid voxel that overlaps the sphere, computes a push-out vector
+/// that moves the sphere centre outside the voxel AABB by exactly `radius`
+/// units.  All per-voxel push-outs are **accumulated** (summed) and added to
+/// `position` in one step.
 ///
-/// The `F` query filter lets callers restrict which chunk entities are considered.
-/// Use `Query<&Chunk<V>>` (filter `()`) for the default case.
+/// Does **not** modify velocity.  The caller is responsible for zeroing or
+/// reflecting the velocity component along the push-out direction if needed.
+///
+/// Unloaded chunks are treated as passable and do not contribute push-out.
+///
+/// # Parameters
+///
+/// - `position` — World-space sphere centre before resolution.
+/// - `radius` — Sphere radius in world units.
+/// - `manager` — Chunk registry.
+/// - `chunks` — Read query for chunk data.  The `F` filter restricts which
+///   entities are sampled; use `()` for the default (all loaded chunks).
+///
+/// # Return value
+///
+/// The corrected world-space sphere centre after push-out.  May still overlap
+/// in extreme tunnelling cases (high-speed objects, very large radius); run
+/// multiple resolution passes if needed.
 pub fn resolve_sphere_collision<V: VoxelType, F: QueryFilter>(
     position: Vec3,
     radius: f32,
@@ -137,14 +211,39 @@ pub fn resolve_sphere_collision<V: VoxelType, F: QueryFilter>(
     position + total_pushout
 }
 
-/// Resolve capsule collision against solid voxels.
+/// Resolve capsule collision against solid voxels and return the corrected bottom position.
 ///
-/// A capsule is defined by a `bottom` point, a `top` point (forming the
-/// central axis), and a `radius`. This is the standard representation for
-/// player collision in first-person games.
+/// A capsule is defined by two **spine endpoints** (`bottom` and `top`) and a
+/// `radius`.  This is the standard representation for humanoid player
+/// collision: `bottom` is the foot position, `top` is the head position, and
+/// `radius` is the half-width of the body.
 ///
-/// Returns the resolved `bottom` position after sliding against voxels.
-/// The top is assumed to be `bottom + (top - bottom)` (same offset).
+/// # Algorithm
+///
+/// For each solid voxel overlapping the capsule's bounding box:
+///
+/// 1. Find the point on the spine segment `[bottom, top]` that is closest to
+///    the voxel AABB centre (the projection clamped to the segment).
+/// 2. Perform the same sphere-vs-AABB push-out as [`resolve_sphere_collision`]
+///    but centred on that projected spine point instead of a fixed centre.
+/// 3. Accumulate push-out vectors across all overlapping voxels.
+///
+/// The accumulated displacement is applied to `bottom`; `top` is implicitly
+/// translated by the same amount (the spine offset `top - bottom` is preserved).
+///
+/// # Parameters
+///
+/// - `bottom` — World-space foot (lower spine endpoint) of the capsule.
+/// - `top` — World-space head (upper spine endpoint) of the capsule.
+/// - `radius` — Capsule radius in world units.
+/// - `manager` — Chunk registry.
+/// - `chunks` — Read query for chunk data.  The `F` filter restricts which
+///   entities are sampled; use `()` for the default (all loaded chunks).
+///
+/// # Return value
+///
+/// The corrected world-space position for `bottom`.  Compute the new `top` as
+/// `resolved_bottom + (top - bottom)`.
 pub fn resolve_capsule_collision<V: VoxelType, F: QueryFilter>(
     bottom: Vec3,
     top: Vec3,
@@ -224,7 +323,26 @@ pub fn resolve_capsule_collision<V: VoxelType, F: QueryFilter>(
     bottom + total_pushout
 }
 
-/// Check if a capsule overlaps any solid voxel.
+/// Returns `true` if a capsule overlaps any solid voxel in the loaded world.
+///
+/// Uses the same spine-projection technique as [`resolve_capsule_collision`]:
+/// for each candidate solid voxel the closest point on the spine segment
+/// `[bottom, top]` is found and a sphere-vs-AABB test is performed at that
+/// point with the given `radius`.
+///
+/// # Parameters
+///
+/// - `bottom` — World-space foot (lower spine endpoint).
+/// - `top` — World-space head (upper spine endpoint).
+/// - `radius` — Capsule radius in world units.
+/// - `manager` — Chunk registry.
+/// - `chunks` — Read query for chunk data.  The `F` filter restricts which
+///   entities are sampled; use `()` for the default (all loaded chunks).
+///
+/// # Return value
+///
+/// `true` if the capsule intersects at least one solid voxel, `false` otherwise.
+/// Unloaded chunks are treated as passable.
 pub fn capsule_overlaps_voxels<V: VoxelType, F: QueryFilter>(
     bottom: Vec3,
     top: Vec3,

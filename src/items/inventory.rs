@@ -1,7 +1,14 @@
-//! Inventory resource and the `ItemType` trait.
+//! Slot-based inventory resource and the [`ItemType`] trait.
 //!
-//! [`ItemType`] mirrors [`crate::voxel::VoxelType`] — implement it for any
-//! `Copy + Hash` enum to make it usable as an inventory item.
+//! This module is the data layer of the item system.  It defines the
+//! [`ItemType`] trait that all item enums must implement, the [`Inventory`]
+//! resource that stores collected items, and the [`ItemPickedUp`] message
+//! emitted whenever items successfully enter the inventory.
+//!
+//! The design mirrors [`crate::voxel::VoxelType`]: item types are lightweight
+//! value types (typically unit-variant enums) stored densely in a flat slot
+//! vector.  The actual spawning, attraction, and pickup logic lives in
+//! [`crate::items::drops`]; this module is concerned only with the data model.
 
 use std::hash::Hash;
 
@@ -9,30 +16,85 @@ use bevy::prelude::*;
 
 // ─── ItemType trait ───────────────────────────────────────────────────────────
 
-/// Core trait that all item types must implement.
+/// Contract that all item types must satisfy to participate in the item pipeline.
 ///
-/// Mirrors [`crate::voxel::VoxelType`]: implementors must be lightweight value
-/// types (typically unit-variant enums) so they can be stored densely in
-/// inventory slots.
+/// Implement this trait for any `Copy + Hash + Default` enum to make it usable
+/// with [`Inventory`], [`crate::items::drops::DropTable`],
+/// [`crate::items::drops::DropsPlugin`], and
+/// [`crate::items::persistence::save_inventory`] /
+/// [`crate::items::persistence::load_inventory`].
+///
+/// The framework ships [`DefaultItem`] as a ready-made implementation.
+/// Custom implementations should designate one variant as the *empty sentinel*
+/// (returned by [`Default`]) and override [`ItemType::is_empty`] accordingly.
+///
+/// # Contract
+///
+/// * `Copy + Clone` — slots are copied freely; no heap allocation per item.
+/// * `Default` — produces the empty-sentinel value.
+/// * `PartialEq + Eq + Hash` — required for slot deduplication and hash-map
+///   lookups in [`crate::items::drops::DropTable`].
+/// * `Send + Sync + 'static` — required for use as a Bevy [`Resource`] type
+///   parameter.
+/// * [`to_byte`](ItemType::to_byte) / [`from_byte`](ItemType::from_byte) —
+///   stable single-byte encoding used by the JSON persistence layer.  Unknown
+///   bytes must round-trip to `Self::default()`.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use voxel_framework::items::ItemType;
+///
+/// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// enum MyItem { #[default] Empty, Wood, Stone }
+///
+/// impl ItemType for MyItem {
+///     fn name(&self) -> &'static str {
+///         match self { MyItem::Empty => "Empty", MyItem::Wood => "Wood", MyItem::Stone => "Stone" }
+///     }
+///     fn color(&self) -> [f32; 4] {
+///         match self {
+///             MyItem::Empty => [0.0; 4],
+///             MyItem::Wood  => [0.55, 0.35, 0.20, 1.0],
+///             MyItem::Stone => [0.50, 0.50, 0.50, 1.0],
+///         }
+///     }
+///     fn to_byte(&self) -> u8   { match self { MyItem::Empty => 0, MyItem::Wood => 1, MyItem::Stone => 2 } }
+///     fn from_byte(b: u8) -> Self { match b { 1 => MyItem::Wood, 2 => MyItem::Stone, _ => MyItem::Empty } }
+///     fn is_empty(&self) -> bool { matches!(self, MyItem::Empty) }
+/// }
+/// ```
 pub trait ItemType:
     Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash + 'static
 {
-    /// Human-readable name for this item (e.g. `"Iron Ore"`).
+    /// Human-readable display name for this item (e.g. `"Iron Ore"`).
+    ///
+    /// Used by UI widgets such as the pickup notification overlay.
     fn name(&self) -> &'static str;
 
-    /// Default RGBA display color for this item.
+    /// Default RGBA display colour for this item, with components in `[0.0, 1.0]`.
+    ///
+    /// Used by hotbar and inventory UI as a fallback when no sprite is available.
     fn color(&self) -> [f32; 4];
 
-    /// Serialises this item to a single byte for binary persistence.
+    /// Encodes this item variant as a single byte for JSON persistence.
+    ///
+    /// The mapping must be stable across game versions; changing it will
+    /// corrupt existing save files.  The empty-sentinel variant should map
+    /// to `0`.
     fn to_byte(&self) -> u8;
 
-    /// Deserialises an item from a single byte. Unknown bytes should map to
-    /// `Self::default()`.
+    /// Decodes a single byte back into an item variant.
+    ///
+    /// Unknown byte values — for example from a future game version — **must**
+    /// return `Self::default()` rather than panicking so that save files from
+    /// newer versions degrade gracefully.
     fn from_byte(b: u8) -> Self;
 
-    /// Returns `true` if this item represents the "empty slot" sentinel.
+    /// Returns `true` if this variant is the empty-slot sentinel.
     ///
-    /// Override this for an enum variant that means "nothing here".
+    /// The default implementation returns `false`; override it for the variant
+    /// that represents "nothing here" (typically the `Default` variant).
     fn is_empty(&self) -> bool {
         false
     }
@@ -40,27 +102,56 @@ pub trait ItemType:
 
 // ─── InventorySlot ────────────────────────────────────────────────────────────
 
-/// A single inventory slot holding a stack of one item type.
+/// A single occupied inventory slot, holding a stack of one item type.
+///
+/// Slots are always non-empty — "no item" is represented by `None` at the
+/// [`Inventory::slots`] level rather than a zero-count `InventorySlot`.
+/// The `count` field is therefore always `>= 1` in practice; the drop systems
+/// never produce a zero-count slot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventorySlot<I: ItemType> {
-    /// The item stored in this slot.
+    /// The item type stored in this slot.
     pub item: I,
-    /// Number of items in the stack.
+    /// Number of items in the stack.  Always `>= 1` for a live slot.
     pub count: u32,
 }
 
 // ─── Inventory ────────────────────────────────────────────────────────────────
 
-/// Fixed-capacity player inventory.
+/// Fixed-capacity player inventory backed by a flat slot vector.
 ///
-/// Each slot holds an optional [`InventorySlot`]. Multiple stacks of the same
-/// item type are stored in separate slots; [`add`][Self::add] fills existing
-/// stacks before opening new ones.
+/// The inventory holds up to `capacity` stacks, each stored as
+/// `Option<`[`InventorySlot`]`<I>>`.  `None` denotes an empty slot.
+///
+/// Items of the same type are automatically stacked: [`Inventory::add`]
+/// fills existing stacks of the matching type before opening a new slot.
+/// [`Inventory::remove`] drains stacks in order and clears slots that reach
+/// zero.
+///
+/// The default capacity is 36 slots (4 rows × 9 columns), matching the
+/// standard Minecraft-style layout expected by the built-in hotbar and
+/// inventory UI widgets.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use voxel_framework::items::{Inventory, DefaultItem};
+///
+/// let mut inv = Inventory::<DefaultItem>::new(9);
+/// inv.add(DefaultItem::IronOre, 5);
+/// assert_eq!(inv.count_of(DefaultItem::IronOre), 5);
+/// ```
 #[derive(Resource, Debug, Clone)]
 pub struct Inventory<I: ItemType> {
-    /// The slots in this inventory. `None` means the slot is empty.
+    /// The backing slot vector.  `None` at index `i` means slot `i` is empty.
+    ///
+    /// The length always equals `capacity`; slots are never removed from the
+    /// vector.
     pub slots: Vec<Option<InventorySlot<I>>>,
-    /// Maximum number of slots.
+    /// Maximum number of distinct item stacks the inventory can hold.
+    ///
+    /// Set at construction time; cannot be changed after the fact without
+    /// rebuilding the inventory.
     pub capacity: usize,
 }
 
@@ -161,21 +252,43 @@ impl<I: ItemType> Default for Inventory<I> {
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
-/// Emitted when one or more items are successfully added to the inventory.
+/// Message emitted when one or more items are successfully added to the inventory.
+///
+/// The magnet system in [`crate::items::drops`] writes this message after
+/// adding items to [`Inventory`].  UI systems — such as the pickup notification
+/// overlay — subscribe to this message to display transient feedback.
+///
+/// Note: this message is only written when at least one item was actually
+/// inserted (i.e. `count > 0`).  If the inventory was full the message is
+/// **not** written even though a pickup was attempted.
 #[derive(Message, Debug, Clone)]
 pub struct ItemPickedUp<I: ItemType> {
     /// The item type that was picked up.
     pub item: I,
-    /// How many were added.
+    /// Number of items that were successfully inserted.  Always `>= 1`.
     pub count: u32,
 }
 
 // ─── DefaultItem ─────────────────────────────────────────────────────────────
 
-/// The default set of item types bundled with the framework.
+/// Built-in item type covering common mineral pickups.
 ///
-/// Mirrors [`crate::voxel::DefaultVoxel`]: `Empty` is the sentinel, the rest
-/// correspond to common mineral drops.
+/// `DefaultItem` is the item counterpart of [`crate::voxel::DefaultVoxel`]:
+/// it implements [`ItemType`] out of the box and is wired into the default
+/// [`crate::items::drops::DropTable`] entries provided by the framework.
+///
+/// `Empty` is the empty-slot sentinel returned by [`Default`] and by
+/// [`ItemType::from_byte`] for unknown byte values.  It should never appear
+/// as a real collectible.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use voxel_framework::items::{DefaultItem, Inventory};
+///
+/// let mut inv = Inventory::<DefaultItem>::new(9);
+/// inv.add(DefaultItem::Crystal, 3);
+/// ```
 #[derive(
     Debug,
     Clone,
@@ -188,16 +301,16 @@ pub struct ItemPickedUp<I: ItemType> {
     serde::Deserialize,
 )]
 pub enum DefaultItem {
-    /// Empty slot sentinel — not a real item.
+    /// Empty slot sentinel — not a real item; returned by [`Default`].
     #[default]
     Empty,
-    /// Fragment of common rock.
+    /// Fragment of common rock; drops from basic stone voxels.
     RockFragment,
-    /// Raw iron ore chunk.
+    /// Raw iron ore chunk; drops from iron-bearing voxels.
     IronOre,
-    /// Silicon crystal shard.
+    /// Silicon crystal shard; drops from crystal voxels.
     Crystal,
-    /// Rare mineral node.
+    /// Rare mineral node; drops from high-value voxels.
     RareMineral,
 }
 

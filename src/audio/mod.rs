@@ -1,19 +1,72 @@
-//! Configurable SFX system.
+//! Decoupled sound-effect system for the voxel framework.
 //!
-//! The framework emits [`SfxRequest`] messages when audio should play.
-//! Add [`DefaultAudioPlugin`] to handle them with Bevy's built-in audio,
-//! or implement your own handler for custom audio engines.
+//! # Design
 //!
-//! # Real audio with Bevy
+//! The audio module is deliberately split into two layers:
 //!
-//! By default `bevy` is compiled without the `bevy_audio` feature because
-//! `voxel-framework` sets `default-features = false`. To enable real audio
-//! playback:
+//! * **Event layer** ([`SfxPlugin`]) — framework systems translate world events
+//!   (voxel broken, voxel placed, …) into [`SfxRequest`] messages.  This layer
+//!   has no knowledge of any audio engine.
+//! * **Playback layer** — the game is responsible for consuming [`SfxRequest`]
+//!   messages and driving its chosen audio backend.  [`DefaultAudioPlugin`] is
+//!   provided as a stub that only logs requests; replace it for real playback.
 //!
-//! 1. Add `"bevy_audio"` (and a backend such as `"vorbis"`) to the `features`
-//!    list of the `bevy` dependency in your game's `Cargo.toml`.
-//! 2. Replace [`DefaultAudioPlugin`] (which only logs) with your own plugin
-//!    that reads [`SfxRequest`] messages and uses `AudioPlayer` + `PlaybackSettings`.
+//! This split keeps `voxel-framework` free of a mandatory `bevy_audio`
+//! dependency.  Because `voxel-framework` compiles Bevy with
+//! `default-features = false`, the `bevy_audio` crate (and any codec backend
+//! such as `vorbis`) is **not** included unless the consuming game opts in.
+//!
+//! # Integration
+//!
+//! 1. Add `"bevy_audio"` and a codec feature (e.g. `"vorbis"`) to the `bevy`
+//!    dependency in your game's `Cargo.toml`.
+//! 2. Populate [`SfxConfig`] with asset paths for each [`SfxEvent`] category.
+//! 3. Add [`SfxPlugin`] to register the event channel and framework systems.
+//! 4. Add your own playback plugin (or use [`DefaultAudioPlugin`] for
+//!    development) to consume [`SfxRequest`] messages.
+//!
+//! ## Example
+//!
+//! ```no_run
+//! use bevy::prelude::*;
+//! use voxel_framework::audio::{SfxConfig, SfxEvent, SfxPlugin, SfxRequest};
+//! use voxel_framework::prelude::MessageReader;
+//!
+//! // Custom playback plugin that uses bevy_audio (requires "bevy_audio" feature).
+//! struct MyAudioPlugin;
+//!
+//! impl Plugin for MyAudioPlugin {
+//!     fn build(&self, app: &mut App) {
+//!         app.add_systems(Update, play_sfx);
+//!     }
+//! }
+//!
+//! fn play_sfx(
+//!     mut reader: MessageReader<SfxRequest>,
+//!     config: Res<SfxConfig>,
+//!     asset_server: Res<AssetServer>,
+//!     mut commands: Commands,
+//! ) {
+//!     for (i, request) in reader.read().enumerate() {
+//!         if let Some(path) = config.pick_path(&request.event, i as u64) {
+//!             let source: Handle<AudioSource> = asset_server.load(path);
+//!             commands.spawn((AudioPlayer(source), PlaybackSettings::ONCE));
+//!         }
+//!     }
+//! }
+//!
+//! fn main() {
+//!     let mut sfx_config = SfxConfig::new();
+//!     sfx_config.register(SfxEvent::BlockPlace, vec!["sounds/place1.ogg"]);
+//!     sfx_config.register(SfxEvent::MiningComplete, vec!["sounds/break1.ogg"]);
+//!
+//!     App::new()
+//!         .insert_resource(sfx_config)
+//!         .add_plugins(SfxPlugin)
+//!         .add_plugins(MyAudioPlugin)
+//!         .run();
+//! }
+//! ```
 
 use std::collections::HashMap;
 
@@ -23,17 +76,33 @@ use crate::world::{VoxelBroken, VoxelPlaced};
 
 // ─── SfxEvent ─────────────────────────────────────────────────────────────────
 
-/// Identifies a sound effect category.
+/// A category of sound effect that the framework can request.
+///
+/// Each variant corresponds to a distinct gameplay moment.  Framework systems
+/// emit these through [`SfxRequest`]; games map them to asset paths via
+/// [`SfxConfig`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SfxEvent {
+    /// Emitted repeatedly while the player is actively mining a voxel (e.g.
+    /// for a continuous digging sound loop or per-hit chip).
     Mining,
+    /// Emitted once when a voxel is fully broken and removed from the world.
+    /// Triggered by the `VoxelBroken` message.
     MiningComplete,
+    /// Emitted when a voxel is successfully placed into the world.
+    /// Triggered by the `VoxelPlaced` message.
     BlockPlace,
+    /// Emitted when the player picks up an item from the world.
     ItemPickup,
+    /// Emitted when the player scrolls the hotbar slot selection.
     HotbarScroll,
+    /// Emitted when the pause menu is opened.
     PauseOpen,
+    /// Emitted when the pause menu is closed.
     PauseClose,
-    /// Custom event for game-specific sounds.
+    /// Escape hatch for game-specific sounds not covered by the framework
+    /// variants.  The inner string is an arbitrary identifier chosen by the
+    /// game and must match the key used in [`SfxConfig`].
     Custom(String),
 }
 
@@ -56,36 +125,61 @@ impl SfxEvent {
 
 // ─── SfxRequest ───────────────────────────────────────────────────────────────
 
-/// Emitted by framework systems when a sound should play.
+/// A request for a sound effect to be played, emitted by framework systems.
+///
+/// [`SfxPlugin`] adds systems that produce these messages in response to world
+/// events.  A playback plugin (e.g. [`DefaultAudioPlugin`] or a custom one)
+/// reads them and drives the audio backend.
 #[derive(Message, Debug, Clone)]
 pub struct SfxRequest {
+    /// The sound effect category to play.
     pub event: SfxEvent,
-    /// Optional world position for spatial audio. `None` = 2D/UI sound.
+    /// World-space position for spatial (3-D) audio, or `None` for a 2-D / UI
+    /// sound that has no position.
+    ///
+    /// When `Some`, the playback system may attenuate volume and apply panning
+    /// based on the listener's position.  When `None`, the sound should be
+    /// played at a fixed volume regardless of the camera position.
     pub position: Option<Vec3>,
 }
 
 // ─── SfxConfig ────────────────────────────────────────────────────────────────
 
-/// Maps [`SfxEvent`] categories to asset paths.
+/// Maps [`SfxEvent`] categories to lists of asset paths.
 ///
-/// Each category can have multiple paths — one is chosen deterministically
-/// using a seed (see [`Self::pick_path`]).
+/// Each category can hold multiple paths so the game can register variant
+/// sounds (e.g. several digging sounds) and play them in round-robin order.
+/// A specific path is selected deterministically by `pick_path` using a
+/// caller-supplied seed, making the selection reproducible across frames.
 ///
-/// # Example
+/// `SfxConfig` is registered as a `Resource` by [`SfxPlugin`]; insert your
+/// populated instance before adding the plugin, or mutate the resource after
+/// `App::run` via a startup system.
 ///
-/// ```rust
+/// # Examples
+///
+/// ```no_run
 /// use voxel_framework::audio::{SfxConfig, SfxEvent};
 ///
 /// let mut config = SfxConfig::new();
 /// config.register(SfxEvent::BlockPlace, vec!["sounds/place1.ogg", "sounds/place2.ogg"]);
 /// assert_eq!(config.pick_path(&SfxEvent::BlockPlace, 0), Some("sounds/place1.ogg"));
 /// assert_eq!(config.pick_path(&SfxEvent::BlockPlace, 1), Some("sounds/place2.ogg"));
+/// // Seeds wrap around: seed 2 → index 0 again for a two-entry list.
+/// assert_eq!(config.pick_path(&SfxEvent::BlockPlace, 2), Some("sounds/place1.ogg"));
 /// ```
 #[derive(Resource, Debug, Clone)]
 pub struct SfxConfig {
-    /// event_key → list of asset paths for that event.
+    /// Maps the string key of each [`SfxEvent`] to its registered asset paths.
+    ///
+    /// Keys are produced by [`SfxEvent::key`].  Prefer using
+    /// [`SfxConfig::register`] rather than inserting into this map directly.
     pub sounds: HashMap<String, Vec<String>>,
-    /// Master volume in [0.0, 1.0]. Default: `1.0`.
+    /// Master playback volume applied to all sounds, in the range `[0.0, 1.0]`.
+    ///
+    /// `0.0` is silent; `1.0` is full volume.  Default: `1.0`.  Values outside
+    /// `[0.0, 1.0]` are not clamped by the framework — the audio backend
+    /// determines how they are handled.
     pub volume: f32,
 }
 
@@ -136,8 +230,12 @@ impl Default for SfxConfig {
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
-/// Listens for [`VoxelBroken`] messages and emits an [`SfxRequest`] for
-/// [`SfxEvent::MiningComplete`] at the voxel's world position.
+/// Translates `VoxelBroken` messages into [`SfxRequest`] messages with event
+/// [`SfxEvent::MiningComplete`].
+///
+/// The request carries the broken voxel's world position so that a spatial
+/// audio handler can place the sound in 3-D space.  This system is added by
+/// [`SfxPlugin`] and runs in the [`Update`] schedule.
 pub fn mining_sfx_system(
     mut broken_reader: MessageReader<VoxelBroken>,
     mut sfx_writer: MessageWriter<SfxRequest>,
@@ -150,8 +248,12 @@ pub fn mining_sfx_system(
     }
 }
 
-/// Listens for [`VoxelPlaced`] messages and emits an [`SfxRequest`] for
-/// [`SfxEvent::BlockPlace`] at the voxel's world position.
+/// Translates `VoxelPlaced` messages into [`SfxRequest`] messages with event
+/// [`SfxEvent::BlockPlace`].
+///
+/// The request carries the placed voxel's world position so that a spatial
+/// audio handler can place the sound in 3-D space.  This system is added by
+/// [`SfxPlugin`] and runs in the [`Update`] schedule.
 pub fn placement_sfx_system(
     mut placed_reader: MessageReader<VoxelPlaced>,
     mut sfx_writer: MessageWriter<SfxRequest>,
@@ -166,15 +268,24 @@ pub fn placement_sfx_system(
 
 // ─── SfxPlugin ────────────────────────────────────────────────────────────────
 
-/// Core SFX plugin.
+/// Core plugin for the framework sound-effect system.
 ///
-/// Registers [`SfxConfig`] and the [`SfxRequest`] message channel, and adds
-/// the framework-side systems that translate world events into [`SfxRequest`]
-/// messages.
+/// # What it registers
 ///
-/// This plugin does **not** play any audio itself. Add [`DefaultAudioPlugin`]
-/// (stub logger) or your own plugin that reads [`SfxRequest`] messages for
-/// actual playback.
+/// * [`SfxConfig`] — initialized as a default resource (all categories empty,
+///   volume `1.0`).  Insert a pre-populated instance before adding this plugin
+///   to override the defaults.
+/// * The [`SfxRequest`] message channel so framework systems can emit requests
+///   and game systems can read them.
+/// * [`mining_sfx_system`] and [`placement_sfx_system`] in the [`Update`]
+///   schedule.
+///
+/// # What it does NOT do
+///
+/// `SfxPlugin` never loads audio assets, never creates audio entities, and
+/// never calls into any audio backend.  Actual playback is the responsibility
+/// of a separate plugin — either [`DefaultAudioPlugin`] (development stub) or
+/// a custom plugin that reads [`SfxRequest`] events.
 pub struct SfxPlugin;
 
 impl Plugin for SfxPlugin {
@@ -187,12 +298,24 @@ impl Plugin for SfxPlugin {
 
 // ─── DefaultAudioPlugin ───────────────────────────────────────────────────────
 
-/// Plays sounds using Bevy's built-in audio system.
+/// Development-stub audio plugin that logs sound-effect requests to stderr.
 ///
-/// **Current implementation**: stub that logs each [`SfxRequest`] to stderr.
-/// Real `bevy_audio` playback requires enabling the `"bevy_audio"` feature
-/// (and an audio backend such as `"vorbis"`) in your game's `Cargo.toml`.
-/// See the module-level documentation for details.
+/// > **This plugin does NOT play any audio.**  It is a convenience stub for
+/// > development and testing.  Every [`SfxRequest`] message is printed to
+/// > stderr via [`eprintln!`] so you can verify that the event pipeline is
+/// > working without needing a real audio backend.
+///
+/// # Replacing with real playback
+///
+/// When you are ready to add actual audio:
+///
+/// 1. Enable the `"bevy_audio"` feature (and a codec such as `"vorbis"`) for
+///    the `bevy` dependency in your game's `Cargo.toml`.
+/// 2. Write a system that reads [`SfxRequest`] messages, resolves asset paths
+///    through [`SfxConfig::pick_path`], and spawns `(AudioPlayer, PlaybackSettings)`.
+/// 3. Wrap that system in a plugin and substitute it for `DefaultAudioPlugin`.
+///
+/// See the [module-level documentation](self) for a complete example.
 pub struct DefaultAudioPlugin;
 
 impl Plugin for DefaultAudioPlugin {

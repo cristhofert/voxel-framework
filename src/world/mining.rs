@@ -1,8 +1,49 @@
-//! Voxel mining API.
+//! Voxel mining (block-breaking) API.
 //!
-//! Provides break-time tracking and voxel destruction events.
-//! Game code drives mining by calling `start_mining` / `stop_mining`
-//! each frame and reacting to [`VoxelBroken`] and [`MiningProgress`] messages.
+//! # Design — pure functions, no implicit systems
+//!
+//! All logic lives in free functions ([`tick_mining`], [`stop_mining`]) so
+//! that game code retains full control over when and how mining occurs.
+//! [`MiningPlugin`] only registers the required resources and message types;
+//! it adds **no** systems of its own.
+//!
+//! # Integration pattern
+//!
+//! ```no_run
+//! # use bevy::prelude::*;
+//! # use voxel_framework::world::mining::{MiningPlugin, MiningConfig, MiningState,
+//! #     MiningProgress, VoxelBroken, tick_mining, stop_mining};
+//! # use voxel_framework::world::{ChunkManager, ChunkModified};
+//! # use voxel_framework::chunk::Chunk;
+//! # use voxel_framework::voxel::DefaultVoxel;
+//! // 1. Add the plugin once when building the App.
+//! //    App::new().add_plugins(MiningPlugin);
+//!
+//! // 2. In your input system, call tick_mining every frame while the
+//! //    mine button is held, or stop_mining when it is released.
+//! fn my_mining_system(
+//!     mut state:    ResMut<MiningState>,
+//!     config:       Res<MiningConfig>,
+//!     manager:      Res<ChunkManager>,
+//!     mut chunks:   Query<&mut Chunk<DefaultVoxel>>,
+//!     mut broken:   MessageWriter<VoxelBroken>,
+//!     mut progress: MessageWriter<MiningProgress>,
+//!     mut modified: MessageWriter<ChunkModified>,
+//!     time:         Res<Time>,
+//! ) {
+//!     let mining = true; // replace with real input check
+//!     if mining {
+//!         tick_mining(
+//!             IVec3::ZERO, (8, 8, 8),
+//!             time.delta_secs(),
+//!             &mut state, &config, &manager,
+//!             &mut chunks, &mut broken, &mut progress, &mut modified,
+//!         );
+//!     } else {
+//!         stop_mining(&mut state);
+//!     }
+//! }
+//! ```
 
 use bevy::prelude::*;
 
@@ -14,9 +55,14 @@ use super::{ChunkManager, ChunkModified};
 // ─── Resources ───────────────────────────────────────────────────────────────
 
 /// Configuration for the mining system.
+///
+/// Insert this resource before adding [`MiningPlugin`], or mutate it at
+/// runtime to adjust difficulty.
 #[derive(Resource, Debug, Clone)]
 pub struct MiningConfig {
-    /// Time in seconds to break one voxel. Default: 1.5
+    /// Time in seconds required to break a single voxel.
+    ///
+    /// Must be greater than zero.  **Default: `1.5` seconds.**
     pub break_time: f32,
 }
 
@@ -26,31 +72,58 @@ impl Default for MiningConfig {
     }
 }
 
-/// Tracks current mining progress for one target voxel.
+/// Runtime state for the mining system.
+///
+/// Tracks which voxel is currently being mined and how much time has
+/// accumulated toward breaking it.  There is at most one active target at a
+/// time; switching targets resets elapsed time automatically inside
+/// [`tick_mining`].
+///
+/// Call [`stop_mining`] whenever the mine button is released — failing to do
+/// so leaves stale progress that will carry over to the next target.
 #[derive(Resource, Default, Debug)]
 pub struct MiningState {
-    /// The chunk coord + local coord being mined, if any.
+    /// The chunk coordinate and local voxel index `(x, y, z)` currently being
+    /// mined, or `None` when no mining is in progress.
     pub target: Option<(IVec3, (usize, usize, usize))>,
-    /// Elapsed break time in seconds [0.0, break_time].
+    /// Accumulated break time in seconds, in the range `[0.0, break_time]`.
     pub elapsed: f32,
-    /// Progress in [0.0, 1.0].
+    /// Normalised break progress in the range `[0.0, 1.0]`.
+    ///
+    /// Equals `elapsed / break_time`.  Reaches `1.0` when the voxel breaks.
     pub progress: f32,
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
-/// Emitted when a voxel finishes breaking.
+/// Message fired once when a voxel's break time is fully elapsed.
+///
+/// Emitted by [`tick_mining`] in the same frame the voxel is destroyed.
+/// Systems that react to block destruction (e.g. particle effects, inventory
+/// updates) should read this message.
 #[derive(Message, Debug, Clone)]
 pub struct VoxelBroken {
+    /// Chunk-grid coordinate of the chunk that contained the broken voxel.
     pub chunk_coord: IVec3,
+    /// Local voxel index `(x, y, z)` within the chunk.  Each component is in
+    /// `[0, CHUNK_SIZE)`.
     pub local: (usize, usize, usize),
+    /// World-space center of the broken voxel.
     pub world_pos: Vec3,
 }
 
-/// Emitted every frame while mining is in progress.
+/// Message sent every frame while a voxel is being mined.
+///
+/// Useful for driving crack-overlay animations, progress bars, or audio
+/// feedback.  Emitted by [`tick_mining`] on every frame where mining is
+/// active, including the frame the voxel breaks (where `progress` is `1.0`).
 #[derive(Message, Debug, Clone)]
 pub struct MiningProgress {
+    /// Normalised break progress in `[0.0, 1.0]`.
+    ///
+    /// `0.0` on the first frame, `1.0` on the frame the voxel breaks.
     pub progress: f32,
+    /// World-space center of the voxel being mined.
     pub world_pos: Vec3,
 }
 
@@ -67,12 +140,63 @@ fn voxel_world_pos(chunk_coord: IVec3, local: (usize, usize, usize)) -> Vec3 {
         )
 }
 
-/// Begin or continue mining the voxel at the given chunk+local coord.
+/// Advance mining by one frame toward breaking the target voxel.
 ///
-/// Call this every frame while the mine button is held. When `break_time` is
-/// reached the voxel is set to air, a [`VoxelBroken`] message is written, a
-/// [`ChunkModified`] message is written to trigger remeshing, and the state is
-/// reset. A [`MiningProgress`] message is written every frame while mining.
+/// Call this **every frame** while the mine button is held.  When the
+/// accumulated time reaches `config.break_time` the function:
+///
+/// 1. Sets the target voxel to air (if the chunk is loaded).
+/// 2. Writes a [`VoxelBroken`] message.
+/// 3. Writes a [`ChunkModified`] message to trigger remeshing.
+/// 4. Resets `state` so a new target can start fresh.
+///
+/// A [`MiningProgress`] message is written on **every** call, including the
+/// break frame.
+///
+/// If `target_chunk` / `target_local` differs from the previous frame, elapsed
+/// time is reset to zero automatically — no need to call [`stop_mining`] when
+/// switching targets mid-frame.
+///
+/// # Parameters
+///
+/// - `target_chunk` — Chunk-grid coordinate of the chunk containing the target
+///   voxel.
+/// - `target_local` — Local `(x, y, z)` voxel index within the chunk.
+/// - `delta_secs` — Frame delta time in seconds (typically `time.delta_secs()`).
+/// - `state` — Mutable reference to the shared [`MiningState`] resource.
+/// - `config` — Read-only mining configuration (break time).
+/// - `manager` — Chunk registry used to look up the chunk entity.
+/// - `chunks` — Mutable query used to set voxels to air on break.
+/// - `broken` — Message writer for [`VoxelBroken`].
+/// - `progress_writer` — Message writer for [`MiningProgress`].
+/// - `modified` — Message writer for [`crate::world::ChunkModified`].
+///
+/// # Examples
+///
+/// ```no_run
+/// # use bevy::prelude::*;
+/// # use voxel_framework::world::mining::{MiningConfig, MiningState, MiningProgress, VoxelBroken, tick_mining};
+/// # use voxel_framework::world::{ChunkManager, ChunkModified};
+/// # use voxel_framework::chunk::Chunk;
+/// # use voxel_framework::voxel::DefaultVoxel;
+/// fn my_system(
+///     mut state:    ResMut<MiningState>,
+///     config:       Res<MiningConfig>,
+///     manager:      Res<ChunkManager>,
+///     mut chunks:   Query<&mut Chunk<DefaultVoxel>>,
+///     mut broken:   MessageWriter<VoxelBroken>,
+///     mut progress: MessageWriter<MiningProgress>,
+///     mut modified: MessageWriter<ChunkModified>,
+///     time:         Res<Time>,
+/// ) {
+///     tick_mining(
+///         IVec3::ZERO, (4, 0, 4),
+///         time.delta_secs(),
+///         &mut state, &config, &manager,
+///         &mut chunks, &mut broken, &mut progress, &mut modified,
+///     );
+/// }
+/// ```
 #[allow(clippy::too_many_arguments)]
 pub fn tick_mining<V: VoxelType>(
     target_chunk: IVec3,
@@ -127,7 +251,20 @@ pub fn tick_mining<V: VoxelType>(
     }
 }
 
-/// Stop mining (button released). Resets progress.
+/// Stop mining and reset all accumulated progress.
+///
+/// Call this whenever the mine button is released.  Failing to call
+/// `stop_mining` means any partial progress persists, and the next target
+/// will appear to start partially broken.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use voxel_framework::world::mining::{MiningState, stop_mining};
+/// fn on_button_release(mut state: bevy::prelude::ResMut<MiningState>) {
+///     stop_mining(&mut state);
+/// }
+/// ```
 pub fn stop_mining(state: &mut MiningState) {
     state.target = None;
     state.elapsed = 0.0;
@@ -136,10 +273,17 @@ pub fn stop_mining(state: &mut MiningState) {
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-/// Plugin that registers mining resources and messages.
+/// Bevy plugin that registers the mining subsystem.
 ///
-/// Does **not** add any systems — game code calls [`tick_mining`] and
-/// [`stop_mining`] from its own systems.
+/// Adds the following to the [`bevy::prelude::App`]:
+///
+/// - [`MiningConfig`] resource (initialised with defaults — `break_time: 1.5 s`)
+/// - [`MiningState`] resource (initialised at default / idle)
+/// - [`VoxelBroken`] message type
+/// - [`MiningProgress`] message type
+///
+/// Does **not** add any systems.  Game code is responsible for calling
+/// [`tick_mining`] and [`stop_mining`] from its own update systems.
 pub struct MiningPlugin;
 
 impl Plugin for MiningPlugin {

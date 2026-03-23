@@ -1,4 +1,14 @@
-//! Hotbar selection state and keyboard/scroll input system.
+//! Hotbar selection state, keyboard/scroll input, and the [`HotbarPlugin`].
+//!
+//! The hotbar is a strip of `N` item slots — typically displayed at the bottom
+//! of the screen — from which the player picks the active tool or block.  This
+//! module manages *selection state* only; rendering is handled separately by
+//! the UI system in [`crate::ui`].
+//!
+//! [`HotbarState`] is a [`bevy::prelude::Resource`] that stores which slot
+//! index is currently active.  The built-in `hotbar_input_system` updates it
+//! from keyboard digit keys (1–9) and the mouse scroll wheel, then emits a
+//! [`HotbarSelectionChanged`] message whenever the selection changes.
 
 use bevy::ecs::message::MessageReader;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
@@ -8,12 +18,39 @@ use bevy::prelude::*;
 
 /// Selection state for the player's hotbar.
 ///
-/// Tracks which slot is currently selected and how many slots exist.
+/// This resource is the single source of truth for which hotbar slot is active.
+/// Game systems that need to know the current tool or block should read
+/// `selected` from this resource rather than tracking input themselves.
+///
+/// The default configuration provides 9 slots (one row), matching standard
+/// Minecraft-style layouts.  The initial selection is slot `0`.
+///
+/// Input is driven by `hotbar_input_system` which is registered automatically
+/// when [`HotbarPlugin`] is added.  You can also call [`HotbarState::select`]
+/// or [`HotbarState::scroll`] directly from game systems if you need
+/// programmatic control.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::items::HotbarState;
+///
+/// fn read_hotbar(hotbar: Res<HotbarState>) {
+///     println!("active slot: {}", hotbar.selected);
+/// }
+/// ```
 #[derive(Resource, Debug, Clone)]
 pub struct HotbarState {
-    /// Index of the currently selected slot (0-based).
+    /// Zero-based index of the currently selected slot.
+    ///
+    /// Always in `[0, slots - 1]`.  Writes outside this range are clamped by
+    /// [`HotbarState::select`] and wrapped by [`HotbarState::scroll`].
     pub selected: usize,
-    /// Total number of hotbar slots.
+    /// Total number of slots in the hotbar.
+    ///
+    /// Changing this value at runtime is supported; [`HotbarState::select`]
+    /// and [`HotbarState::scroll`] respect the new count immediately.
     pub slots: usize,
 }
 
@@ -58,10 +95,17 @@ impl Default for HotbarState {
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
-/// Emitted when the hotbar selection changes.
+/// Message emitted when the active hotbar slot changes.
+///
+/// Written by `hotbar_input_system` (and by any system that calls
+/// [`HotbarState::select`] or [`HotbarState::scroll`] directly) whenever
+/// `selected` differs from the value at the start of the frame.
+///
+/// Subscribe to this message to update UI highlights, swap active tools, or
+/// play a selection sound.
 #[derive(Message, Debug, Clone)]
 pub struct HotbarSelectionChanged {
-    /// The newly selected slot index.
+    /// The newly active slot index, in `[0, HotbarState::slots - 1]`.
     pub slot: usize,
 }
 
@@ -118,9 +162,18 @@ pub fn hotbar_input_system(
 
 // ─── HotbarPlugin ────────────────────────────────────────────────────────────
 
-/// Plugin that registers the hotbar resource, message, and input system.
+/// Plugin that registers the hotbar resource, message type, and input system.
 ///
-/// Included automatically in [`VoxelPlugin`](crate::VoxelPlugin).
+/// Registering this plugin:
+///
+/// * Inserts [`HotbarState`] (default: 9 slots, slot 0 selected).
+/// * Registers the [`HotbarSelectionChanged`] message type.
+/// * Adds `hotbar_input_system` to the `Update` schedule.
+///
+/// This plugin is included automatically by [`crate::VoxelPlugin`], so game
+/// code using that plugin does **not** need to add it separately.  If you are
+/// using [`crate::VoxelCorePlugin`] without [`crate::VoxelPlugin`], add
+/// `HotbarPlugin` explicitly.
 pub struct HotbarPlugin;
 
 impl Plugin for HotbarPlugin {
