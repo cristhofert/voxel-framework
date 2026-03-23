@@ -46,7 +46,7 @@
 //!
 //! # Pause menu
 //!
-//! The optional [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) lives in the
+//! The optional [`PauseMenuPlugin`] lives in the
 //! `pause_menu` submodule and is re-exported from this module. It is **not**
 //! included in [`UiPlugin`] because it manages its own [`PauseMenuState`] and
 //! cursor lifetime, which must be coordinated with your game's state machine.
@@ -633,7 +633,7 @@ pub struct PickupNotificationConfig {
     pub visible: bool,
     /// How long each notification text persists on screen in seconds before
     /// being automatically despawned. Applied per-notification via a
-    /// [`Timer`](bevy::time::Timer).
+    /// [`Timer`].
     pub duration_secs: f32,
     /// RGBA color of the notification text in linear sRGB.
     pub text_color: [f32; 4],

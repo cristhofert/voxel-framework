@@ -120,7 +120,7 @@ pub fn hotbar_input_system(
 
 /// Plugin that registers the hotbar resource, message, and input system.
 ///
-/// Included automatically in [`VoxelPlugin`].
+/// Included automatically in [`VoxelPlugin`](crate::VoxelPlugin).
 pub struct HotbarPlugin;
 
 impl Plugin for HotbarPlugin {

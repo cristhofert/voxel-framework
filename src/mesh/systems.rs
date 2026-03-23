@@ -266,7 +266,7 @@ pub fn lod_update_system<V: VoxelType>(
 /// Save errors are reported with `eprintln!` and do not panic.
 ///
 /// This system is generic over `V` because it must query the [`Chunk<V>`]
-/// component to serialise voxel data. It is registered by [`MeshPlugin<V>`].
+/// component to serialise voxel data. It is registered by [`MeshPlugin`](crate::mesh::MeshPlugin).
 pub fn chunk_despawn_system<V: VoxelType>(
     mut commands: Commands,
     mut unload_reader: MessageReader<ChunkUnloadRequest>,

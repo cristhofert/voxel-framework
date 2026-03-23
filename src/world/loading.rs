@@ -13,7 +13,7 @@
 //! via [`ChunkManager::register`] — meaning voxel data has been generated
 //! **and** the renderable mesh entity has been spawned. The total number of
 //! chunks expected in the initial load sphere is computed once from
-//! `load_distance` using [`count_chunks_in_sphere`].
+//! `load_distance` using `count_chunks_in_sphere`.
 //!
 //! # Event flow
 //!

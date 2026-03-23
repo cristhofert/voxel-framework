@@ -1,11 +1,11 @@
 //! Drop table and magnet/pickup systems.
 //!
 //! [`DropTable`] maps voxel byte IDs to item drops and is queried by
-//! [`spawn_drops_system`] whenever a [`VoxelBroken`] message arrives.
+//! spawn_drops_system whenever a [`VoxelBroken`] message arrives.
 //!
-//! [`DropsPlugin`] is intentionally **not** added to [`VoxelPlugin`] — it is
+//! [`DropsPlugin`] is intentionally **not** added to [`VoxelPlugin`](crate::VoxelPlugin) — it is
 //! generic over the item type and must be added separately by game code,
-//! similar to [`GeneratorPlugin`].
+//! similar to [`GeneratorPlugin`](crate::generator::GeneratorPlugin).
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -225,8 +225,8 @@ fn magnet_system<I: ItemType>(
 
 /// Plugin that registers drop-table resources and systems for item type `I`.
 ///
-/// **Not** added to [`VoxelPlugin`] — add it manually in game code alongside
-/// [`GeneratorPlugin`]:
+/// **Not** added to [`VoxelPlugin`](crate::VoxelPlugin) — add it manually in game code alongside
+/// [`GeneratorPlugin`](crate::generator::GeneratorPlugin):
 ///
 /// ```rust,no_run
 /// use voxel_framework::items::{DropsPlugin, DefaultItem};

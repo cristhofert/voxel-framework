@@ -38,7 +38,7 @@ use super::{ChunkLoadRequest, ChunkManager, ChunkUnloadRequest};
 /// not respond to player movement and chunks near the new position will never
 /// be requested.
 ///
-/// The resource defaults to the origin (`Vec3::ZERO`). [`WorldPlugin`]
+/// The resource defaults to the origin (`Vec3::ZERO`). [`WorldPlugin`](crate::world::WorldPlugin)
 /// registers it via `init_resource`, so it is always present when the plugin
 /// is active.
 ///

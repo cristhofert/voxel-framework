@@ -1,7 +1,7 @@
 //! Item system — inventory, drop tables, hotbar, and persistence.
 //!
 //! This module mirrors the voxel type architecture: [`ItemType`] is to items
-//! what [`VoxelType`] is to voxels. Implement it for any `Copy + Hash` enum.
+//! what [`VoxelType`](crate::voxel::VoxelType) is to voxels. Implement it for any `Copy + Hash` enum.
 //!
 //! # Quick start
 //!

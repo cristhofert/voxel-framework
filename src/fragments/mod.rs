@@ -39,8 +39,8 @@ impl Default for FragmentConfig {
 
 /// Shared mesh and material handles for fragment entities.
 ///
-/// Initialized at startup by [`setup_fragment_assets`] and stored as a resource
-/// so that [`spawn_fragments_system`] can reuse them without re-allocating.
+/// Initialized at startup by `setup_fragment_assets` and stored as a resource
+/// so that `spawn_fragments_system` can reuse them without re-allocating.
 #[derive(Resource)]
 pub struct FragmentAssets {
     pub mesh: Handle<Mesh>,

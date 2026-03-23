@@ -420,7 +420,7 @@ pub fn player_move(
 ///
 /// 1. Compute the axis-aligned bounding box of the capsule in chunk-local space.
 /// 2. Clamp the AABB to the chunk bounds to skip out-of-range voxels.
-/// 3. For each solid voxel in the range, call [`push_capsule_out`] which:
+/// 3. For each solid voxel in the range, call `push_capsule_out` which:
 ///    a. Finds the closest point on the capsule spine to the voxel AABB center.
 ///    b. Treats that point as a sphere center of radius [`PLAYER_RADIUS`].
 ///    c. Computes the minimum separation vector from the sphere to the voxel AABB.
@@ -628,7 +628,7 @@ fn push_capsule_out(
 /// ```
 ///
 /// The generic parameter `V` must match the [`VoxelType`] used by the loaded
-/// [`Chunk`](crate::chunk::Chunk) entities so the collision system can read
+/// [`Chunk`] entities so the collision system can read
 /// solid-voxel data.
 pub struct PlayerPlugin<V: VoxelType> {
     _marker: std::marker::PhantomData<V>,

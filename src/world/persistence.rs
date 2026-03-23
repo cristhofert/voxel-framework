@@ -1,6 +1,6 @@
 //! Chunk persistence integration — auto-save and disk-backed load.
 //!
-//! This module wires the low-level [`chunk::persistence`] I/O into the Bevy
+//! This module wires the low-level [`chunk::persistence`](crate::chunk::persistence) I/O into the Bevy
 //! game loop via two pieces:
 //!
 //! - [`PersistenceConfig`] — a [`Resource`] that controls where chunk files
@@ -70,7 +70,7 @@ impl Default for PersistenceConfig {
 /// Attempts to load a chunk from disk.
 ///
 /// Constructs the expected file path from `save_dir` and `coord`, then tries
-/// to read and deserialise it via [`chunk::persistence::load_chunk`].
+/// to read and deserialise it via [`load_chunk`](crate::chunk::persistence::load_chunk).
 ///
 /// Returns `Some(chunk)` on success, `None` if the file does not exist or
 /// cannot be read.
@@ -91,7 +91,7 @@ pub fn try_load_chunk<V: VoxelType>(coord: ChunkCoord, save_dir: &str) -> Option
 /// 3. Constructs the output path from [`PersistenceConfig::save_dir`] and the
 ///    chunk coordinate.
 /// 4. Ensures the save directory exists (`std::fs::create_dir_all`).
-/// 5. Writes the chunk data via [`chunk::persistence::save_chunk`].
+/// 5. Writes the chunk data via [`save_chunk`](crate::chunk::persistence::save_chunk).
 ///
 /// Errors are reported with `eprintln!` and do not panic.
 pub fn chunk_autosave_system<V: VoxelType>(

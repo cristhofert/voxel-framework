@@ -141,7 +141,7 @@ impl<V: VoxelType> Plugin for MeshPlugin<V> {
 /// outermost face of the adjacent chunk that abuts the current chunk on that
 /// side.  The array is obtained from `Chunk::border_slice` on the neighbor.
 ///
-/// The face index convention matches [`greedy::FACE_DIRS`]:
+/// The face index convention matches `FACE_DIRS`:
 ///
 /// | Index | Direction | Neighbor face stored          |
 /// |-------|-----------|-------------------------------|

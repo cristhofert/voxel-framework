@@ -42,7 +42,7 @@ use super::ChunkGenerator;
 ///
 /// The values are not used as direct probability weights; rather they document
 /// the intended proportions that the FBM noise thresholds in
-/// [`AsteroidGenerator::determine_mineral`] were tuned to produce.  Changing
+/// `AsteroidGenerator::determine_mineral` were tuned to produce.  Changing
 /// these fields alone has no effect — they are for documentation and future
 /// tooling that may auto-tune thresholds to match target frequencies.
 ///
