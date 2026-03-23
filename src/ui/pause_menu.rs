@@ -53,6 +53,33 @@ enum PauseButton { Resume, Settings, Quit }
 #[derive(Component)]
 enum SettingsButton { FovInc, FovDec, VolumeInc, VolumeDec, Back }
 
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+/// Configuration for [`PauseMenuPlugin`].
+///
+/// Insert before adding the plugin to override defaults:
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::PauseMenuConfig;
+///
+/// App::new()
+///     .insert_resource(PauseMenuConfig {
+///         font: asset_server.load("fonts/MyFont.ttf"),
+///     });
+/// ```
+#[derive(Resource, Clone)]
+pub struct PauseMenuConfig {
+    /// Font handle used for all pause menu text. Default: Bevy's built-in font.
+    pub font: Handle<Font>,
+}
+
+impl Default for PauseMenuConfig {
+    fn default() -> Self {
+        Self { font: Handle::default() }
+    }
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Optional pause menu plugin.
@@ -83,6 +110,7 @@ pub struct PauseMenuPlugin;
 
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<PauseMenuConfig>();
         app.init_state::<PauseMenuState>();
 
         // Playing — toggle on Escape
@@ -151,6 +179,7 @@ fn spawn_btn<C: Component>(
     action: C,
     width: f32,
     height: f32,
+    font: Handle<Font>,
 ) {
     parent
         .spawn((
@@ -168,7 +197,7 @@ fn spawn_btn<C: Component>(
         .with_children(|b| {
             b.spawn((
                 Text::new(label),
-                TextFont { font_size: 20.0, ..default() },
+                TextFont { font, font_size: 20.0, ..default() },
                 TextColor(Color::WHITE),
             ));
         });
@@ -191,18 +220,18 @@ fn overlay_node() -> (Node, BackgroundColor) {
 
 // ─── Pause menu ───────────────────────────────────────────────────────────────
 
-fn spawn_pause_menu(mut commands: Commands) {
+fn spawn_pause_menu(mut commands: Commands, config: Res<PauseMenuConfig>) {
     let (node, bg) = overlay_node();
     commands.spawn((PauseMenuRoot, node, bg)).with_children(|p| {
         p.spawn((
             Text::new("PAUSED"),
-            TextFont { font_size: 52.0, ..default() },
+            TextFont { font: config.font.clone(), font_size: 52.0, ..default() },
             TextColor(Color::WHITE),
             Node { margin: UiRect::bottom(Val::Px(28.0)), ..default() },
         ));
-        spawn_btn(p, "Resume",   PauseButton::Resume,   280.0, 52.0);
-        spawn_btn(p, "Settings", PauseButton::Settings, 280.0, 52.0);
-        spawn_btn(p, "Quit",     PauseButton::Quit,     280.0, 52.0);
+        spawn_btn(p, "Resume",   PauseButton::Resume,   280.0, 52.0, config.font.clone());
+        spawn_btn(p, "Settings", PauseButton::Settings, 280.0, 52.0, config.font.clone());
+        spawn_btn(p, "Quit",     PauseButton::Quit,     280.0, 52.0, config.font.clone());
     });
 }
 
@@ -243,6 +272,7 @@ fn spawn_settings_menu(
     mut commands: Commands,
     sfx_config: Res<SfxConfig>,
     camera_q: Query<&Projection, With<Camera3d>>,
+    config: Res<PauseMenuConfig>,
 ) {
     let fov_deg = camera_q
         .single()
@@ -255,20 +285,20 @@ fn spawn_settings_menu(
     commands.spawn((SettingsMenuRoot, node, bg)).with_children(|p| {
         p.spawn((
             Text::new("SETTINGS"),
-            TextFont { font_size: 42.0, ..default() },
+            TextFont { font: config.font.clone(), font_size: 42.0, ..default() },
             TextColor(Color::WHITE),
             Node { margin: UiRect::bottom(Val::Px(20.0)), ..default() },
         ));
 
         spawn_slider_row(p, "Field of View", format!("{fov_deg:.0}°"), FovLabel,
-            SettingsButton::FovDec, SettingsButton::FovInc);
+            SettingsButton::FovDec, SettingsButton::FovInc, config.font.clone());
 
         spawn_slider_row(p, "SFX Volume", format!("{volume_pct:.0}%"), VolumeLabel,
-            SettingsButton::VolumeDec, SettingsButton::VolumeInc);
+            SettingsButton::VolumeDec, SettingsButton::VolumeInc, config.font.clone());
 
         p.spawn(Node { margin: UiRect::top(Val::Px(20.0)), ..default() })
             .with_children(|row| {
-                spawn_btn(row, "← Back", SettingsButton::Back, 200.0, 50.0);
+                spawn_btn(row, "← Back", SettingsButton::Back, 200.0, 50.0, config.font.clone());
             });
     });
 }
@@ -280,6 +310,7 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
     value_marker: L,
     dec: D,
     inc: I,
+    font: Handle<Font>,
 ) {
     parent
         .spawn(Node {
@@ -291,19 +322,19 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
         .with_children(|row| {
             row.spawn((
                 Text::new(label),
-                TextFont { font_size: 20.0, ..default() },
+                TextFont { font: font.clone(), font_size: 20.0, ..default() },
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
                 Node { width: Val::Px(200.0), ..default() },
             ));
-            spawn_btn(row, "◀", dec, 44.0, 44.0);
+            spawn_btn(row, "◀", dec, 44.0, 44.0, font.clone());
             row.spawn((
                 value_marker,
                 Text::new(value),
-                TextFont { font_size: 22.0, ..default() },
+                TextFont { font: font.clone(), font_size: 22.0, ..default() },
                 TextColor(Color::WHITE),
                 Node { width: Val::Px(80.0), justify_content: JustifyContent::Center, ..default() },
             ));
-            spawn_btn(row, "▶", inc, 44.0, 44.0);
+            spawn_btn(row, "▶", inc, 44.0, 44.0, font);
         });
 }
 
