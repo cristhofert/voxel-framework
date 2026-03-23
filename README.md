@@ -23,6 +23,31 @@
 - Block placement API — cooldown tracking and `VoxelPlaced` events
 - Loading progress — `LoadingProgress` messages and a `WorldReady` event for loading screens
 
+## Plugin Architecture
+
+The framework offers two top-level plugins so games can include only what they need:
+
+| Plugin | What it includes |
+|---|---|
+| `VoxelCorePlugin` | World streaming, render, mesh, occlusion, mining, placement, loading |
+| `VoxelPlugin` | Everything in `VoxelCorePlugin` plus fragments, skybox, audio, hotbar, UI |
+
+`GeneratorPlugin<V>` and `PersistencePlugin<V>` are always opt-in regardless of which top-level plugin you use.
+
+```rust
+// Minimal — pure voxel engine, no game-specific systems
+App::new()
+    .add_plugins(DefaultPlugins)
+    .add_plugins(VoxelCorePlugin)
+    .add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
+
+// Batteries-included — everything
+App::new()
+    .add_plugins(DefaultPlugins)
+    .add_plugins(VoxelPlugin)
+    .add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
+```
+
 ## Quick Start
 
 Add the dependency to your `Cargo.toml`:
@@ -109,6 +134,8 @@ cargo run --example basic_world
 | `world/placement` | `PlacementPlugin`, `PlacementConfig`, `PlacementState`, `try_place_voxel`, `tick_placement`, `VoxelPlaced` |
 | `world/loading` | `LoadingPlugin`, `LoadingProgress`, `WorldReady`, `WorldLoadingState` |
 | `render` | Shared `StandardMaterial` for vertex-colored chunks, `RenderPlugin` |
+| `player` | 6DOF jetpack player (`PlayerPlugin`, `PlayerConfig`, capsule collision) |
+| `ui/pause_menu` | Optional `PauseMenuPlugin` with `PauseMenuState` and `PauseMenuConfig` |
 | `prelude` | Convenience re-export of all public types |
 
 ## World Configuration
@@ -368,6 +395,88 @@ fn check_ready(state: Res<WorldLoadingState>) {
     if state.ready {
         // world is loaded
     }
+}
+```
+
+## Player (6DOF Jetpack)
+
+`PlayerPlugin<V>` adds a first-person 6DOF camera with capsule collision, mouse look, WASD movement, and Q/E roll. No gravity — designed for zero-g / astronaut gameplay.
+
+```rust
+use voxel_framework::player::PlayerPlugin;
+
+App::new()
+    .add_plugins(VoxelPlugin)
+    .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+    .insert_resource(PlayerConfig {
+        spawn_position: Vec3::new(0.0, 50.0, 150.0),
+        speed: 16.0,
+        ..default()
+    });
+```
+
+| Input | Action |
+|---|---|
+| Mouse | Yaw + pitch (6DOF, no clamp) |
+| Q / E | Roll left / right |
+| W / S | Forward / backward |
+| A / D | Strafe left / right |
+| Space | Move along local up |
+| Shift | Move along local down |
+| Left click | Lock cursor |
+| Escape | Release cursor (second: close window) |
+
+If your game uses an `AppState`, skip `PlayerPlugin` and add the systems manually gated to your playing state:
+
+```rust
+use voxel_framework::prelude::{player_look, player_move, player_resolve_collision};
+
+App::new()
+    .add_systems(Startup, spawn_player)
+    .add_systems(Update,
+        (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+            .chain()
+            .run_if(in_state(MyState::Playing)),
+    );
+```
+
+## Pause Menu
+
+`PauseMenuPlugin` is an optional plugin that provides a full pause menu with a settings submenu. It manages its own `PauseMenuState` — use it to gate your gameplay systems:
+
+```rust
+use voxel_framework::prelude::{PauseMenuPlugin, PauseMenuState};
+
+App::new()
+    .add_plugins(VoxelPlugin)
+    .add_plugins(PauseMenuPlugin)
+    .add_systems(Startup, spawn_player)
+    .add_systems(Update,
+        (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+            .chain()
+            .run_if(in_state(PauseMenuState::Playing)),
+    );
+```
+
+| State | Description |
+|---|---|
+| `PauseMenuState::Playing` | Normal gameplay — menus hidden |
+| `PauseMenuState::Paused` | Pause overlay visible (Resume / Settings / Quit) |
+| `PauseMenuState::Settings` | Settings submenu (FOV, SFX volume) |
+
+The Settings submenu writes directly to the camera's `Projection` (FOV) and to `SfxConfig::volume` (SFX volume).
+
+### Customizing the font
+
+Override `PauseMenuConfig` before adding the plugin:
+
+```rust
+use voxel_framework::prelude::PauseMenuConfig;
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(PauseMenuConfig {
+        font: asset_server.load("fonts/MyFont.ttf"),
+    });
 }
 ```
 
