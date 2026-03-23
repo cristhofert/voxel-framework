@@ -3,4 +3,3 @@ Cargo.lock
 chunks/
 *.swp
 .DS_Store
-examples/
