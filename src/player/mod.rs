@@ -86,12 +86,114 @@
 //! | Left click   | Lock cursor                         |
 //! | Escape       | Release cursor (second press: close window) |
 
+use bevy::ecs::message::MessageWriter;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
+use crate::audio::{SfxEvent, SfxRequest};
 use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
-use crate::world::ViewerPosition;
+use crate::world::{ChunkManager, ViewerPosition, get_voxel_at};
+
+// ─── Health & damage messages ─────────────────────────────────────────────────
+
+/// Emitted when the player takes damage from any source.
+#[derive(Message, Debug, Clone)]
+pub struct PlayerDamaged {
+    /// Amount of health points lost.
+    pub amount: f32,
+}
+
+/// Emitted when the player's health reaches zero and they respawn.
+#[derive(Message, Debug, Clone)]
+pub struct PlayerDied;
+
+/// Player health and respawn state.
+///
+/// Inserted as a resource by [`PlayerPlugin`]. Games can read and modify
+/// `health` directly (e.g. from environmental hazards); fall damage is applied
+/// automatically when landing with high vertical velocity.
+///
+/// When `health` drops to zero the player is teleported to `spawn_position`
+/// and health is restored to `max_health`. A [`PlayerDied`] message is sent.
+#[derive(Resource, Debug, Clone)]
+pub struct PlayerHealth {
+    /// Current health points. Clamped to `[0, max_health]` after damage.
+    pub health: f32,
+    /// Maximum health points. **Default: `20.0`.**
+    pub max_health: f32,
+    /// World position used for respawn on death.
+    ///
+    /// Defaults to the player's spawn position from [`PlayerConfig`]. Games
+    /// can update this at runtime (e.g. when placing a bed or checkpoint).
+    pub spawn_position: Vec3,
+    /// Vertical fall speed (m/s) below which no fall damage is taken.
+    ///
+    /// Impact speeds below this threshold deal zero damage. **Default: `10.0`.**
+    pub fall_safe_speed: f32,
+}
+
+impl Default for PlayerHealth {
+    fn default() -> Self {
+        Self {
+            health: 20.0,
+            max_health: 20.0,
+            spawn_position: Vec3::new(0.0, 30.0, 0.0),
+            fall_safe_speed: 10.0,
+        }
+    }
+}
+
+// ─── PlayerMode ──────────────────────────────────────────────────────────────
+
+/// Selects the movement model used by [`PlayerPlugin`] and the player systems.
+///
+/// Set this inside [`PlayerConfig::mode`] before adding [`PlayerPlugin`] (or
+/// before the `Startup` schedule runs).  Changing the mode at runtime is
+/// **not** supported — the value is copied into the [`Player`] component once
+/// on spawn and used from there.
+///
+/// # Variants
+///
+/// - [`PlayerMode::FreeFlight`] — classic 6DOF, no gravity.  Default.
+/// - [`PlayerMode::Grounded`] — gravity + jump, WASD on the XZ plane, pitch
+///   clamped to ±89°.  Suitable for Minetest / Minecraft–style games.
+#[derive(Debug, Clone)]
+pub enum PlayerMode {
+    /// Six-degrees-of-freedom flight. No gravity, no pitch clamp, Q/E roll.
+    ///
+    /// This is the default mode and matches the original behaviour of the
+    /// player controller.  All six movement axes (forward, back, left, right,
+    /// up, down) are relative to the camera's current orientation.
+    FreeFlight,
+    /// Gravity-based grounded movement.
+    ///
+    /// - WASD moves on the **world XZ plane** relative to the camera's current
+    ///   yaw, ignoring pitch tilt.
+    /// - `Space` jumps when [`Player::on_ground`] is `true`.
+    /// - Gravity accumulates in [`Player::vertical_velocity`] each frame.
+    /// - Mouse yaw rotates the entity around the **world Y axis** (player stays
+    ///   upright); pitch rotates the view up/down and is clamped to ±89°.
+    /// - Q/E roll is disabled.
+    Grounded {
+        /// Downward acceleration in world units per second squared.
+        ///
+        /// Applied every frame as `vertical_velocity -= gravity * dt`.
+        /// Typical value: `20.0`.
+        gravity: f32,
+        /// Upward velocity impulse applied when the player jumps.
+        ///
+        /// Assigned to [`Player::vertical_velocity`] on the frame `Space` is
+        /// pressed while [`Player::on_ground`] is `true`.  Typical value: `8.0`.
+        jump_speed: f32,
+    },
+}
+
+impl Default for PlayerMode {
+    fn default() -> Self {
+        PlayerMode::FreeFlight
+    }
+}
 
 // ─── Physics constants ────────────────────────────────────────────────────────
 
@@ -153,6 +255,35 @@ pub struct Player {
     /// frame by [`player_move`] using an exponential lerp; do not set this
     /// directly unless you want to override the current momentum.
     pub velocity: Vec3,
+    /// Movement mode, copied from [`PlayerConfig::mode`] on spawn.
+    ///
+    /// Determines which branch of [`player_look`], [`player_move`], and
+    /// [`player_resolve_collision`] is executed each frame.
+    pub mode: PlayerMode,
+    /// Vertical velocity used in [`PlayerMode::Grounded`] mode.
+    ///
+    /// Gravity accumulates here each frame; a jump impulse sets it to
+    /// [`PlayerMode::Grounded::jump_speed`]. Reset to `0.0` when the player
+    /// lands (collision pushes upward).  Unused in [`PlayerMode::FreeFlight`].
+    pub vertical_velocity: f32,
+    /// Whether the player was on solid ground at the end of the last frame.
+    ///
+    /// Set to `true` by [`player_resolve_collision`] when a voxel collision
+    /// produces an upward push; cleared to `false` at the start of each
+    /// collision pass.  Gating jumps on this flag prevents infinite jumping.
+    /// Unused in [`PlayerMode::FreeFlight`].
+    pub on_ground: bool,
+    /// Absolute landing speed (m/s) recorded when the player just touched ground.
+    ///
+    /// Set by [`player_resolve_collision`] on the first landing frame;
+    /// zero at all other times. Read by [`player_fall_damage`] to compute
+    /// and apply damage. Only meaningful in [`PlayerMode::Grounded`].
+    pub(crate) impact_speed: f32,
+    /// Accumulated seconds since the last footstep sound was emitted.
+    ///
+    /// Managed by [`player_footstep_system`]. Reset to `0.0` after each
+    /// footstep; only meaningful in [`PlayerMode::Grounded`].
+    pub(crate) footstep_timer: f32,
 }
 
 impl Default for Player {
@@ -162,6 +293,11 @@ impl Default for Player {
             sensitivity: 0.0015,
             roll_speed: 1.5,
             velocity: Vec3::ZERO,
+            mode: PlayerMode::FreeFlight,
+            vertical_velocity: 0.0,
+            on_ground: false,
+            impact_speed: 0.0,
+            footstep_timer: 0.0,
         }
     }
 }
@@ -221,6 +357,11 @@ pub struct PlayerConfig {
     /// spawn; runtime changes must be made directly on the [`Projection`]
     /// component (e.g., via the Settings menu).
     pub fov_degrees: f32,
+    /// Movement model used by the player systems.
+    ///
+    /// Defaults to [`PlayerMode::FreeFlight`] for backwards compatibility.
+    /// Set to [`PlayerMode::Grounded`] for gravity-based gameplay.
+    pub mode: PlayerMode,
 }
 
 impl Default for PlayerConfig {
@@ -232,6 +373,7 @@ impl Default for PlayerConfig {
             roll_speed: 1.5,
             look_at: Vec3::ZERO,
             fov_degrees: 90.0,
+            mode: PlayerMode::FreeFlight,
         }
     }
 }
@@ -255,10 +397,14 @@ pub fn spawn_player(
     config: Res<PlayerConfig>,
     existing: Query<(), With<Player>>,
     mut windows: Query<&mut bevy::window::CursorOptions>,
+    mut health: ResMut<PlayerHealth>,
 ) {
     if !existing.is_empty() {
         return;
     }
+
+    // Sync spawn_position with the configured spawn so respawn lands in the right place.
+    health.spawn_position = config.spawn_position;
 
     // Lock the cursor so mouse motion drives the camera.
     for mut cursor in &mut windows {
@@ -276,6 +422,11 @@ pub fn spawn_player(
             sensitivity: config.sensitivity,
             roll_speed: config.roll_speed,
             velocity: Vec3::ZERO,
+            mode: config.mode.clone(),
+            vertical_velocity: 0.0,
+            on_ground: false,
+            impact_speed: 0.0,
+            footstep_timer: 0.0,
         },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -318,24 +469,43 @@ pub fn player_look(
         delta += event.delta;
     }
 
-    if delta != Vec2::ZERO {
-        let yaw_d = -delta.x * player.sensitivity;
-        let pitch_d = -delta.y * player.sensitivity;
-        // Rotate around LOCAL axes — preserves 6DOF orientation.
-        transform.rotate_local_y(yaw_d);
-        transform.rotate_local_x(pitch_d);
-    }
+    match &player.mode {
+        PlayerMode::FreeFlight => {
+            if delta != Vec2::ZERO {
+                let yaw_d   = -delta.x * player.sensitivity;
+                let pitch_d = -delta.y * player.sensitivity;
+                // Rotate around LOCAL axes — preserves 6DOF orientation.
+                transform.rotate_local_y(yaw_d);
+                transform.rotate_local_x(pitch_d);
+            }
 
-    // Q / E roll.
-    let mut roll = 0.0_f32;
-    if keys.pressed(KeyCode::KeyQ) {
-        roll += 1.0;
-    }
-    if keys.pressed(KeyCode::KeyE) {
-        roll -= 1.0;
-    }
-    if roll != 0.0 {
-        transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
+            // Q / E roll.
+            let mut roll = 0.0_f32;
+            if keys.pressed(KeyCode::KeyQ) { roll += 1.0; }
+            if keys.pressed(KeyCode::KeyE) { roll -= 1.0; }
+            if roll != 0.0 {
+                transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
+            }
+        }
+        PlayerMode::Grounded { .. } => {
+            if delta != Vec2::ZERO {
+                let yaw_d   = -delta.x * player.sensitivity;
+                let pitch_d = -delta.y * player.sensitivity;
+
+                // Yaw: rotate around WORLD Y so the player stays upright.
+                transform.rotate_y(yaw_d);
+
+                // Pitch: decompose current rotation, apply clamped pitch.
+                let (yaw, pitch, _roll) = transform.rotation.to_euler(EulerRot::YXZ);
+                let new_pitch = (pitch + pitch_d).clamp(
+                    -89_f32.to_radians(),
+                     89_f32.to_radians(),
+                );
+                transform.rotation =
+                    Quat::from_euler(EulerRot::YXZ, yaw, new_pitch, 0.0);
+            }
+            // No roll in grounded mode.
+        }
     }
 }
 
@@ -370,40 +540,79 @@ pub fn player_move(
 
     let dt = time.delta_secs();
 
-    // Local-space axes.
-    let forward = transform.rotation * Vec3::NEG_Z;
-    let right = transform.rotation * Vec3::X;
-    let up = transform.rotation * Vec3::Y;
+    match player.mode.clone() {
+        PlayerMode::FreeFlight => {
+            // Local-space axes — full 6DOF.
+            let forward = transform.rotation * Vec3::NEG_Z;
+            let right   = transform.rotation * Vec3::X;
+            let up      = transform.rotation * Vec3::Y;
 
-    let mut direction = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
-        direction += forward;
-    }
-    if keys.pressed(KeyCode::KeyS) {
-        direction -= forward;
-    }
-    if keys.pressed(KeyCode::KeyA) {
-        direction -= right;
-    }
-    if keys.pressed(KeyCode::KeyD) {
-        direction += right;
-    }
-    if keys.pressed(KeyCode::Space) {
-        direction += up;
-    }
-    if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
-        direction -= up;
-    }
+            let mut direction = Vec3::ZERO;
+            if keys.pressed(KeyCode::KeyW)      { direction += forward; }
+            if keys.pressed(KeyCode::KeyS)      { direction -= forward; }
+            if keys.pressed(KeyCode::KeyA)      { direction -= right;   }
+            if keys.pressed(KeyCode::KeyD)      { direction += right;   }
+            if keys.pressed(KeyCode::Space)     { direction += up;      }
+            if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+                direction -= up;
+            }
 
-    let target = if direction != Vec3::ZERO {
-        direction.normalize() * player.speed
-    } else {
-        Vec3::ZERO
-    };
+            let target = if direction != Vec3::ZERO {
+                direction.normalize() * player.speed
+            } else {
+                Vec3::ZERO
+            };
 
-    let factor = if direction != Vec3::ZERO { ACCEL } else { DECEL };
-    player.velocity = player.velocity.lerp(target, (factor * dt).min(1.0));
-    transform.translation += player.velocity * dt;
+            let factor = if direction != Vec3::ZERO { ACCEL } else { DECEL };
+            player.velocity = player.velocity.lerp(target, (factor * dt).min(1.0));
+            transform.translation += player.velocity * dt;
+        }
+        PlayerMode::Grounded { gravity, jump_speed } => {
+            // Horizontal movement on XZ using yaw-only orientation.
+            let yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
+            let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+            let right   = Vec3::new( yaw.cos(), 0.0, -yaw.sin());
+
+            let mut h_dir = Vec3::ZERO;
+            if keys.pressed(KeyCode::KeyW) { h_dir += forward; }
+            if keys.pressed(KeyCode::KeyS) { h_dir -= forward; }
+            if keys.pressed(KeyCode::KeyA) { h_dir -= right;   }
+            if keys.pressed(KeyCode::KeyD) { h_dir += right;   }
+
+            // Sprint (ShiftLeft) and crouch (ControlLeft) speed multipliers.
+            // Crouch takes priority over sprint if both are held.
+            let crouching = keys.pressed(KeyCode::ControlLeft);
+            let sprinting = !crouching && keys.pressed(KeyCode::ShiftLeft);
+            let speed_mult = if crouching {
+                0.5
+            } else if sprinting {
+                1.6
+            } else {
+                1.0
+            };
+
+            let h_target = if h_dir != Vec3::ZERO {
+                h_dir.normalize() * player.speed * speed_mult
+            } else {
+                Vec3::ZERO
+            };
+
+            let factor = if h_dir != Vec3::ZERO { ACCEL } else { DECEL };
+            player.velocity = player.velocity.lerp(h_target, (factor * dt).min(1.0));
+
+            // Jump impulse (only when on the ground; disabled while crouching).
+            if keys.just_pressed(KeyCode::Space) && player.on_ground && !crouching {
+                player.vertical_velocity = jump_speed;
+            }
+
+            // Apply gravity.
+            player.vertical_velocity -= gravity * dt;
+
+            // Translate: horizontal from smoothed velocity + vertical from gravity.
+            transform.translation += player.velocity * dt;
+            transform.translation.y += player.vertical_velocity * dt;
+        }
+    }
 
     // Keep the streaming origin at the player position.
     viewer.position = transform.translation;
@@ -429,16 +638,29 @@ pub fn player_move(
 /// The final corrected position is written back to the player transform. This
 /// system should always run **after** [`player_move`] in the same frame.
 pub fn player_resolve_collision<V: VoxelType>(
-    mut player_q: Query<&mut Transform, With<Player>>,
+    mut player_q: Query<(&mut Player, &mut Transform)>,
     chunk_q: Query<(&Chunk<V>, &Transform), Without<Player>>,
 ) {
-    let Ok(mut player_tf) = player_q.single_mut() else {
+    let Ok((mut player, mut player_tf)) = player_q.single_mut() else {
         return;
     };
 
+    // Grounded mode tracks whether the player is standing on solid ground.
+    let is_grounded = matches!(player.mode, PlayerMode::Grounded { .. });
+    if is_grounded {
+        player.on_ground = false;
+        player.impact_speed = 0.0; // reset each frame; set below on landing
+    }
+
     let mut pos = player_tf.translation;
-    // Local up follows the player's roll/pitch — true 6DOF capsule.
-    let up = player_tf.rotation * Vec3::Y;
+    // FreeFlight: capsule spine follows entity rotation (true 6DOF).
+    // Grounded: spine is always world-vertical (Vec3::Y) so the capsule stands upright.
+    let up = if is_grounded {
+        Vec3::Y
+    } else {
+        player_tf.rotation * Vec3::Y
+    };
+
     let extent = PLAYER_HALF_HEIGHT + PLAYER_RADIUS;
     let voxel_size = VOXEL_SIZE;
 
@@ -469,7 +691,20 @@ pub fn player_resolve_collision<V: VoxelType>(
                     if !chunk.is_solid_at(vx as usize, vy as usize, vz as usize) {
                         continue;
                     }
-                    pos = push_capsule_out(pos, up, chunk_pos, vx, vy, vz);
+                    let new_pos = push_capsule_out(pos, up, chunk_pos, vx, vy, vz);
+
+                    // In grounded mode detect landing: a positive Y correction
+                    // means the player was pushed upward off a solid surface.
+                    if is_grounded && new_pos.y > pos.y + 0.001 {
+                        if !player.on_ground {
+                            // First contact this frame — record impact speed for fall damage.
+                            player.impact_speed = player.vertical_velocity.abs();
+                        }
+                        player.on_ground = true;
+                        player.vertical_velocity = 0.0;
+                    }
+
+                    pos = new_pos;
                 }
             }
         }
@@ -516,6 +751,48 @@ pub fn player_cursor_system(
                 commands.entity(entity).despawn();
             }
         }
+    }
+}
+
+/// Applies fall damage when the player lands after a significant drop.
+///
+/// Reads [`Player::impact_speed`] set by [`player_resolve_collision`] and
+/// computes damage as `(impact_speed - fall_safe_speed).max(0) * 2.0`. When
+/// health reaches zero the player is teleported to [`PlayerHealth::spawn_position`]
+/// and a [`PlayerDied`] message is sent.
+///
+/// Run this system **after** [`player_resolve_collision`].
+pub fn player_fall_damage(
+    mut player_q: Query<(&mut Player, &mut Transform)>,
+    mut health: ResMut<PlayerHealth>,
+    mut damaged_writer: MessageWriter<PlayerDamaged>,
+    mut died_writer: MessageWriter<PlayerDied>,
+) {
+    let Ok((mut player, mut transform)) = player_q.single_mut() else {
+        return;
+    };
+
+    if player.impact_speed <= 0.0 {
+        return;
+    }
+
+    let damage = (player.impact_speed - health.fall_safe_speed).max(0.0) * 2.0;
+    player.impact_speed = 0.0;
+
+    if damage <= 0.0 {
+        return;
+    }
+
+    health.health = (health.health - damage).max(0.0);
+    damaged_writer.write(PlayerDamaged { amount: damage });
+
+    if health.health <= 0.0 {
+        health.health = health.max_health;
+        transform.translation = health.spawn_position;
+        // Reset velocity so the player doesn't inherit falling momentum after respawn.
+        player.vertical_velocity = 0.0;
+        player.velocity = Vec3::ZERO;
+        died_writer.write(PlayerDied);
     }
 }
 
@@ -592,6 +869,53 @@ fn push_capsule_out(
     pos + delta
 }
 
+/// Emits [`SfxRequest`] footstep sounds when the player walks on solid ground.
+///
+/// Samples the voxel directly below the player's feet and passes its byte
+/// representation as [`SfxEvent::Footstep`] so games can map surface types to
+/// different audio assets. The step interval scales with horizontal speed.
+pub fn player_footstep_system<V: VoxelType>(
+    mut query: Query<(&mut Player, &Transform)>,
+    time: Res<Time>,
+    manager: Res<ChunkManager>,
+    chunks: Query<&Chunk<V>>,
+    mut sfx: MessageWriter<SfxRequest>,
+) {
+    let Ok((mut player, transform)) = query.single_mut() else {
+        return;
+    };
+
+    if !matches!(player.mode, PlayerMode::Grounded { .. }) || !player.on_ground {
+        return;
+    }
+
+    let h_speed = Vec3::new(player.velocity.x, 0.0, player.velocity.z).length();
+    if h_speed < 0.5 {
+        player.footstep_timer = 0.0;
+        return;
+    }
+
+    // Step interval: shorter at higher speeds (clamped between 0.2–0.5s).
+    let step_interval = (0.5 / h_speed).clamp(0.2, 0.5);
+    player.footstep_timer += time.delta_secs();
+
+    if player.footstep_timer < step_interval {
+        return;
+    }
+    player.footstep_timer = 0.0;
+
+    // Sample voxel just below the player's feet.
+    let foot_pos = transform.translation - Vec3::Y * (PLAYER_HALF_HEIGHT + 0.3);
+    let voxel_byte = get_voxel_at::<V>(foot_pos, &manager, &chunks)
+        .map(|v| v.to_byte())
+        .unwrap_or(0);
+
+    sfx.write(SfxRequest {
+        event: SfxEvent::Footstep(voxel_byte),
+        position: None,
+    });
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Plugin that wires up the complete 6DOF player controller.
@@ -649,6 +973,9 @@ impl<V: VoxelType> Default for PlayerPlugin<V> {
 impl<V: VoxelType> Plugin for PlayerPlugin<V> {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerConfig>();
+        app.init_resource::<PlayerHealth>();
+        app.add_message::<PlayerDamaged>();
+        app.add_message::<PlayerDied>();
         app.add_systems(Startup, spawn_player);
         app.add_systems(
             Update,
@@ -656,6 +983,8 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
                 player_look,
                 player_move,
                 player_resolve_collision::<V>,
+                player_fall_damage,
+                player_footstep_system::<V>,
             )
                 .chain(),
         );

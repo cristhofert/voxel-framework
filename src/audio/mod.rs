@@ -100,6 +100,11 @@ pub enum SfxEvent {
     PauseOpen,
     /// Emitted when the pause menu is closed.
     PauseClose,
+    /// Emitted on each footstep when the player moves while grounded.
+    ///
+    /// The inner value is the byte representation of the voxel type underfoot,
+    /// allowing games to map different surface types to different sounds.
+    Footstep(u8),
     /// Escape hatch for game-specific sounds not covered by the framework
     /// variants.  The inner string is an arbitrary identifier chosen by the
     /// game and must match the key used in [`SfxConfig`].
@@ -118,6 +123,7 @@ impl SfxEvent {
             SfxEvent::HotbarScroll => "HotbarScroll".to_string(),
             SfxEvent::PauseOpen => "PauseOpen".to_string(),
             SfxEvent::PauseClose => "PauseClose".to_string(),
+            SfxEvent::Footstep(surface) => format!("Footstep:{surface}"),
             SfxEvent::Custom(s) => format!("Custom:{s}"),
         }
     }
