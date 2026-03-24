@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use voxel_framework::prelude::*;
 use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
 use voxel_framework::items::{DefaultItem, Inventory};
+use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
 
 fn main() {
     App::new()
@@ -32,6 +33,8 @@ fn main() {
         .add_plugins(DayCyclePlugin)
         // ── Debug overlay (F3 toggle) ────────────────────────────────────────
         .add_plugins(DebugOverlayPlugin)
+        // ── Mobs (patrol + chase + attack) ──────────────────────────────────
+        .add_plugins(MobPlugin::<DefaultTerrainVoxel>::new())
         // ── Audio (real bevy_audio playback) ────────────────────────────────
         .add_plugins(DefaultAudioPlugin)
         // ── Pause menu ───────────────────────────────────────────────────────
@@ -52,7 +55,7 @@ fn main() {
             ..default()
         })
         .insert_resource(Inventory::<DefaultItem>::default())
-        .add_systems(Startup, (setup_crafting, setup_audio))
+        .add_systems(Startup, (setup_crafting, setup_audio, setup_mobs))
         .run();
 }
 
@@ -108,4 +111,27 @@ fn setup_audio(mut cfg: ResMut<SfxConfig>) {
         "sounds/step_stone3.ogg",
         "sounds/step_stone4.ogg",
     ]);
+}
+
+/// Spawns a few mob enemies near the player spawn point.
+fn setup_mobs(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let config = MobConfig {
+        max_health: 20.0,
+        chase_speed: 3.0,
+        detection_radius: 14.0,
+        color: Color::srgb(0.7, 0.15, 0.15),
+        ..MobConfig::default()
+    };
+    // Spread mobs around the spawn point so the player encounters them quickly.
+    for (dx, dz) in [(16, 0), (-16, 0), (0, 16), (8, 12), (-12, 8)] {
+        spawn_mob(
+            Vec3::new(8.0 + dx as f32, 65.0, 8.0 + dz as f32),
+            config.clone(),
+            &mut commands, &mut meshes, &mut materials,
+        );
+    }
 }

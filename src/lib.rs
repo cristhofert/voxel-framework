@@ -122,6 +122,7 @@ pub mod fragments;
 pub mod generator;
 pub mod items;
 pub mod mesh;
+pub mod mobs;
 pub mod noise;
 pub mod player;
 pub mod prelude;

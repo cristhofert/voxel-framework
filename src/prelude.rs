@@ -111,5 +111,11 @@ pub use crate::player::{
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT,
 };
 
+// Mobs
+pub use crate::mobs::{
+    Mob, MobAiState, MobConfig, MobDied, MobPlugin,
+    spawn_mob, MOB_HALF_HEIGHT, MOB_RADIUS,
+};
+
 // Top-level plugins
 pub use crate::{VoxelCorePlugin, VoxelPlugin};
