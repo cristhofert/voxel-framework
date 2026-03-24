@@ -94,6 +94,7 @@ pub use crate::ui::{
     PickupNotificationConfig, PickupNotificationPlugin,
     PauseMenuConfig, PauseMenuPlugin, PauseMenuState,
     DebugOverlayPlugin, DebugOverlayState,
+    InventoryUiPlugin, InventoryUiState,
     UiPlugin,
 };
 
@@ -102,6 +103,7 @@ pub use crate::player::{
     Player, PlayerConfig, PlayerMode, PlayerPlugin,
     PlayerHealth, PlayerDamaged, PlayerDied,
     spawn_player, player_look, player_move, player_resolve_collision, player_cursor_system,
+    save_spawn_position, load_spawn_position,
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT,
 };
 

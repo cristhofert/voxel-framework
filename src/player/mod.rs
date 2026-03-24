@@ -916,6 +916,76 @@ pub fn player_footstep_system<V: VoxelType>(
     });
 }
 
+// ─── Spawn persistence ────────────────────────────────────────────────────────
+
+/// Default filename written to the working directory for spawn persistence.
+const SPAWN_FILE: &str = "spawn.dat";
+
+/// Saves the spawn position to a plain-text file.
+///
+/// The file contains three space-separated `f32` values (X Y Z) on one line.
+/// Creates the file and any missing parent directories.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be created or written.
+pub fn save_spawn_position(
+    path: &std::path::Path,
+    pos: Vec3,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, format!("{} {} {}", pos.x, pos.y, pos.z))?;
+    Ok(())
+}
+
+/// Loads a spawn position previously saved with [`save_spawn_position`].
+///
+/// Returns `None` if the file does not exist or cannot be parsed.
+pub fn load_spawn_position(path: &std::path::Path) -> Option<Vec3> {
+    let data = std::fs::read_to_string(path).ok()?;
+    let mut parts = data.split_whitespace();
+    let x: f32 = parts.next()?.parse().ok()?;
+    let y: f32 = parts.next()?.parse().ok()?;
+    let z: f32 = parts.next()?.parse().ok()?;
+    Some(Vec3::new(x, y, z))
+}
+
+/// Startup system that applies a persisted spawn position to [`PlayerConfig`]
+/// and [`PlayerHealth`] before the player entity is spawned.
+///
+/// Runs before [`spawn_player`] so the loaded position takes effect on the
+/// initial spawn.  Silent no-op if `spawn.dat` does not exist.
+fn load_spawn_on_startup(
+    mut config: ResMut<PlayerConfig>,
+    mut health: ResMut<PlayerHealth>,
+) {
+    if let Some(pos) = load_spawn_position(std::path::Path::new(SPAWN_FILE)) {
+        config.spawn_position = pos;
+        health.spawn_position = pos;
+    }
+}
+
+/// System that saves [`PlayerHealth::spawn_position`] to disk on [`AppExit`].
+///
+/// This preserves a custom spawn set at runtime (e.g. sleeping in a bed)
+/// across sessions.  The [`PlayerConfig::spawn_position`] default is used as
+/// fallback when no file exists.
+fn save_spawn_on_exit(
+    health: Res<PlayerHealth>,
+    mut exit_reader: bevy::ecs::message::MessageReader<AppExit>,
+) {
+    for _ in exit_reader.read() {
+        let _ = save_spawn_position(
+            std::path::Path::new(SPAWN_FILE),
+            health.spawn_position,
+        );
+    }
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Plugin that wires up the complete 6DOF player controller.
@@ -976,7 +1046,7 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
         app.init_resource::<PlayerHealth>();
         app.add_message::<PlayerDamaged>();
         app.add_message::<PlayerDied>();
-        app.add_systems(Startup, spawn_player);
+        app.add_systems(Startup, (load_spawn_on_startup, spawn_player).chain());
         app.add_systems(
             Update,
             (
@@ -989,6 +1059,7 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
                 .chain(),
         );
         app.add_systems(Update, player_cursor_system);
+        app.add_systems(PostUpdate, save_spawn_on_exit);
     }
 }
 
