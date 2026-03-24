@@ -81,17 +81,33 @@ impl Default for MiningConfig {
 ///
 /// Call [`stop_mining`] whenever the mine button is released — failing to do
 /// so leaves stale progress that will carry over to the next target.
-#[derive(Resource, Default, Debug)]
+#[derive(Resource, Debug)]
 pub struct MiningState {
     /// The chunk coordinate and local voxel index `(x, y, z)` currently being
     /// mined, or `None` when no mining is in progress.
     pub target: Option<(IVec3, (usize, usize, usize))>,
-    /// Accumulated break time in seconds, in the range `[0.0, break_time]`.
+    /// Accumulated break time in seconds, in the range `[0.0, effective_break_time]`.
     pub elapsed: f32,
     /// Normalised break progress in the range `[0.0, 1.0]`.
     ///
-    /// Equals `elapsed / break_time`.  Reaches `1.0` when the voxel breaks.
+    /// Equals `elapsed / effective_break_time`.  Reaches `1.0` when the voxel breaks.
     pub progress: f32,
+    /// Cached effective break time for the current target, in seconds.
+    ///
+    /// Computed once per target as `config.break_time * voxel.hardness()`.
+    /// Initialised to `1.0` until the first mining target is set.
+    pub(crate) effective_break_time: f32,
+}
+
+impl Default for MiningState {
+    fn default() -> Self {
+        Self {
+            target: None,
+            elapsed: 0.0,
+            progress: 0.0,
+            effective_break_time: 1.0,
+        }
+    }
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
@@ -210,15 +226,30 @@ pub fn tick_mining<V: VoxelType>(
     progress_writer: &mut MessageWriter<MiningProgress>,
     modified: &mut MessageWriter<ChunkModified>,
 ) {
-    // Reset elapsed when target changes.
+    // Reset elapsed when target changes and sample the new voxel's hardness.
     if state.target != Some((target_chunk, target_local)) {
+        let hardness = manager
+            .get_entity(target_chunk)
+            .and_then(|e| chunks.get(e).ok())
+            .map(|chunk| {
+                let (x, y, z) = target_local;
+                chunk.get(x, y, z).hardness()
+            })
+            .unwrap_or(1.0);
+
+        // Hardness 0.0 means unbreakable — use a very large break time.
+        state.effective_break_time = if hardness > 0.0 {
+            config.break_time * hardness
+        } else {
+            f32::MAX
+        };
         state.elapsed = 0.0;
         state.progress = 0.0;
         state.target = Some((target_chunk, target_local));
     }
 
     state.elapsed += delta_secs;
-    state.progress = (state.elapsed / config.break_time).min(1.0);
+    state.progress = (state.elapsed / state.effective_break_time).min(1.0);
 
     let world_pos = voxel_world_pos(target_chunk, target_local);
 
@@ -227,7 +258,7 @@ pub fn tick_mining<V: VoxelType>(
         world_pos,
     });
 
-    if state.progress >= 1.0 {
+    if state.progress >= 1.0 && state.effective_break_time < f32::MAX {
         // Destroy the voxel if the chunk is loaded.
         if let Some(entity) = manager.get_entity(target_chunk) {
             if let Ok(mut chunk) = chunks.get_mut(entity) {
@@ -295,6 +326,111 @@ impl Plugin for MiningPlugin {
     }
 }
 
+// ─── MiningInputPlugin ────────────────────────────────────────────────────────
+
+/// Convenience plugin that wires mouse input to the mining API automatically.
+///
+/// `MiningInputPlugin<V>` adds a single [`Update`] system that:
+///
+/// 1. Raycasts from the active [`Camera3d`] (max `6.0` world units).
+/// 2. While the **left mouse button** is held and the ray hits a solid voxel,
+///    calls [`tick_mining`] to accumulate break progress.
+/// 3. When the button is released (or no voxel is hit), calls [`stop_mining`]
+///    to clear accumulated progress.
+///
+/// # Prerequisites
+///
+/// [`MiningPlugin`] must be added **before** this plugin so that the required
+/// resources ([`MiningState`], [`MiningConfig`]) and message channels
+/// ([`VoxelBroken`], [`MiningProgress`]) are already registered.
+///
+/// # Example
+///
+/// ```no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::{VoxelPlugin, generator::{GeneratorPlugin, GeneratorResource}};
+/// use voxel_framework::world::mining::MiningInputPlugin;
+/// use voxel_framework::voxel::DefaultTerrainVoxel;
+///
+/// App::new()
+///     .add_plugins(DefaultPlugins)
+///     .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
+///     .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel>::new())
+///     .run();
+/// ```
+pub struct MiningInputPlugin<V: VoxelType> {
+    _m: std::marker::PhantomData<V>,
+}
+
+impl<V: VoxelType> MiningInputPlugin<V> {
+    /// Creates a new [`MiningInputPlugin`] for voxel type `V`.
+    pub fn new() -> Self {
+        Self { _m: std::marker::PhantomData }
+    }
+}
+
+impl<V: VoxelType> Default for MiningInputPlugin<V> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<V: VoxelType> Plugin for MiningInputPlugin<V> {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, mining_input_system::<V>);
+    }
+}
+
+/// System added by [`MiningInputPlugin`].
+///
+/// Raycasts from the camera and drives [`tick_mining`] / [`stop_mining`] based
+/// on left-mouse-button state. Added automatically — do not add this system
+/// manually when using [`MiningInputPlugin`].
+pub fn mining_input_system<V: VoxelType>(
+    buttons: Res<ButtonInput<MouseButton>>,
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    manager: Res<ChunkManager>,
+    mut chunks: Query<&mut crate::chunk::Chunk<V>>,
+    mut state: ResMut<MiningState>,
+    config: Res<MiningConfig>,
+    mut broken: MessageWriter<VoxelBroken>,
+    mut progress: MessageWriter<MiningProgress>,
+    mut modified: MessageWriter<ChunkModified>,
+    time: Res<Time>,
+) {
+    if !buttons.pressed(MouseButton::Left) {
+        stop_mining(&mut state);
+        return;
+    }
+
+    let Ok(cam_tf) = camera_q.single() else {
+        return;
+    };
+
+    let origin    = cam_tf.translation();
+    let direction = cam_tf.forward().as_vec3();
+
+    // `transmute_lens` gives a read-only view without a second conflicting query.
+    let mut lens = chunks.transmute_lens::<&crate::chunk::Chunk<V>>();
+    let Some(hit) = super::raycast::raycast(
+        origin, direction, 6.0, &manager, &lens.query(),
+    ) else {
+        stop_mining(&mut state);
+        return;
+    };
+
+    tick_mining(
+        hit.chunk_coord,
+        hit.local,
+        time.delta_secs(),
+        &mut state,
+        &config,
+        &manager,
+        &mut chunks,
+        &mut broken,
+        &mut progress,
+        &mut modified,
+    );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -313,6 +449,7 @@ mod tests {
             target: Some((IVec3::ZERO, (1, 2, 3))),
             elapsed: 0.8,
             progress: 0.5,
+            effective_break_time: 1.0,
         };
         stop_mining(&mut state);
         assert!(state.target.is_none());

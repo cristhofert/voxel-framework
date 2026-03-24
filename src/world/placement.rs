@@ -279,6 +279,121 @@ impl Plugin for PlacementPlugin {
     }
 }
 
+// ─── PlacementInputPlugin ─────────────────────────────────────────────────────
+
+/// Convenience plugin that wires mouse input to the placement API automatically.
+///
+/// `PlacementInputPlugin<V>` adds a single [`Update`] system that:
+///
+/// 1. Advances the placement cooldown timer every frame via [`tick_placement`].
+/// 2. Raycasts from the active [`Camera3d`] (max `6.0` world units) on a
+///    **right mouse button** press.
+/// 3. Calls [`try_place_voxel`] with the block type derived from the active
+///    [`crate::items::HotbarState`] slot: `V::from_byte(selected + 1)`.
+///    (Slot 0 → byte 1, slot 1 → byte 2, …)
+///
+/// # Prerequisites
+///
+/// [`PlacementPlugin`] must be added **before** this plugin so that the
+/// required resources ([`PlacementState`], [`PlacementConfig`]) and message
+/// channels ([`VoxelPlaced`]) are already registered.
+///
+/// [`crate::items::HotbarPlugin`] must also be added for hotbar slot selection.
+///
+/// # Example
+///
+/// ```no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::{VoxelPlugin, generator::{GeneratorPlugin, GeneratorResource}};
+/// use voxel_framework::world::placement::PlacementInputPlugin;
+/// use voxel_framework::voxel::DefaultTerrainVoxel;
+///
+/// App::new()
+///     .add_plugins(DefaultPlugins)
+///     .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
+///     .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
+///     .run();
+/// ```
+pub struct PlacementInputPlugin<V: VoxelType> {
+    _m: std::marker::PhantomData<V>,
+}
+
+impl<V: VoxelType> PlacementInputPlugin<V> {
+    /// Creates a new [`PlacementInputPlugin`] for voxel type `V`.
+    pub fn new() -> Self {
+        Self { _m: std::marker::PhantomData }
+    }
+}
+
+impl<V: VoxelType> Default for PlacementInputPlugin<V> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<V: VoxelType> Plugin for PlacementInputPlugin<V> {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, placement_input_system::<V>);
+    }
+}
+
+/// System added by [`PlacementInputPlugin`].
+///
+/// Ticks the cooldown every frame, then raycasts and places on right-click.
+/// Added automatically — do not add this system manually when using
+/// [`PlacementInputPlugin`].
+pub fn placement_input_system<V: VoxelType>(
+    buttons: Res<ButtonInput<MouseButton>>,
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    manager: Res<ChunkManager>,
+    mut chunks: Query<&mut crate::chunk::Chunk<V>>,
+    mut state: ResMut<PlacementState>,
+    config: Res<PlacementConfig>,
+    hotbar: Res<crate::items::hotbar::HotbarState>,
+    mut placed: MessageWriter<VoxelPlaced>,
+    mut modified: MessageWriter<ChunkModified>,
+    time: Res<Time>,
+) {
+    tick_placement(time.delta_secs(), &mut state, &config);
+
+    if !buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+
+    let Ok(cam_tf) = camera_q.single() else {
+        return;
+    };
+
+    let origin    = cam_tf.translation();
+    let direction = cam_tf.forward().as_vec3();
+
+    // `transmute_lens` gives a read-only view without a second conflicting query.
+    let mut lens = chunks.transmute_lens::<&crate::chunk::Chunk<V>>();
+    let Some(hit) = super::raycast::raycast(
+        origin, direction, 6.0, &manager, &lens.query(),
+    ) else {
+        return;
+    };
+
+    // Place one step back along the face normal (adjacent air voxel).
+    let place_world = hit.position + hit.face_normal;
+    let place_chunk = crate::chunk::world_to_chunk_coord(place_world);
+    let place_local = crate::chunk::world_to_local_coord(place_world);
+
+    // Map hotbar slot to voxel type: slot 0 → byte 1, slot 1 → byte 2, etc.
+    let voxel = V::from_byte(hotbar.selected as u8 + 1);
+
+    try_place_voxel(
+        place_chunk,
+        place_local,
+        voxel,
+        &mut state,
+        &config,
+        &manager,
+        &mut chunks,
+        &mut placed,
+        &mut modified,
+    );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
