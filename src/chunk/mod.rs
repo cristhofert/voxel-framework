@@ -65,7 +65,7 @@
 mod storage;
 pub mod persistence;
 
-pub use storage::Chunk;
+pub use storage::{Chunk, face_to_state};
 
 use bevy::prelude::*;
 

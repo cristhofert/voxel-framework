@@ -1,8 +1,15 @@
 //! Binary chunk I/O — save and load chunks to/from raw binary files.
 //!
-//! Format: raw binary, [`CHUNK_VOLUME`] bytes per chunk. Each byte encodes one
-//! voxel via [`VoxelType::to_byte()`] / [`VoxelType::from_byte()`]. Voxels are
-//! stored in flat array order: `x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z`.
+//! ## File format
+//!
+//! ```text
+//! [CHUNK_VOLUME bytes]  — voxel palette bytes (VoxelType::to_byte)
+//! [CHUNK_VOLUME bytes]  — state bytes (optional, present when file >= 2 * CHUNK_VOLUME)
+//! ```
+//!
+//! Voxels are stored in flat array order: `x * CHUNK_SIZE² + y * CHUNK_SIZE + z`.
+//! State bytes follow in the same order.  Files from older versions (exactly
+//! `CHUNK_VOLUME` bytes) are loaded without error — state bytes default to `0`.
 //!
 //! File name convention: `chunk_X_Y_Z.bin` where X, Y, Z are the [`IVec3`] chunk
 //! coordinates.
@@ -19,20 +26,27 @@ use crate::voxel::VoxelType;
 
 /// Saves a chunk to a binary file.
 ///
-/// The file contains exactly [`CHUNK_VOLUME`] bytes, one per voxel in flat
-/// array order (`x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z`). Each byte
-/// is produced by [`VoxelType::to_byte()`].
+/// Writes `2 * CHUNK_VOLUME` bytes: first the voxel palette bytes (one per
+/// voxel via [`VoxelType::to_byte`]), then the state bytes in the same flat
+/// array order.
 ///
 /// # Errors
 ///
 /// Returns an [`io::Error`] if the file cannot be written (e.g., invalid path,
 /// permission denied, disk full).
 pub fn save_chunk<V: VoxelType>(chunk: &Chunk<V>, path: impl AsRef<Path>) -> io::Result<()> {
-    let mut bytes = Vec::with_capacity(CHUNK_VOLUME);
+    let mut bytes = Vec::with_capacity(CHUNK_VOLUME * 2);
     for x in 0..CHUNK_SIZE {
         for y in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
                 bytes.push(chunk.get(x, y, z).to_byte());
+            }
+        }
+    }
+    for x in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                bytes.push(chunk.get_state(x, y, z));
             }
         }
     }
@@ -41,8 +55,9 @@ pub fn save_chunk<V: VoxelType>(chunk: &Chunk<V>, path: impl AsRef<Path>) -> io:
 
 /// Loads a chunk from a binary file.
 ///
-/// Reads the file and interprets the first [`CHUNK_VOLUME`] bytes as voxels in
-/// flat array order. Each byte is mapped through [`VoxelType::from_byte()`].
+/// Reads the voxel palette bytes and (if present) the state bytes.  Files that
+/// contain only [`CHUNK_VOLUME`] bytes (old format) are loaded with all states
+/// defaulting to `0`.
 ///
 /// # Errors
 ///
@@ -72,6 +87,19 @@ pub fn load_chunk<V: VoxelType>(path: impl AsRef<Path>) -> io::Result<Chunk<V>> 
             }
         }
     }
+
+    // Load state bytes if the file contains them (new format).
+    if bytes.len() >= CHUNK_VOLUME * 2 {
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    chunk.set_state(x, y, z, bytes[i]);
+                    i += 1;
+                }
+            }
+        }
+    }
+
     Ok(chunk)
 }
 

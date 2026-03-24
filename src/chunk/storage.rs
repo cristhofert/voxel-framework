@@ -26,6 +26,22 @@ use crate::voxel::VoxelType;
 /// The array is wrapped in a `Box` to keep the struct's stack size to a single
 /// pointer (`8 bytes`) regardless of `V`'s size.
 ///
+/// ## Block states
+///
+/// Each voxel has a companion `u8` **state byte** stored in a parallel
+/// `states` array. The state byte is set automatically by the placement system
+/// to record which face the block was placed against (bits 0-2, see
+/// [`face_to_state`]):
+///
+/// | Bits | Meaning |
+/// |------|---------|
+/// | 0–2  | Placement face (0=+X, 1=−X, 2=+Y, 3=−Y, 4=+Z, 5=−Z, 6=unknown) |
+/// | 3–7  | Reserved for game-specific use |
+///
+/// Games may read and write state bytes freely via [`Chunk::get_state`] /
+/// [`Chunk::set_state`] for door open/close flags, liquid level, growth stage,
+/// or any other per-voxel metadata.
+///
 /// ## Coordinate bounds
 ///
 /// Every method that takes `(x, y, z)` expects each coordinate in
@@ -44,16 +60,48 @@ use crate::voxel::VoxelType;
 #[derive(Component, Clone, Debug)]
 pub struct Chunk<V: VoxelType> {
     voxels: Box<[V; CHUNK_VOLUME]>,
+    /// Per-voxel state bytes — parallel array to `voxels`.
+    ///
+    /// Bits 0–2 encode the placement face; bits 3–7 are reserved for games.
+    /// All states are initialised to `0` (face = +X, conventional default).
+    pub states: Box<[u8; CHUNK_VOLUME]>,
+}
+
+/// Converts a world-space face normal to a placement-face state byte (bits 0–2).
+///
+/// | Normal | State |
+/// |--------|-------|
+/// | +X     | 0     |
+/// | −X     | 1     |
+/// | +Y     | 2     |
+/// | −Y     | 3     |
+/// | +Z     | 4     |
+/// | −Z     | 5     |
+/// | other  | 6     |
+///
+/// The returned value is in `[0, 6]` and occupies only bits 0–2 so it can be
+/// OR-ed with the upper bits of an existing state byte without clobbering them.
+pub fn face_to_state(normal: bevy::math::IVec3) -> u8 {
+    match (normal.x, normal.y, normal.z) {
+        (1,  0,  0) => 0,
+        (-1, 0,  0) => 1,
+        (0,  1,  0) => 2,
+        (0, -1,  0) => 3,
+        (0,  0,  1) => 4,
+        (0,  0, -1) => 5,
+        _           => 6,
+    }
 }
 
 impl<V: VoxelType> Chunk<V> {
-    /// Creates a new chunk with every voxel initialized to [`VoxelType::air`].
+    /// Creates a new chunk with every voxel initialized to [`VoxelType::air`]
+    /// and every state byte set to `0`.
     ///
-    /// Allocates a [`CHUNK_VOLUME`]-element array on the heap. Equivalent to
-    /// calling `Default::default()`.
+    /// Allocates two [`CHUNK_VOLUME`]-element arrays on the heap.
     pub fn new() -> Self {
         Self {
             voxels: Box::new([V::air(); CHUNK_VOLUME]),
+            states: Box::new([0u8; CHUNK_VOLUME]),
         }
     }
 
@@ -108,6 +156,33 @@ impl<V: VoxelType> Chunk<V> {
     #[inline]
     pub fn set(&mut self, x: usize, y: usize, z: usize, voxel: V) {
         self.voxels[Self::get_index(x, y, z)] = voxel;
+    }
+
+    /// Returns the state byte for the voxel at local coordinate `(x, y, z)`.
+    ///
+    /// Bits 0–2 hold the placement face (see [`face_to_state`]); bits 3–7 are
+    /// available for game-specific use.  Returns `0` for voxels that have never
+    /// been explicitly placed (e.g. generator-filled voxels).
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if any coordinate is out of bounds.
+    #[inline]
+    pub fn get_state(&self, x: usize, y: usize, z: usize) -> u8 {
+        self.states[Self::get_index(x, y, z)]
+    }
+
+    /// Overwrites the state byte for the voxel at local coordinate `(x, y, z)`.
+    ///
+    /// Games may set bits 3–7 freely. Bits 0–2 are normally written by the
+    /// placement system via [`face_to_state`].
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if any coordinate is out of bounds.
+    #[inline]
+    pub fn set_state(&mut self, x: usize, y: usize, z: usize, state: u8) {
+        self.states[Self::get_index(x, y, z)] = state;
     }
 
     /// Returns `true` if the voxel at local coordinate `(x, y, z)` is solid.

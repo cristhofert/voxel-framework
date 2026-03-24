@@ -38,6 +38,7 @@
 //!     if place_pressed {
 //!         try_place_voxel(
 //!             IVec3::ZERO, (8, 8, 8), DefaultVoxel::Rock,
+//!             IVec3::Y, // face the block was placed against
 //!             &mut state, &config, &manager,
 //!             &mut chunks, &mut placed, &mut modified,
 //!         );
@@ -110,6 +111,11 @@ pub struct VoxelPlaced {
     pub local: (usize, usize, usize),
     /// World-space center of the newly placed voxel.
     pub world_pos: Vec3,
+    /// Integer face normal of the surface the block was placed against.
+    ///
+    /// Each component is `−1`, `0`, or `1`.  Use [`crate::chunk::face_to_state`]
+    /// to convert this to a compact 3-bit state value.
+    pub face_normal: IVec3,
 }
 
 // ─── Free functions ───────────────────────────────────────────────────────────
@@ -179,6 +185,7 @@ fn voxel_world_pos(chunk_coord: IVec3, local: (usize, usize, usize)) -> Vec3 {
 /// ) {
 ///     let placed_ok = try_place_voxel(
 ///         IVec3::ZERO, (8, 8, 8), DefaultVoxel::Rock,
+///         IVec3::Y, // face normal: placed on top surface
 ///         &mut state, &config, &manager,
 ///         &mut chunks, &mut placed, &mut modified,
 ///     );
@@ -192,6 +199,7 @@ pub fn try_place_voxel<V: VoxelType>(
     target_chunk: IVec3,
     target_local: (usize, usize, usize),
     voxel: V,
+    face_normal: IVec3,
     state: &mut PlacementState,
     config: &PlacementConfig,
     manager: &ChunkManager,
@@ -219,6 +227,7 @@ pub fn try_place_voxel<V: VoxelType>(
     }
 
     chunk.set(x, y, z, voxel);
+    chunk.set_state(x, y, z, crate::chunk::face_to_state(face_normal));
     state.cooldown_elapsed = 0.0;
 
     let world_pos = voxel_world_pos(target_chunk, target_local);
@@ -227,6 +236,7 @@ pub fn try_place_voxel<V: VoxelType>(
         chunk_coord: target_chunk,
         local: target_local,
         world_pos,
+        face_normal,
     });
 
     modified.write(ChunkModified(target_chunk));
@@ -380,11 +390,13 @@ pub fn placement_input_system<V: VoxelType>(
 
     // Map hotbar slot to voxel type: slot 0 → byte 1, slot 1 → byte 2, etc.
     let voxel = V::from_byte(hotbar.selected as u8 + 1);
+    let face_normal = hit.face_normal.as_ivec3();
 
     try_place_voxel(
         place_chunk,
         place_local,
         voxel,
+        face_normal,
         &mut state,
         &config,
         &manager,

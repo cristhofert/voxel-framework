@@ -114,7 +114,7 @@ pub use placement::{
     PlacementConfig, PlacementInputPlugin, PlacementPlugin, PlacementState, VoxelPlaced,
 };
 pub use systems::ViewerPosition;
-pub use voxel_ops::{get_voxel_at, set_voxel_at};
+pub use voxel_ops::{get_voxel_at, set_voxel_at, get_state_at, set_state_at};
 
 use std::collections::{HashMap, HashSet};
 

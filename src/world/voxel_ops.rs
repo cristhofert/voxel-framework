@@ -157,3 +157,46 @@ pub fn set_voxel_at<V: VoxelType>(
     modified.write(ChunkModified(coord));
     true
 }
+
+/// Read the state byte of the voxel at a world-space position.
+///
+/// Returns `None` if the enclosing chunk is not loaded. Returns `0` for voxels
+/// whose state has never been explicitly set (generator-filled voxels).
+///
+/// See [`crate::chunk::Chunk::get_state`] for the state-byte encoding.
+pub fn get_state_at<V: VoxelType>(
+    world_pos: Vec3,
+    manager: &ChunkManager,
+    chunks: &Query<&Chunk<V>>,
+) -> Option<u8> {
+    let coord: ChunkCoord = world_to_chunk_coord(world_pos);
+    let entity = manager.get_entity(coord)?;
+    let chunk = chunks.get(entity).ok()?;
+    let (x, y, z) = world_to_local_coord(world_pos);
+    Some(chunk.get_state(x, y, z))
+}
+
+/// Write the state byte of the voxel at a world-space position.
+///
+/// Does NOT emit a `ChunkModified` event — state changes do not affect
+/// geometry, so remeshing is not triggered. Returns `true` on success, `false`
+/// if the enclosing chunk is not loaded.
+///
+/// See [`crate::chunk::Chunk::set_state`] for the state-byte encoding.
+pub fn set_state_at<V: VoxelType>(
+    world_pos: Vec3,
+    state: u8,
+    manager: &ChunkManager,
+    chunks: &mut Query<&mut Chunk<V>>,
+) -> bool {
+    let coord: ChunkCoord = world_to_chunk_coord(world_pos);
+    let Some(entity) = manager.get_entity(coord) else {
+        return false;
+    };
+    let Ok(mut chunk) = chunks.get_mut(entity) else {
+        return false;
+    };
+    let (x, y, z) = world_to_local_coord(world_pos);
+    chunk.set_state(x, y, z, state);
+    true
+}
