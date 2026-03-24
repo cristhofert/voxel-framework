@@ -285,35 +285,24 @@ fn fbm_noise_varies_spatially() {
 // ── 5. LOD thresholds ─────────────────────────────────────────────────────────
 
 #[test]
-fn lod_0_within_50_units() {
+fn lod_0_within_200_units() {
     let lod = compute_lod(Vec3::new(25.0, 0.0, 0.0), Vec3::ZERO);
     assert_eq!(lod, 0, "distance 25 should map to LOD 0");
 
-    // Boundary: just under 50 is still LOD 0
-    let lod_boundary = compute_lod(Vec3::new(49.9, 0.0, 0.0), Vec3::ZERO);
-    assert_eq!(lod_boundary, 0, "distance 49.9 should still be LOD 0");
+    let lod_mid = compute_lod(Vec3::new(100.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_mid, 0, "distance 100 should map to LOD 0");
+
+    // Boundary: just under 200 is still LOD 0
+    let lod_boundary = compute_lod(Vec3::new(199.9, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_boundary, 0, "distance 199.9 should still be LOD 0");
 }
 
 #[test]
-fn lod_1_between_50_and_100() {
-    // Exactly 50.0 is NOT < 50.0, so it maps to LOD 1.
-    let lod_at_50 = compute_lod(Vec3::new(50.0, 0.0, 0.0), Vec3::ZERO);
-    assert_eq!(lod_at_50, 1, "distance exactly 50 should map to LOD 1");
-
-    let lod_mid = compute_lod(Vec3::new(75.0, 0.0, 0.0), Vec3::ZERO);
-    assert_eq!(lod_mid, 1, "distance 75 should map to LOD 1");
-
-    // Just under 100 is still LOD 1
-    let lod_near_100 = compute_lod(Vec3::new(99.9, 0.0, 0.0), Vec3::ZERO);
-    assert_eq!(lod_near_100, 1, "distance 99.9 should still be LOD 1");
-}
-
-#[test]
-fn lod_2_beyond_100() {
-    // Exactly 100.0 is NOT < 100.0, so it maps to LOD 2.
-    let lod_at_100 = compute_lod(Vec3::new(100.0, 0.0, 0.0), Vec3::ZERO);
-    assert_eq!(lod_at_100, 2, "distance exactly 100 should map to LOD 2");
+fn lod_1_at_and_beyond_200_units() {
+    // Exactly 200.0 is NOT < 200.0, so it maps to LOD 1.
+    let lod_at_200 = compute_lod(Vec3::new(200.0, 0.0, 0.0), Vec3::ZERO);
+    assert_eq!(lod_at_200, 1, "distance exactly 200 should map to LOD 1");
 
     let lod_far = compute_lod(Vec3::new(500.0, 0.0, 0.0), Vec3::ZERO);
-    assert_eq!(lod_far, 2, "distance 500 should map to LOD 2");
+    assert_eq!(lod_far, 1, "distance 500 should map to LOD 1");
 }
