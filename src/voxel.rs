@@ -129,6 +129,17 @@ pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Has
     /// [`air()`]: VoxelType::air
     fn from_byte(byte: u8) -> Self;
 
+    /// Returns the hardness multiplier applied to the base mining break time.
+    ///
+    /// The effective break time is `config.break_time * voxel.hardness()`.
+    /// `0.0` prevents mining (the voxel is unbreakable).
+    ///
+    /// Default: `1.0` — inherits the global [`crate::world::mining::MiningConfig::break_time`]
+    /// unchanged.
+    fn hardness(&self) -> f32 {
+        1.0
+    }
+
     /// Returns the empty/air voxel for this type.
     ///
     /// The default implementation delegates to `Self::default()`, which is
@@ -232,6 +243,143 @@ impl VoxelType for DefaultVoxel {
             3 => DefaultVoxel::SiliconCrystal,
             4 => DefaultVoxel::RareMineral,
             _ => DefaultVoxel::Air,
+        }
+    }
+}
+
+/// Built-in terrain voxel palette for Minetest/Minecraft-style worlds.
+///
+/// `DefaultTerrainVoxel` is a ten-material palette tuned for procedural
+/// heightmap terrain. Use it with [`crate::generator::terrain::TerrainGenerator`]
+/// and [`crate::VoxelPlugin::<DefaultTerrainVoxel>::new()`].
+///
+/// # Byte mapping (persistence contract)
+///
+/// | Variant | `to_byte` |
+/// |---------|-----------|
+/// | `Air`    | `0` |
+/// | `Grass`  | `1` |
+/// | `Dirt`   | `2` |
+/// | `Stone`  | `3` |
+/// | `Sand`   | `4` |
+/// | `Wood`   | `5` |
+/// | `Leaves` | `6` |
+/// | `Gravel` | `7` |
+/// | `Snow`   | `8` |
+/// | `Water`  | `9` |
+///
+/// Do not change these values; doing so breaks any saved chunk data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DefaultTerrainVoxel {
+    /// Empty space — not solid, produces no geometry.
+    #[default]
+    Air,
+    /// Grass-covered topsoil — vivid green.
+    ///
+    /// Top layer of terrain surface. Linear RGBA: `[0.30, 0.60, 0.20, 1.0]`.
+    Grass,
+    /// Dirt layer — warm brown.
+    ///
+    /// Found just below the grass layer. Linear RGBA: `[0.50, 0.35, 0.20, 1.0]`.
+    Dirt,
+    /// Stone — cool grey.
+    ///
+    /// Bulk underground material. Linear RGBA: `[0.50, 0.50, 0.50, 1.0]`.
+    Stone,
+    /// Sand — pale yellow.
+    ///
+    /// Replaces grass/dirt at very low elevations (beaches). Linear RGBA: `[0.85, 0.80, 0.50, 1.0]`.
+    Sand,
+    /// Tree trunk wood — brown.
+    ///
+    /// Used for procedurally generated tree trunks. Linear RGBA: `[0.45, 0.30, 0.18, 1.0]`.
+    Wood,
+    /// Tree foliage — green.
+    ///
+    /// Used for procedurally generated tree crowns. Linear RGBA: `[0.20, 0.55, 0.15, 1.0]`.
+    Leaves,
+    /// Gravel — mid grey.
+    ///
+    /// Loose stone aggregate. Linear RGBA: `[0.55, 0.52, 0.50, 1.0]`.
+    Gravel,
+    /// Snow — near-white.
+    ///
+    /// Surface cover at high elevations. Linear RGBA: `[0.92, 0.95, 0.98, 1.0]`.
+    Snow,
+    /// Water — blue, non-solid.
+    ///
+    /// Fills low-elevation air voxels up to the configured water level.
+    /// Not solid — adjacent solid faces are still meshed. Linear RGBA: `[0.15, 0.40, 0.75, 1.0]`.
+    Water,
+}
+
+impl VoxelType for DefaultTerrainVoxel {
+    #[inline]
+    fn is_solid(&self) -> bool {
+        !matches!(self, DefaultTerrainVoxel::Air | DefaultTerrainVoxel::Water)
+    }
+
+    #[inline]
+    fn color(&self) -> [f32; 4] {
+        match self {
+            DefaultTerrainVoxel::Air    => [0.0,  0.0,  0.0,  0.0],
+            DefaultTerrainVoxel::Grass  => [0.30, 0.60, 0.20, 1.0],
+            DefaultTerrainVoxel::Dirt   => [0.50, 0.35, 0.20, 1.0],
+            DefaultTerrainVoxel::Stone  => [0.50, 0.50, 0.50, 1.0],
+            DefaultTerrainVoxel::Sand   => [0.85, 0.80, 0.50, 1.0],
+            DefaultTerrainVoxel::Wood   => [0.45, 0.30, 0.18, 1.0],
+            DefaultTerrainVoxel::Leaves => [0.20, 0.55, 0.15, 1.0],
+            DefaultTerrainVoxel::Gravel => [0.55, 0.52, 0.50, 1.0],
+            DefaultTerrainVoxel::Snow   => [0.92, 0.95, 0.98, 1.0],
+            DefaultTerrainVoxel::Water  => [0.15, 0.40, 0.75, 1.0],
+        }
+    }
+
+    #[inline]
+    fn to_byte(&self) -> u8 {
+        match self {
+            DefaultTerrainVoxel::Air    => 0,
+            DefaultTerrainVoxel::Grass  => 1,
+            DefaultTerrainVoxel::Dirt   => 2,
+            DefaultTerrainVoxel::Stone  => 3,
+            DefaultTerrainVoxel::Sand   => 4,
+            DefaultTerrainVoxel::Wood   => 5,
+            DefaultTerrainVoxel::Leaves => 6,
+            DefaultTerrainVoxel::Gravel => 7,
+            DefaultTerrainVoxel::Snow   => 8,
+            DefaultTerrainVoxel::Water  => 9,
+        }
+    }
+
+    #[inline]
+    fn from_byte(byte: u8) -> Self {
+        match byte {
+            1 => DefaultTerrainVoxel::Grass,
+            2 => DefaultTerrainVoxel::Dirt,
+            3 => DefaultTerrainVoxel::Stone,
+            4 => DefaultTerrainVoxel::Sand,
+            5 => DefaultTerrainVoxel::Wood,
+            6 => DefaultTerrainVoxel::Leaves,
+            7 => DefaultTerrainVoxel::Gravel,
+            8 => DefaultTerrainVoxel::Snow,
+            9 => DefaultTerrainVoxel::Water,
+            _ => DefaultTerrainVoxel::Air,
+        }
+    }
+
+    #[inline]
+    fn hardness(&self) -> f32 {
+        match self {
+            DefaultTerrainVoxel::Air    => 0.0, // unbreakable
+            DefaultTerrainVoxel::Grass  => 0.5,
+            DefaultTerrainVoxel::Dirt   => 0.5,
+            DefaultTerrainVoxel::Stone  => 3.0,
+            DefaultTerrainVoxel::Sand   => 0.5,
+            DefaultTerrainVoxel::Wood   => 1.5,
+            DefaultTerrainVoxel::Leaves => 0.3,
+            DefaultTerrainVoxel::Gravel => 0.75,
+            DefaultTerrainVoxel::Snow   => 0.3,
+            DefaultTerrainVoxel::Water  => 0.0, // unbreakable
         }
     }
 }
