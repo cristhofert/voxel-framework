@@ -23,6 +23,8 @@ fn main() {
         // ── Mining & placement input (batteries-included) ────────────────────
         .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel>::new())
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
+        // ── Inventory UI (E to open) ─────────────────────────────────────────
+        .add_plugins(InventoryUiPlugin::<DefaultItem>::new())
         // ── Crafting (C to open) ─────────────────────────────────────────────
         .add_plugins(CraftingPlugin::<DefaultItem>::new())
         // ── Day/night cycle (manages sun + sky color) ────────────────────────

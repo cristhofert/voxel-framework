@@ -950,6 +950,241 @@ impl Plugin for DebugOverlayPlugin {
     }
 }
 
+// ─── Inventory UI ─────────────────────────────────────────────────────────────
+
+use crate::items::Inventory;
+
+const INV_COLS: usize = 9;
+const INV_SLOT_PX: f32 = 48.0;
+const INV_GAP_PX: f32 = 4.0;
+
+/// Runtime state of the full inventory panel (E-key toggle).
+#[derive(Resource, Default)]
+pub struct InventoryUiState {
+    /// Whether the inventory panel is currently visible.
+    pub visible: bool,
+}
+
+/// Marker component on the inventory panel root node.
+#[derive(Component)]
+struct InventoryUiRoot;
+
+/// Marker component on each slot cell; stores the slot index.
+#[derive(Component)]
+struct InventoryCell(usize);
+
+/// Marker component on the count label inside each slot cell.
+#[derive(Component)]
+struct InventoryCellCount(usize);
+
+/// Marker component on the item-name tooltip label inside each slot cell.
+#[derive(Component)]
+struct InventoryCellName(usize);
+
+fn spawn_inventory_ui(mut commands: Commands) {
+    // Panel: centered full-screen overlay.
+    commands
+        .spawn((
+            InventoryUiRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                // Translate: shift left/up by half panel size so it centres.
+                margin: UiRect {
+                    left: Val::Px(
+                        -(INV_COLS as f32 * (INV_SLOT_PX + INV_GAP_PX) / 2.0),
+                    ),
+                    top: Val::Px(-130.0),
+                    ..default()
+                },
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.92)),
+            Visibility::Hidden,
+            ZIndex(150),
+        ))
+        .with_children(|panel| {
+            // Title bar.
+            panel.spawn((
+                Text::new("Inventory  [E] close"),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+            ));
+
+            // Grid: 4 rows × 9 cols = 36 slots.
+            panel
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(INV_GAP_PX),
+                    ..default()
+                })
+                .with_children(|grid| {
+                    for row in 0..4usize {
+                        grid.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(INV_GAP_PX),
+                            ..default()
+                        })
+                        .with_children(|r| {
+                            for col in 0..INV_COLS {
+                                let slot_idx = row * INV_COLS + col;
+                                r.spawn((
+                                    InventoryCell(slot_idx),
+                                    Node {
+                                        width: Val::Px(INV_SLOT_PX),
+                                        height: Val::Px(INV_SLOT_PX),
+                                        border: UiRect::all(Val::Px(2.0)),
+                                        flex_direction: FlexDirection::Column,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        padding: UiRect::all(Val::Px(2.0)),
+                                        overflow: Overflow::clip(),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.12, 0.12, 0.12, 1.0)),
+                                    BorderColor::all(Color::srgba(0.30, 0.30, 0.30, 0.7)),
+                                ))
+                                .with_children(|cell| {
+                                    // Item name (top, tiny).
+                                    cell.spawn((
+                                        InventoryCellName(slot_idx),
+                                        Text::new(""),
+                                        TextFont { font_size: 9.0, ..default() },
+                                        TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                                    ));
+                                    // Count (bottom-right).
+                                    cell.spawn((
+                                        InventoryCellCount(slot_idx),
+                                        Text::new(""),
+                                        TextFont { font_size: 11.0, ..default() },
+                                        TextColor(Color::WHITE),
+                                        Node {
+                                            align_self: AlignSelf::FlexEnd,
+                                            ..default()
+                                        },
+                                    ));
+                                });
+                            }
+                        });
+                    }
+                });
+        });
+}
+
+fn toggle_inventory_ui(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<InventoryUiState>,
+    mut root_q: Query<&mut Visibility, With<InventoryUiRoot>>,
+) {
+    if keys.just_pressed(KeyCode::KeyE) {
+        state.visible = !state.visible;
+        if let Ok(mut vis) = root_q.single_mut() {
+            *vis = if state.visible { Visibility::Visible } else { Visibility::Hidden };
+        }
+    }
+    if keys.just_pressed(KeyCode::Escape) && state.visible {
+        state.visible = false;
+        if let Ok(mut vis) = root_q.single_mut() {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+fn update_inventory_slots<I: ItemType>(
+    mut cell_q: Query<(&InventoryCell, &mut BackgroundColor, &mut BorderColor)>,
+    mut name_q: Query<(&InventoryCellName, &mut Text)>,
+    mut count_q: Query<(&InventoryCellCount, &mut Text), Without<InventoryCellName>>,
+    inventory: Option<Res<Inventory<I>>>,
+    state: Res<InventoryUiState>,
+) {
+    if !state.visible {
+        return;
+    }
+    let Some(inventory) = inventory else {
+        return;
+    };
+
+    for (cell, mut bg, mut border) in cell_q.iter_mut() {
+        let slot = inventory.slots.get(cell.0).and_then(|s| s.as_ref());
+        if let Some(stack) = slot {
+            let [r, g, b, a] = stack.item.color();
+            *bg = BackgroundColor(Color::srgba(r, g, b, a));
+            *border = BorderColor::all(Color::srgba(r * 1.4, g * 1.4, b * 1.4, 0.9));
+        } else {
+            *bg = BackgroundColor(Color::srgba(0.12, 0.12, 0.12, 1.0));
+            *border = BorderColor::all(Color::srgba(0.30, 0.30, 0.30, 0.7));
+        }
+    }
+
+    for (name_marker, mut text) in name_q.iter_mut() {
+        let slot = inventory.slots.get(name_marker.0).and_then(|s| s.as_ref());
+        **text = if let Some(stack) = slot {
+            stack.item.name().to_string()
+        } else {
+            String::new()
+        };
+    }
+
+    for (count_marker, mut text) in count_q.iter_mut() {
+        let slot = inventory.slots.get(count_marker.0).and_then(|s| s.as_ref());
+        **text = match slot {
+            Some(stack) if stack.count > 1 => stack.count.to_string(),
+            _ => String::new(),
+        };
+    }
+}
+
+/// Plugin that renders a full 9×4 inventory panel toggled by the `E` key.
+///
+/// Shows all 36 inventory slots in a grid: each slot displays the item color
+/// as background, the item name at the top, and the stack count at the bottom
+/// right (hidden when count is 1 or the slot is empty).
+///
+/// The plugin is **generic over the item type** `I: ItemType` so it works with
+/// any game's custom item enum.  Requires [`Inventory<I>`] to be registered as
+/// a Bevy resource; reads it as `Option<Res<Inventory<I>>>` so missing
+/// inventory is a silent no-op.
+///
+/// # Example
+///
+/// ```no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::InventoryUiPlugin;
+/// use voxel_framework::items::DefaultItem;
+///
+/// App::new()
+///     .add_plugins(InventoryUiPlugin::<DefaultItem>::new());
+/// ```
+pub struct InventoryUiPlugin<I: ItemType> {
+    _m: std::marker::PhantomData<I>,
+}
+
+impl<I: ItemType> InventoryUiPlugin<I> {
+    /// Creates a new [`InventoryUiPlugin`] for item type `I`.
+    pub fn new() -> Self {
+        Self { _m: std::marker::PhantomData }
+    }
+}
+
+impl<I: ItemType> Default for InventoryUiPlugin<I> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<I: ItemType> Plugin for InventoryUiPlugin<I> {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<InventoryUiState>();
+        app.add_systems(Startup, spawn_inventory_ui);
+        app.add_systems(
+            Update,
+            (toggle_inventory_ui, update_inventory_slots::<I>).chain(),
+        );
+    }
+}
+
 // ─── UiPlugin (umbrella) ──────────────────────────────────────────────────────
 
 use crate::items::inventory::DefaultItem;
