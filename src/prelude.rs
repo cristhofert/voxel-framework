@@ -4,7 +4,13 @@
 //! public framework types without needing individual imports.
 
 // Voxel types
-pub use crate::voxel::{DefaultVoxel, VoxelPalette, VoxelType};
+pub use crate::voxel::{DefaultVoxel, DefaultTerrainVoxel, VoxelPalette, VoxelType};
+
+// Crafting
+pub use crate::crafting::{
+    CraftingIngredient, CraftingPlugin, CraftingRecipe, CraftingRegistry,
+    CraftingMenuState, CraftingError, can_craft, try_craft,
+};
 
 // Chunk types and constants
 pub use crate::chunk::{
@@ -24,6 +30,7 @@ pub use crate::mesh::{
 // Generator
 pub use crate::generator::{ChunkGenerator, ChunkTask, GeneratorPlugin, GeneratorResource};
 pub use crate::generator::asteroid::{AsteroidConfig, AsteroidGenerator, MineralFrequencies};
+pub use crate::generator::terrain::{TerrainConfig, TerrainGenerator};
 
 // Mesh plugin
 pub use crate::mesh::MeshPlugin;
@@ -34,6 +41,7 @@ pub use crate::world::{
     DEFAULT_LOAD_DISTANCE, DEFAULT_UNLOAD_DISTANCE, ViewerPosition, WorldConfig, WorldPlugin,
     PersistenceConfig, PersistencePlugin,
     OcclusionPlugin, is_chunk_occluded,
+    DayCycleConfig, DayCyclePlugin, SunLight,
 };
 
 // World interaction API
@@ -45,12 +53,14 @@ pub use crate::world::{
 
 // Mining API
 pub use crate::world::{
-    tick_mining, stop_mining, MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
+    tick_mining, stop_mining, mining_input_system,
+    MiningConfig, MiningInputPlugin, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
 };
 
 // Placement API
 pub use crate::world::{
-    try_place_voxel, tick_placement, PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced,
+    try_place_voxel, tick_placement, placement_input_system,
+    PlacementConfig, PlacementInputPlugin, PlacementPlugin, PlacementState, VoxelPlaced,
 };
 
 // Loading API
@@ -83,12 +93,14 @@ pub use crate::ui::{
     LoadingScreenConfig, LoadingScreenPlugin,
     PickupNotificationConfig, PickupNotificationPlugin,
     PauseMenuConfig, PauseMenuPlugin, PauseMenuState,
+    DebugOverlayPlugin, DebugOverlayState,
     UiPlugin,
 };
 
-// Player (6DOF jetpack)
+// Player (6DOF jetpack / grounded)
 pub use crate::player::{
-    Player, PlayerConfig, PlayerPlugin,
+    Player, PlayerConfig, PlayerMode, PlayerPlugin,
+    PlayerHealth, PlayerDamaged, PlayerDied,
     spawn_player, player_look, player_move, player_resolve_collision, player_cursor_system,
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT,
 };

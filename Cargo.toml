@@ -20,6 +20,10 @@ bevy = { version = "0.18", features = ["bevy_winit", "wayland", "bevy_mesh", "be
 name = "basic_world"
 path = "examples/basic_world.rs"
 
+[[example]]
+name = "minetest"
+path = "examples/minetest.rs"
+
 # Optimize dependencies in debug builds for acceptable performance during development.
 # Your own code stays unoptimized (fast recompile), Bevy and others run at near-release speed.
 [profile.dev.package."*"]

@@ -117,6 +117,7 @@
 
 pub mod audio;
 pub mod chunk;
+pub mod crafting;
 pub mod fragments;
 pub mod generator;
 pub mod items;
@@ -132,6 +133,7 @@ pub mod world;
 
 use bevy::prelude::*;
 
+use voxel::VoxelType;
 use audio::SfxPlugin;
 use fragments::FragmentPlugin;
 use items::hotbar::HotbarPlugin;
@@ -148,11 +150,16 @@ use world::{WorldConfigPlugin, WorldPlugin};
 
 /// Engine-only plugin with no game-specific content.
 ///
-/// `VoxelCorePlugin` wires up the complete voxel engine layer — world
+/// `VoxelCorePlugin<V>` wires up the complete voxel engine layer — world
 /// streaming, chunk lifecycle, meshing, PBR rendering, occlusion culling, and
 /// player interactions — without any game-specific subsystems (skybox, audio,
 /// hotbar, UI). It is the right choice when you are building your own game
 /// layer on top of the framework and want full control over what gets added.
+///
+/// The generic parameter `V` selects the voxel type used by the rendering,
+/// meshing, and occlusion systems. Defaults to [`DefaultVoxel`] for backwards
+/// compatibility: `VoxelCorePlugin::default()` and
+/// `VoxelCorePlugin::<DefaultVoxel>::new()` are equivalent.
 ///
 /// # Included systems
 ///
@@ -160,17 +167,17 @@ use world::{WorldConfigPlugin, WorldPlugin};
 /// |--------|----------------|
 /// | [`WorldPlugin`] | [`world::ChunkManager`], [`world::systems::ViewerPosition`], chunk lifecycle events, and streaming |
 /// | [`WorldConfigPlugin`] | Inserts the [`world::WorldConfig`] resource |
-/// | `RenderPlugin<DefaultVoxel>` | Shared chunk PBR material and entity spawn |
-/// | `MeshPlugin<DefaultVoxel>` | Greedy mesh generation and chunk despawn |
-/// | `OcclusionPlugin<DefaultVoxel>` | Per-chunk frustum culling |
+/// | `RenderPlugin<V>` | Shared chunk PBR material and entity spawn |
+/// | `MeshPlugin<V>` | Greedy mesh generation and chunk despawn |
+/// | `OcclusionPlugin<V>` | Per-chunk frustum culling |
 /// | [`world::mining::MiningPlugin`] | Raycast voxel removal |
 /// | [`world::placement::PlacementPlugin`] | Raycast voxel placement |
 /// | [`world::loading::LoadingPlugin`] | World loading state machine |
 ///
 /// # Not included (opt-in)
 ///
-/// - [`generator::GeneratorPlugin`] — generic over `V: VoxelType`; requires
-///   the caller to supply a [`generator::GeneratorResource`].
+/// - [`generator::GeneratorPlugin`] — requires the caller to supply a
+///   [`generator::GeneratorResource`].
 /// - [`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`], [`HotbarPlugin`],
 ///   [`UiPlugin`] — use [`VoxelPlugin`] to get all of these at once.
 ///
@@ -185,7 +192,7 @@ use world::{WorldConfigPlugin, WorldPlugin};
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
-///     .add_plugins(VoxelCorePlugin)
+///     .add_plugins(VoxelCorePlugin::<DefaultVoxel>::new())
 ///     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
 ///     .insert_resource(GeneratorResource::<DefaultVoxel> {
 ///         generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
@@ -196,15 +203,28 @@ use world::{WorldConfigPlugin, WorldPlugin};
 /// # See also
 ///
 /// - [`VoxelPlugin`] — batteries-included variant that also adds game content.
-pub struct VoxelCorePlugin;
+pub struct VoxelCorePlugin<V: VoxelType = DefaultVoxel> {
+    _m: std::marker::PhantomData<V>,
+}
 
-impl Plugin for VoxelCorePlugin {
+impl<V: VoxelType> VoxelCorePlugin<V> {
+    /// Creates a new [`VoxelCorePlugin`] for voxel type `V`.
+    pub fn new() -> Self {
+        Self { _m: std::marker::PhantomData }
+    }
+}
+
+impl<V: VoxelType> Default for VoxelCorePlugin<V> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<V: VoxelType> Plugin for VoxelCorePlugin<V> {
     fn build(&self, app: &mut App) {
         app.add_plugins(WorldPlugin);
         app.add_plugins(WorldConfigPlugin);
-        app.add_plugins(RenderPlugin::<DefaultVoxel>::new());
-        app.add_plugins(MeshPlugin::<DefaultVoxel>::new());
-        app.add_plugins(OcclusionPlugin::<DefaultVoxel>::new());
+        app.add_plugins(RenderPlugin::<V>::new());
+        app.add_plugins(MeshPlugin::<V>::new());
+        app.add_plugins(OcclusionPlugin::<V>::new());
         app.add_plugins(MiningPlugin);
         app.add_plugins(PlacementPlugin);
         app.add_plugins(LoadingPlugin);
@@ -213,10 +233,14 @@ impl Plugin for VoxelCorePlugin {
 
 /// Batteries-included plugin that registers the full voxel framework.
 ///
-/// `VoxelPlugin` is the quickest way to add a complete voxel world to a Bevy
-/// application. It composes [`VoxelCorePlugin`] (engine systems) with the
-/// game-facing subsystems listed below. Prefer [`VoxelCorePlugin`] when you
-/// need fine-grained control over which subsystems are active.
+/// `VoxelPlugin<V>` is the quickest way to add a complete voxel world to a
+/// Bevy application. It composes [`VoxelCorePlugin<V>`] (engine systems) with
+/// the game-facing subsystems listed below. Prefer [`VoxelCorePlugin`] when
+/// you need fine-grained control over which subsystems are active.
+///
+/// The generic parameter `V` selects the voxel type. Defaults to
+/// [`DefaultVoxel`] — `VoxelPlugin::default()` produces an asteroid-palette
+/// world, `VoxelPlugin::<DefaultTerrainVoxel>::new()` produces a terrain world.
 ///
 /// # Included beyond [`VoxelCorePlugin`]
 ///
@@ -230,23 +254,23 @@ impl Plugin for VoxelCorePlugin {
 ///
 /// # Generator not included
 ///
-/// [`generator::GeneratorPlugin`] is intentionally excluded because it is
-/// generic over `V: VoxelType` and requires the caller to supply a concrete
-/// [`generator::GeneratorResource`]. Always add it separately:
+/// [`generator::GeneratorPlugin`] is intentionally excluded because it requires
+/// the caller to supply a concrete [`generator::GeneratorResource`]. Always add
+/// it separately:
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
 /// use voxel_framework::{VoxelPlugin, generator::{GeneratorPlugin, GeneratorResource}};
-/// use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
-/// use voxel_framework::voxel::DefaultVoxel;
+/// use voxel_framework::generator::terrain::{TerrainConfig, TerrainGenerator};
+/// use voxel_framework::voxel::DefaultTerrainVoxel;
 /// use std::sync::Arc;
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
-///     .add_plugins(VoxelPlugin)
-///     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
-///     .insert_resource(GeneratorResource::<DefaultVoxel> {
-///         generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
+///     .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
+///     .add_plugins(GeneratorPlugin::<DefaultTerrainVoxel>::new())
+///     .insert_resource(GeneratorResource::<DefaultTerrainVoxel> {
+///         generator: Arc::new(TerrainGenerator::new(TerrainConfig::default())),
 ///     })
 ///     .run();
 /// ```
@@ -255,11 +279,24 @@ impl Plugin for VoxelCorePlugin {
 ///
 /// - [`VoxelCorePlugin`] — engine-only variant without game content.
 /// - [`prelude`] — commonly used re-exports for convenience imports.
-pub struct VoxelPlugin;
+pub struct VoxelPlugin<V: VoxelType = DefaultVoxel> {
+    _m: std::marker::PhantomData<V>,
+}
 
-impl Plugin for VoxelPlugin {
+impl<V: VoxelType> VoxelPlugin<V> {
+    /// Creates a new [`VoxelPlugin`] for voxel type `V`.
+    pub fn new() -> Self {
+        Self { _m: std::marker::PhantomData }
+    }
+}
+
+impl<V: VoxelType> Default for VoxelPlugin<V> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<V: VoxelType> Plugin for VoxelPlugin<V> {
     fn build(&self, app: &mut App) {
-        app.add_plugins(VoxelCorePlugin);
+        app.add_plugins(VoxelCorePlugin::<V>::new());
         app.add_plugins(FragmentPlugin);
         app.add_plugins(SkyboxPlugin);
         app.add_plugins(SfxPlugin);
