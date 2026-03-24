@@ -7,7 +7,8 @@ description = "A reusable voxel engine framework built on Bevy"
 [dependencies]
 bevy = { version = "0.18", default-features = false, features = [
     "bevy_asset", "bevy_render", "bevy_pbr", "bevy_core_pipeline", "multi_threaded",
-    "bevy_ui", "bevy_text", "bevy_sprite", "bevy_state"
+    "bevy_ui", "bevy_text", "bevy_sprite", "bevy_state",
+    "bevy_audio", "vorbis"
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use bevy::prelude::*;
 use voxel_framework::prelude::*;
+use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
 use voxel_framework::items::{DefaultItem, Inventory};
 
 fn main() {
@@ -31,6 +32,8 @@ fn main() {
         .add_plugins(DayCyclePlugin)
         // ── Debug overlay (F3 toggle) ────────────────────────────────────────
         .add_plugins(DebugOverlayPlugin)
+        // ── Audio (real bevy_audio playback) ────────────────────────────────
+        .add_plugins(DefaultAudioPlugin)
         // ── Pause menu ───────────────────────────────────────────────────────
         .add_plugins(PauseMenuPlugin)
         // ── Resources ────────────────────────────────────────────────────────
@@ -49,7 +52,7 @@ fn main() {
             ..default()
         })
         .insert_resource(Inventory::<DefaultItem>::default())
-        .add_systems(Startup, setup_crafting)
+        .add_systems(Startup, (setup_crafting, setup_audio))
         .run();
 }
 
@@ -82,4 +85,27 @@ fn setup_crafting(
     // Seed starting items so the player can try crafting right away.
     inventory.add(DefaultItem::IronOre, 12);
     inventory.add(DefaultItem::RockFragment, 5);
+}
+
+/// Registers sound effect asset paths.
+///
+/// Place `.ogg` files under `assets/sounds/` to hear in-game audio.
+/// Missing files are silently ignored by Bevy's asset server.
+fn setup_audio(mut cfg: ResMut<SfxConfig>) {
+    cfg.register(SfxEvent::MiningComplete, vec![
+        "sounds/break1.ogg",
+        "sounds/break2.ogg",
+        "sounds/break3.ogg",
+    ]);
+    cfg.register(SfxEvent::BlockPlace, vec![
+        "sounds/place1.ogg",
+        "sounds/place2.ogg",
+    ]);
+    cfg.register(SfxEvent::ItemPickup, vec!["sounds/pickup.ogg"]);
+    cfg.register(SfxEvent::Footstep(0), vec![  // generic / stone
+        "sounds/step_stone1.ogg",
+        "sounds/step_stone2.ogg",
+        "sounds/step_stone3.ogg",
+        "sounds/step_stone4.ogg",
+    ]);
 }

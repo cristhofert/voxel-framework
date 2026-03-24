@@ -304,41 +304,86 @@ impl Plugin for SfxPlugin {
 
 // ─── DefaultAudioPlugin ───────────────────────────────────────────────────────
 
-/// Development-stub audio plugin that logs sound-effect requests to stderr.
+/// A round-robin counter per SFX key so successive identical events cycle
+/// through registered variant paths rather than always picking the same one.
+#[derive(Resource, Default)]
+struct SfxCounter(HashMap<String, u64>);
+
+/// Ready-to-use audio plugin that plays [`SfxRequest`] messages via
+/// Bevy's built-in `bevy_audio` backend.
 ///
-/// > **This plugin does NOT play any audio.**  It is a convenience stub for
-/// > development and testing.  Every [`SfxRequest`] message is printed to
-/// > stderr via [`eprintln!`] so you can verify that the event pipeline is
-/// > working without needing a real audio backend.
+/// For each incoming [`SfxRequest`], this plugin:
+/// 1. Resolves the event key through [`SfxConfig::pick_path`] (round-robin
+///    across registered variants).
+/// 2. Loads the asset with `AssetServer::load`.
+/// 3. Spawns an `(AudioPlayer, PlaybackSettings::ONCE)` entity that Bevy's
+///    audio system will play and automatically despawn when finished.
 ///
-/// # Replacing with real playback
+/// # Setup
 ///
-/// When you are ready to add actual audio:
+/// Register asset paths with [`SfxConfig`] before adding the plugin, or
+/// populate them in a startup system:
 ///
-/// 1. Enable the `"bevy_audio"` feature (and a codec such as `"vorbis"`) for
-///    the `bevy` dependency in your game's `Cargo.toml`.
-/// 2. Write a system that reads [`SfxRequest`] messages, resolves asset paths
-///    through [`SfxConfig::pick_path`], and spawns `(AudioPlayer, PlaybackSettings)`.
-/// 3. Wrap that system in a plugin and substitute it for `DefaultAudioPlugin`.
+/// ```no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent, SfxPlugin};
 ///
-/// See the [module-level documentation](self) for a complete example.
+/// App::new()
+///     .add_plugins(DefaultPlugins)
+///     .add_plugins(SfxPlugin)
+///     .add_plugins(DefaultAudioPlugin)
+///     .add_systems(Startup, |mut cfg: ResMut<SfxConfig>| {
+///         cfg.register(SfxEvent::MiningComplete, vec!["sounds/break.ogg"]);
+///         cfg.register(SfxEvent::BlockPlace,     vec!["sounds/place.ogg"]);
+///     })
+///     .run();
+/// ```
+///
+/// # Missing files
+///
+/// If an asset path is not found on disk, Bevy logs a warning and skips
+/// playback — no panic, no crash.
+///
+/// # Spatial audio
+///
+/// When the [`SfxRequest::position`] field is `Some`, the plugin attaches a
+/// [`SpatialListener`]-compatible [`Transform`] to the audio entity so Bevy
+/// can attenuate volume by distance.  Requires a [`SpatialListener`] on the
+/// camera/player entity.
 pub struct DefaultAudioPlugin;
 
 impl Plugin for DefaultAudioPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<SfxCounter>();
         app.add_systems(Update, play_sfx_system);
     }
 }
 
-/// Reads every [`SfxRequest`] and logs it.
-///
-/// Replace this system (or the whole [`DefaultAudioPlugin`]) with one that
-/// calls `asset_server.load::<AudioSource>(path)` and spawns
-/// `(AudioPlayer(handle), PlaybackSettings::ONCE)` once `bevy_audio` is
-/// enabled.
-fn play_sfx_system(mut sfx_reader: MessageReader<SfxRequest>) {
+fn play_sfx_system(
+    mut sfx_reader: MessageReader<SfxRequest>,
+    config: Res<SfxConfig>,
+    asset_server: Res<AssetServer>,
+    mut counter: ResMut<SfxCounter>,
+    mut commands: Commands,
+) {
     for request in sfx_reader.read() {
-        eprintln!("SFX: {:?}", request.event);
+        let key = request.event.key();
+        let seed = {
+            let c = counter.0.entry(key.clone()).or_insert(0);
+            let s = *c;
+            *c = c.wrapping_add(1);
+            s
+        };
+        let Some(path) = config.pick_path(&request.event, seed).map(|p| p.to_owned()) else {
+            continue;
+        };
+        let source: Handle<AudioSource> = asset_server.load(path);
+        let mut settings = PlaybackSettings::ONCE;
+        settings.volume = bevy::audio::Volume::Linear(config.volume);
+        let mut entity = commands.spawn((AudioPlayer(source), settings));
+        if let Some(pos) = request.position {
+            entity.insert(Transform::from_translation(pos));
+        }
     }
 }
 
