@@ -30,7 +30,7 @@
 //! ```no_run
 //! use bevy::prelude::*;
 //! use voxel_framework::audio::{SfxConfig, SfxEvent, SfxPlugin, SfxRequest};
-//! use voxel_framework::prelude::MessageReader;
+//! use bevy::ecs::message::MessageReader;
 //!
 //! // Custom playback plugin that uses bevy_audio (requires "bevy_audio" feature).
 //! struct MyAudioPlugin;
