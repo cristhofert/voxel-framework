@@ -271,16 +271,17 @@ pub fn chunk_despawn_system<V: VoxelType>(
     mut commands: Commands,
     mut unload_reader: MessageReader<ChunkUnloadRequest>,
     mut manager: ResMut<ChunkManager>,
-    config: Res<PersistenceConfig>,
+    config: Option<Res<PersistenceConfig>>,
     chunks: Query<&Chunk<V>>,
 ) {
     for &ChunkUnloadRequest(coord) in unload_reader.read() {
         // Save before unregistering so the entity is still valid.
-        if config.auto_save {
+        if config.as_ref().map(|c| c.auto_save).unwrap_or(false) {
             if let Some(entity) = manager.get_entity(coord) {
                 if let Ok(chunk) = chunks.get(entity) {
                     let filename = chunk_persistence::chunk_filename(coord);
-                    let path: PathBuf = [config.save_dir.as_str(), &filename].iter().collect();
+                    let save_dir = config.as_ref().unwrap().save_dir.as_str();
+                    let path: PathBuf = [save_dir, &filename].iter().collect();
 
                     if let Some(parent) = path.parent() {
                         if let Err(e) = std::fs::create_dir_all(parent) {

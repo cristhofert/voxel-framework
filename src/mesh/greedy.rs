@@ -249,6 +249,7 @@ pub(crate) fn build_mesh<V: VoxelType>(
 
             // Greedy merge the mask into quads.
             greedy_merge(
+                chunk,
                 &mut mask,
                 size,
                 face,
@@ -314,6 +315,7 @@ fn slice_to_chunk(face: &FaceDir, d: usize, u: usize, v: usize) -> (usize, usize
 /// Greedy-merges the mask and emits quads into the output buffers.
 #[allow(clippy::too_many_arguments)] // All args are distinct output buffers; splitting would add indirection.
 fn greedy_merge<V: VoxelType>(
+    chunk: &Chunk<V>,
     mask: &mut [Option<V>],
     size: usize,
     face: &FaceDir,
@@ -362,7 +364,7 @@ fn greedy_merge<V: VoxelType>(
 
             // Emit the quad.
             emit_quad(
-                face, d, u, v, width, height, step, voxel, positions, normals, uvs, colors,
+                chunk, face, d, u, v, width, height, step, voxel, positions, normals, uvs, colors,
                 indices,
             );
 
@@ -371,10 +373,98 @@ fn greedy_merge<V: VoxelType>(
     }
 }
 
+/// Returns `true` if the voxel at `coords` (indexed by axis) is solid.
+///
+/// Any coordinate outside `[0, CHUNK_SIZE)` is treated as air (not solid),
+/// using wrapping arithmetic so that `usize` underflow is detected as
+/// out-of-bounds.
+#[inline]
+fn ao_neighbor_solid<V: VoxelType>(chunk: &Chunk<V>, coords: [usize; 3]) -> bool {
+    if coords[0] >= CHUNK_SIZE || coords[1] >= CHUNK_SIZE || coords[2] >= CHUNK_SIZE {
+        return false;
+    }
+    chunk.get(coords[0], coords[1], coords[2]).is_solid()
+}
+
+/// Computes the ambient occlusion factor for a single vertex corner.
+///
+/// Queries the two edge neighbors (`side1`, `side2`) and the diagonal
+/// corner neighbor around the vertex in the tangent plane at the face
+/// surface.  The classic voxel AO formula maps 0–3 occluders to the range
+/// `[1.0, 0.4]`:
+///
+/// | Occluders | AO factor |
+/// |-----------|-----------|
+/// | 0         | 1.0       |
+/// | 1         | 0.8       |
+/// | 2         | 0.6       |
+/// | 3         | 0.4       |
+///
+/// When both side neighbors are solid the corner is always fully occluded
+/// (`0.4`) regardless of the actual corner voxel, matching standard voxel
+/// AO behavior.
+#[inline]
+fn compute_ao(side1: bool, side2: bool, corner: bool) -> f32 {
+    match side1 as u8 + side2 as u8 + corner as u8 {
+        0 => 1.0,
+        1 => 0.8,
+        2 => 0.6,
+        _ => 0.4,
+    }
+}
+
+/// Computes the AO factor for one vertex of a quad.
+///
+/// `d_voxel` is the voxel-space coordinate along the face's primary axis
+/// where the AO neighbors live (just beyond the face surface).
+/// `cu_voxel` and `cv_voxel` are the corner's integer voxel coordinates
+/// in the u and v tangent axes respectively.
+///
+/// The three neighbors are sampled using wrapping arithmetic; any sample
+/// that falls outside `[0, CHUNK_SIZE)` on any axis is treated as air.
+#[inline]
+fn vertex_ao<V: VoxelType>(
+    chunk: &Chunk<V>,
+    face: &FaceDir,
+    d_voxel: usize,
+    cu_voxel: usize,
+    cv_voxel: usize,
+) -> f32 {
+    // Side1: one step back along u (wrapping_sub so underflow → usize::MAX → out-of-bounds).
+    let mut s1 = [0usize; 3];
+    s1[face.axis] = d_voxel;
+    s1[face.u_axis] = cu_voxel.wrapping_sub(1);
+    s1[face.v_axis] = cv_voxel;
+    let side1 = ao_neighbor_solid(chunk, s1);
+
+    // Side2: one step back along v.
+    let mut s2 = [0usize; 3];
+    s2[face.axis] = d_voxel;
+    s2[face.u_axis] = cu_voxel;
+    s2[face.v_axis] = cv_voxel.wrapping_sub(1);
+    let side2 = ao_neighbor_solid(chunk, s2);
+
+    // Corner: one step back along both u and v.
+    let mut sc = [0usize; 3];
+    sc[face.axis] = d_voxel;
+    sc[face.u_axis] = cu_voxel.wrapping_sub(1);
+    sc[face.v_axis] = cv_voxel.wrapping_sub(1);
+    let corner = ao_neighbor_solid(chunk, sc);
+
+    compute_ao(side1, side2, corner)
+}
+
 /// Emits a single quad (4 vertices, 6 indices) for a merged rectangle.
+///
+/// Per-vertex ambient occlusion is computed by sampling the three voxels
+/// surrounding each corner in the tangent plane at the face surface.  The AO
+/// factor darkens the vertex color's RGB channels while leaving alpha intact.
+/// The quad's triangulation is flipped when needed to avoid the AO anisotropy
+/// seam artifact described in Mikola Lysenko's original voxel AO paper.
 #[allow(clippy::too_many_arguments)] // All args are distinct mesh output buffers; a wrapper struct adds no clarity.
 #[inline]
 fn emit_quad<V: VoxelType>(
+    chunk: &Chunk<V>,
     face: &FaceDir,
     d: usize,
     u: usize,
@@ -400,31 +490,68 @@ fn emit_quad<V: VoxelType>(
         d as f32 * s
     };
 
+    // The voxel-space depth coordinate for AO sampling.
+    // For a positive face, the visible surface is the +face.axis side of voxel d*step,
+    // so the AO neighbors live at (d+1)*step (the first layer beyond the surface).
+    // For a negative face, the surface is the -face.axis side of voxel d*step,
+    // so AO neighbors live at d*step - 1 (wrapping; out-of-bounds → treated as air).
+    let ao_depth: usize = if face.positive {
+        (d + 1) * step
+    } else {
+        d * step.wrapping_sub(1)  // wrapping so step=0 case yields usize::MAX → out-of-bounds
+    };
+    // Clamp out-of-bounds depth to a sentinel that ao_neighbor_solid will reject.
+    let ao_depth = if !face.positive && d == 0 {
+        usize::MAX // underflow → out-of-bounds → all AO neighbors treated as air
+    } else {
+        ao_depth
+    };
+
     let u_start = u as f32 * s;
     let v_start = v as f32 * s;
     let u_end = (u + width) as f32 * s;
     let v_end = (v + height) as f32 * s;
 
+    // Voxel-space integer coords for each of the 4 corners (in u, v axes).
+    // AO is sampled in the tangent plane at the face surface:
+    //   v0: (u,       v)        → AO looks at (u-1, d_ao, v-1), etc.
+    //   v1: (u+width, v)        → AO looks at (u+width-1, d_ao, v-1), etc.
+    //   v2: (u+width, v+height) → AO looks at (u+width-1, d_ao, v+height-1), etc.
+    //   v3: (u,       v+height) → AO looks at (u-1, d_ao, v+height-1), etc.
+    //
+    // The vertex_ao helper uses wrapping_sub so corner (u,v)=(0,0) correctly
+    // treats the missing neighbors as air without a bounds check.
+    let ao_v0 = vertex_ao(chunk, face, ao_depth, u * step,             v * step);
+    let ao_v1 = vertex_ao(chunk, face, ao_depth, (u + width) * step,   v * step);
+    let ao_v2 = vertex_ao(chunk, face, ao_depth, (u + width) * step,   (v + height) * step);
+    let ao_v3 = vertex_ao(chunk, face, ao_depth, u * step,             (v + height) * step);
+
     // Build the 4 corner positions in chunk-local space.
     // Corners in (u, v) order: (u_start, v_start), (u_end, v_start), (u_end, v_end), (u_start, v_end)
-    let corners_uv = [
-        (u_start, v_start),
-        (u_end, v_start),
-        (u_end, v_end),
-        (u_start, v_end),
+    let corners = [
+        (u_start, v_start, ao_v0),
+        (u_end,   v_start, ao_v1),
+        (u_end,   v_end,   ao_v2),
+        (u_start, v_end,   ao_v3),
     ];
 
     let base_idx = positions.len() as u32;
-    let color = voxel.color();
+    let base_color = voxel.color();
 
-    for &(cu, cv) in &corners_uv {
+    for &(cu, cv, ao) in &corners {
         let mut pos = [0.0f32; 3];
         pos[face.axis] = d_pos;
         pos[face.u_axis] = cu;
         pos[face.v_axis] = cv;
         positions.push(pos);
         normals.push(face.normal);
-        colors.push(color);
+        // Multiply RGB by the AO factor; alpha is left unchanged.
+        colors.push([
+            base_color[0] * ao,
+            base_color[1] * ao,
+            base_color[2] * ao,
+            base_color[3],
+        ]);
     }
 
     // UVs scaled by actual world-space size for texture coord consistency.
@@ -448,7 +575,12 @@ fn emit_quad<V: VoxelType>(
     //
     // A single XOR captures this: flip when (positive XOR axis==2) is false,
     // i.e. use the "CCW" branch when face.positive != (face.axis == 2).
-    let ccw = face.positive != (face.axis == 2);
+    //
+    // Additionally, flip the triangulation when ao_v0 + ao_v2 < ao_v1 + ao_v3.
+    // This avoids the AO anisotropy seam artifact that appears when the default
+    // diagonal cuts across a corner with mismatched AO values (Mikola Lysenko's fix).
+    let ao_flip = ao_v0 + ao_v2 < ao_v1 + ao_v3;
+    let ccw = (face.positive != (face.axis == 2)) != ao_flip;
     if ccw {
         indices.push(base_idx);
         indices.push(base_idx + 2);
