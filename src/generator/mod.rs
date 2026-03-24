@@ -54,6 +54,7 @@
 
 pub mod asteroid;
 pub mod systems;
+pub mod terrain;
 
 pub use systems::{ChunkTask, chunk_request_system, chunk_task_poll_system};
 
