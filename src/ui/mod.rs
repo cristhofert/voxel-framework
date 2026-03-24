@@ -817,6 +817,139 @@ impl<I: ItemType> Plugin for PickupNotificationPlugin<I> {
 mod pause_menu;
 pub use pause_menu::{PauseMenuConfig, PauseMenuPlugin, PauseMenuState};
 
+// ─── Debug Overlay ────────────────────────────────────────────────────────────
+
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use crate::chunk::world_to_chunk_coord;
+use crate::world::ChunkManager;
+use crate::player::Player;
+
+/// Tracks whether the debug overlay (F3) is currently visible.
+#[derive(Resource, Default)]
+pub struct DebugOverlayState {
+    /// When `true` the overlay is rendered; toggle with **F3**.
+    pub visible: bool,
+}
+
+/// Marker component for the debug overlay root node.
+#[derive(Component)]
+struct DebugOverlay;
+
+/// Marker for the individual text lines (index 0–3).
+#[derive(Component)]
+struct DebugLine(usize);
+
+fn spawn_debug_overlay(mut commands: Commands) {
+    commands
+        .spawn((
+            DebugOverlay,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(8.0),
+                left: Val::Px(8.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(2.0),
+                padding: UiRect::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            Visibility::Hidden,
+            ZIndex(200),
+        ))
+        .with_children(|root| {
+            let style = TextFont {
+                font_size: 14.0,
+                ..default()
+            };
+            let color = TextColor(Color::WHITE);
+            for i in 0..4 {
+                root.spawn((
+                    DebugLine(i),
+                    Text::new(""),
+                    style.clone(),
+                    color,
+                ));
+            }
+        });
+}
+
+fn update_debug_overlay(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<DebugOverlayState>,
+    mut overlay_q: Query<&mut Visibility, With<DebugOverlay>>,
+    mut line_q: Query<(&DebugLine, &mut Text)>,
+    player_q: Query<&Transform, With<Player>>,
+    manager: Res<ChunkManager>,
+    diagnostics: Res<DiagnosticsStore>,
+) {
+    // Toggle visibility on F3 press.
+    if keys.just_pressed(KeyCode::F3) {
+        state.visible = !state.visible;
+        if let Ok(mut vis) = overlay_q.single_mut() {
+            *vis = if state.visible {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
+
+    if !state.visible {
+        return;
+    }
+
+    let pos = player_q
+        .single()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
+
+    let chunk = world_to_chunk_coord(pos);
+    let fps = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|d| d.smoothed())
+        .unwrap_or(0.0);
+    let chunk_count = manager.loaded_count();
+
+    let lines = [
+        format!("XYZ: {:.1} / {:.1} / {:.1}", pos.x, pos.y, pos.z),
+        format!("Chunk: {} {} {}", chunk.x, chunk.y, chunk.z),
+        format!("FPS: {fps:.0}"),
+        format!("Chunks: {chunk_count}"),
+    ];
+
+    for (line_marker, mut text) in line_q.iter_mut() {
+        if let Some(content) = lines.get(line_marker.0) {
+            *text = Text::new(content.clone());
+        }
+    }
+}
+
+/// Plugin that renders a debug information overlay toggled with **F3**.
+///
+/// Shows player XYZ position, current chunk coordinate, FPS, and loaded chunk
+/// count. The overlay is hidden by default; press **F3** to show or hide it.
+///
+/// Automatically adds [`FrameTimeDiagnosticsPlugin`] for FPS measurement.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::ui::DebugOverlayPlugin;
+///
+/// App::new().add_plugins(DebugOverlayPlugin);
+/// ```
+pub struct DebugOverlayPlugin;
+
+impl Plugin for DebugOverlayPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default());
+        app.init_resource::<DebugOverlayState>();
+        app.add_systems(Startup, spawn_debug_overlay);
+        app.add_systems(Update, update_debug_overlay);
+    }
+}
+
 // ─── UiPlugin (umbrella) ──────────────────────────────────────────────────────
 
 use crate::items::inventory::DefaultItem;
