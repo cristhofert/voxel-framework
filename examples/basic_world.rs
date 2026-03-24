@@ -16,7 +16,7 @@ fn main() {
 
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(VoxelPlugin)
+        .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
         .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
         .add_plugins(PersistencePlugin::<DefaultVoxel>::new())
         .add_plugins(PauseMenuPlugin)
