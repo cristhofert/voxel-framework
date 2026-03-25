@@ -62,7 +62,7 @@ impl Default for DayCycleConfig {
     fn default() -> Self {
         Self {
             day_length_secs: 600.0,
-            time_of_day: 0.25,
+            time_of_day: 0.35, // start mid-morning — sun is visible and lit
             max_illuminance: 100_000.0,
             day_ambient: 800.0,
             night_ambient: 200.0,
@@ -103,13 +103,13 @@ fn advance_day_cycle(
     // Map time_of_day to a sun elevation angle.
     // sin(TAU * t - PI/2): -1 at midnight (t=0), +1 at noon (t=0.5).
     let elevation = (TAU * config.time_of_day - FRAC_PI_2).sin();
-    let is_day = elevation > 0.0;
 
-    let illuminance = if is_day {
-        elevation * config.max_illuminance
-    } else {
-        0.0
-    };
+    // t_day: 0 at horizon, 1 at zenith.  Add a soft floor so dawn/dusk is
+    // never pitch-black — night_ambient / max_illuminance gives a moonlight
+    // equivalent expressed as a fraction of full sun.
+    let night_fraction = config.night_ambient / config.max_illuminance;
+    let t_day = elevation.max(-night_fraction).max(0.0) + night_fraction;
+    let illuminance = t_day * config.max_illuminance;
 
     // Sky/background color: dark blue at night → light blue at day.
     let t_sky = ((elevation + 1.0) * 0.5).clamp(0.0, 1.0);
@@ -134,7 +134,8 @@ fn advance_day_cycle(
 ///
 /// On startup, spawns a [`DirectionalLight`] tagged [`SunLight`] and advances
 /// its illuminance and angle every frame according to [`DayCycleConfig`].
-/// [`AmbientLight`] brightness is also updated to simulate sky scattering.
+/// The sun illuminance uses a soft floor (`night_ambient / max_illuminance`)
+/// so the scene is never completely dark even when the sun is below the horizon.
 ///
 /// Configure via [`DayCycleConfig`] inserted before this plugin. The
 /// `time_of_day` field advances automatically and wraps at `1.0`.

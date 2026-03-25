@@ -536,7 +536,13 @@ fn emit_quad<V: VoxelType>(
     ];
 
     let base_idx = positions.len() as u32;
-    let base_color = voxel.color();
+    // VoxelType::color() returns sRGB values (as humans define them).
+    // Bevy's PBR shader treats ATTRIBUTE_COLOR as *linear* RGB, so we convert.
+    let srgb = voxel.color();
+    let to_linear = |c: f32| -> f32 {
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let base_color = [to_linear(srgb[0]), to_linear(srgb[1]), to_linear(srgb[2]), srgb[3]];
 
     for &(cu, cv, ao) in &corners {
         let mut pos = [0.0f32; 3];
@@ -545,7 +551,7 @@ fn emit_quad<V: VoxelType>(
         pos[face.v_axis] = cv;
         positions.push(pos);
         normals.push(face.normal);
-        // Multiply RGB by the AO factor; alpha is left unchanged.
+        // Multiply linear RGB by the AO factor; alpha is left unchanged.
         colors.push([
             base_color[0] * ao,
             base_color[1] * ao,

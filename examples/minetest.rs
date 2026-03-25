@@ -51,7 +51,7 @@ fn main() {
         })
         .insert_resource(DayCycleConfig {
             day_length_secs: 300.0, // 5-minute days
-            time_of_day: 0.25,      // start at dawn
+            time_of_day: 0.35,      // start mid-morning — sun visible
             ..default()
         })
         .insert_resource(Inventory::<DefaultItem>::default())
