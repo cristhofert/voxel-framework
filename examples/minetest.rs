@@ -92,24 +92,27 @@ fn setup_crafting(
 
 /// Registers sound effect asset paths.
 ///
-/// Place `.ogg` files under `assets/sounds/` to hear in-game audio.
+/// Place `.ogg` files under `assets/audio/` to hear in-game audio.
 /// Missing files are silently ignored by Bevy's asset server.
 fn setup_audio(mut cfg: ResMut<SfxConfig>) {
     cfg.register(SfxEvent::MiningComplete, vec![
-        "sounds/break1.ogg",
-        "sounds/break2.ogg",
-        "sounds/break3.ogg",
+        "audio/impactMining_000.ogg",
+        "audio/impactMining_001.ogg",
+        "audio/impactMining_002.ogg",
+        "audio/impactMining_003.ogg",
+        "audio/impactMining_004.ogg",
     ]);
     cfg.register(SfxEvent::BlockPlace, vec![
-        "sounds/place1.ogg",
-        "sounds/place2.ogg",
+        "audio/impactGeneric_light_000.ogg",
+        "audio/impactGeneric_light_001.ogg",
+        "audio/impactGeneric_light_002.ogg",
     ]);
-    cfg.register(SfxEvent::ItemPickup, vec!["sounds/pickup.ogg"]);
+    cfg.register(SfxEvent::ItemPickup, vec!["audio/click1.ogg"]);
     cfg.register(SfxEvent::Footstep(0), vec![  // generic / stone
-        "sounds/step_stone1.ogg",
-        "sounds/step_stone2.ogg",
-        "sounds/step_stone3.ogg",
-        "sounds/step_stone4.ogg",
+        "audio/impactGeneric_light_000.ogg",
+        "audio/impactGeneric_light_001.ogg",
+        "audio/impactGeneric_light_002.ogg",
+        "audio/impactTin_medium_002.ogg",
     ]);
 }
 
