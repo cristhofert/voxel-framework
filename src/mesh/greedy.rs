@@ -293,7 +293,11 @@ fn build_mask<V: VoxelType>(
             // Convert (d, u, v) in slice space to (x, y, z) in chunk space.
             let (x, y, z) = slice_to_chunk(face, d * step, u * step, v * step);
             let voxel = super_voxel(chunk, x, y, z, step);
-            if voxel.is_solid() && face_visible(chunk, x, y, z, face, step) {
+            // Render solid voxels AND non-solid voxels that have visible color
+            // (e.g. water: alpha > 0 but is_solid = false).  Air (alpha = 0)
+            // is always skipped.
+            let has_color = voxel.color()[3] > 0.0;
+            if has_color && face_visible(chunk, x, y, z, face, step) {
                 mask[v * size + u] = Some(voxel);
             } else {
                 mask[v * size + u] = None;
