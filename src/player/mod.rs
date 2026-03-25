@@ -657,6 +657,7 @@ pub fn player_move(
 pub fn player_resolve_collision<V: VoxelType>(
     mut player_q: Query<(&mut Player, &mut Transform)>,
     chunk_q: Query<(&Chunk<V>, &Transform), Without<Player>>,
+    manager: Res<ChunkManager>,
 ) {
     let Ok((mut player, mut player_tf)) = player_q.single_mut() else {
         return;
@@ -669,11 +670,16 @@ pub fn player_resolve_collision<V: VoxelType>(
         player.impact_speed = 0.0; // reset each frame; set below on landing
     }
 
-    // Enable gravity as soon as the first terrain chunk is visible — much
-    // faster than waiting for WorldReady (all initial chunks).  While no
-    // chunks exist the player floats harmlessly at spawn height.
-    if !player.world_loaded && !chunk_q.is_empty() {
-        player.world_loaded = true;
+    // Enable gravity only once the chunk containing the player's feet is
+    // registered in ChunkManager — meaning the generator has actually produced
+    // terrain data for that chunk.  Checking a distant chunk being present
+    // (chunk_q.is_empty) is not sufficient: it fires too early.
+    if !player.world_loaded {
+        let feet = player_tf.translation - Vec3::Y * PLAYER_HALF_HEIGHT;
+        let coord = crate::chunk::world_to_chunk_coord(feet);
+        if manager.is_loaded(coord) {
+            player.world_loaded = true;
+        }
     }
 
     let mut pos = player_tf.translation;
