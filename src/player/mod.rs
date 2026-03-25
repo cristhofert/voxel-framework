@@ -286,10 +286,17 @@ pub struct Player {
     pub(crate) footstep_timer: f32,
     /// Whether the initial chunk load has completed.
     ///
-    /// Set to `false` on spawn and `true` when [`crate::world::WorldReady`]
-    /// fires. While `false`, gravity is suppressed so the player does not
-    /// fall through un-loaded chunks before the world has finished generating.
+    /// Set to `false` on spawn; flipped to `true` in `player_resolve_collision`
+    /// once the chunk at the player's feet is registered in [`ChunkManager`].
+    /// While `false`, gravity is suppressed so the player does not fall through
+    /// un-loaded terrain during world generation.
     pub(crate) world_loaded: bool,
+    /// `true` until the player's first landing after spawn (or respawn).
+    ///
+    /// Skips fall-damage on that landing so a spawn point slightly above the
+    /// terrain surface does not instantly kill the player.  Cleared on first
+    /// contact with solid ground.
+    pub(crate) spawn_immune: bool,
 }
 
 impl Default for Player {
@@ -305,6 +312,7 @@ impl Default for Player {
             impact_speed: 0.0,
             footstep_timer: 0.0,
             world_loaded: false,
+            spawn_immune: true,
         }
     }
 }
@@ -434,7 +442,8 @@ pub fn spawn_player(
             on_ground: false,
             impact_speed: 0.0,
             footstep_timer: 0.0,
-            world_loaded: false, // gravity frozen until WorldReady fires
+            world_loaded: false,
+            spawn_immune: true,
         },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -806,6 +815,15 @@ pub fn player_fall_damage(
         return;
     }
 
+    // First landing after spawn or respawn is immune to fall damage so the
+    // player doesn't die just because the spawn point is a few blocks above
+    // the terrain surface.
+    if player.spawn_immune {
+        player.spawn_immune = false;
+        player.impact_speed = 0.0;
+        return;
+    }
+
     let damage = (player.impact_speed - health.fall_safe_speed).max(0.0) * 2.0;
     player.impact_speed = 0.0;
 
@@ -822,6 +840,8 @@ pub fn player_fall_damage(
         // Reset velocity so the player doesn't inherit falling momentum after respawn.
         player.vertical_velocity = 0.0;
         player.velocity = Vec3::ZERO;
+        player.world_loaded = false; // re-freeze gravity until feet chunk reloads
+        player.spawn_immune = true;  // grant immunity on the next landing too
         died_writer.write(PlayerDied);
     }
 }
