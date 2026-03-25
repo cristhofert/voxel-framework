@@ -93,7 +93,7 @@ use bevy::prelude::*;
 use crate::audio::{SfxEvent, SfxRequest};
 use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
-use crate::world::{ChunkManager, ViewerPosition, WorldReady, get_voxel_at};
+use crate::world::{ChunkManager, ViewerPosition, get_voxel_at};
 
 // ─── Health & damage messages ─────────────────────────────────────────────────
 
@@ -669,6 +669,13 @@ pub fn player_resolve_collision<V: VoxelType>(
         player.impact_speed = 0.0; // reset each frame; set below on landing
     }
 
+    // Enable gravity as soon as the first terrain chunk is visible — much
+    // faster than waiting for WorldReady (all initial chunks).  While no
+    // chunks exist the player floats harmlessly at spawn height.
+    if !player.world_loaded && !chunk_q.is_empty() {
+        player.world_loaded = true;
+    }
+
     let mut pos = player_tf.translation;
     // FreeFlight: capsule spine follows entity rotation (true 6DOF).
     // Grounded: spine is always world-vertical (Vec3::Y) so the capsule stands upright.
@@ -1057,16 +1064,6 @@ impl<V: VoxelType> Default for PlayerPlugin<V> {
     }
 }
 
-fn on_world_ready(
-    mut reader: bevy::ecs::message::MessageReader<WorldReady>,
-    mut player_q: Query<&mut Player>,
-) {
-    if reader.read().next().is_some() {
-        for mut player in player_q.iter_mut() {
-            player.world_loaded = true;
-        }
-    }
-}
 
 impl<V: VoxelType> Plugin for PlayerPlugin<V> {
     fn build(&self, app: &mut App) {
@@ -1088,7 +1085,6 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
         );
         app.add_systems(Update, player_cursor_system);
         app.add_systems(PostUpdate, save_spawn_on_exit);
-        app.add_systems(Update, on_world_ready);
     }
 }
 
