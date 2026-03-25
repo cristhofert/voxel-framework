@@ -93,7 +93,7 @@ use bevy::prelude::*;
 use crate::audio::{SfxEvent, SfxRequest};
 use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
-use crate::world::{ChunkManager, ViewerPosition, get_voxel_at};
+use crate::world::{ChunkManager, ViewerPosition, WorldReady, get_voxel_at};
 
 // ─── Health & damage messages ─────────────────────────────────────────────────
 
@@ -284,6 +284,12 @@ pub struct Player {
     /// Managed by [`player_footstep_system`]. Reset to `0.0` after each
     /// footstep; only meaningful in [`PlayerMode::Grounded`].
     pub(crate) footstep_timer: f32,
+    /// Whether the initial chunk load has completed.
+    ///
+    /// Set to `false` on spawn and `true` when [`crate::world::WorldReady`]
+    /// fires. While `false`, gravity is suppressed so the player does not
+    /// fall through un-loaded chunks before the world has finished generating.
+    pub(crate) world_loaded: bool,
 }
 
 impl Default for Player {
@@ -298,6 +304,7 @@ impl Default for Player {
             on_ground: false,
             impact_speed: 0.0,
             footstep_timer: 0.0,
+            world_loaded: false,
         }
     }
 }
@@ -427,6 +434,7 @@ pub fn spawn_player(
             on_ground: false,
             impact_speed: 0.0,
             footstep_timer: 0.0,
+            world_loaded: false, // gravity frozen until WorldReady fires
         },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -599,6 +607,15 @@ pub fn player_move(
 
             let factor = if h_dir != Vec3::ZERO { ACCEL } else { DECEL };
             player.velocity = player.velocity.lerp(h_target, (factor * dt).min(1.0));
+
+            // Freeze gravity until the initial chunk load completes so the
+            // player does not fall through un-loaded terrain on startup.
+            if !player.world_loaded {
+                player.vertical_velocity = 0.0;
+                transform.translation += player.velocity * dt;
+                viewer.position = transform.translation;
+                return;
+            }
 
             // Jump impulse (only when on the ground; disabled while crouching).
             if keys.just_pressed(KeyCode::Space) && player.on_ground && !crouching {
@@ -1040,6 +1057,17 @@ impl<V: VoxelType> Default for PlayerPlugin<V> {
     }
 }
 
+fn on_world_ready(
+    mut reader: bevy::ecs::message::MessageReader<WorldReady>,
+    mut player_q: Query<&mut Player>,
+) {
+    if reader.read().next().is_some() {
+        for mut player in player_q.iter_mut() {
+            player.world_loaded = true;
+        }
+    }
+}
+
 impl<V: VoxelType> Plugin for PlayerPlugin<V> {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerConfig>();
@@ -1060,6 +1088,7 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
         );
         app.add_systems(Update, player_cursor_system);
         app.add_systems(PostUpdate, save_spawn_on_exit);
+        app.add_systems(Update, on_world_ready);
     }
 }
 
