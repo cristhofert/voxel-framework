@@ -109,10 +109,9 @@ pub(crate) const FACE_DIRS: [FaceDir; 6] = [
 /// Iterates over the region in XYZ order and returns the first solid voxel
 /// found.  If the entire region is air or out of bounds, returns [`VoxelType::air`].
 ///
-/// This "first-solid-wins" strategy is used rather than majority voting because
-/// it is O(1) in the common case (the first cell is solid), avoids allocations,
-/// and produces correct LOD at chunk borders where the region may be partially
-/// out of bounds.
+/// This "first-visible-wins" strategy returns the first voxel with non-zero
+/// alpha (solid OR non-solid but colored, e.g. water).  Solid voxels are still
+/// preferred over transparent-but-colored ones when both exist in the region.
 #[inline]
 pub(crate) fn super_voxel<V: VoxelType>(
     chunk: &Chunk<V>,
@@ -121,6 +120,7 @@ pub(crate) fn super_voxel<V: VoxelType>(
     sz: usize,
     step: usize,
 ) -> V {
+    let mut first_visible = V::air();
     for dx in 0..step {
         for dy in 0..step {
             for dz in 0..step {
@@ -130,13 +130,16 @@ pub(crate) fn super_voxel<V: VoxelType>(
                 if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
                     let v = chunk.get(x, y, z);
                     if v.is_solid() {
-                        return v;
+                        return v; // solid wins immediately
+                    }
+                    if first_visible.color()[3] == 0.0 && v.color()[3] > 0.0 {
+                        first_visible = v; // remember first non-air non-solid (e.g. water)
                     }
                 }
             }
         }
     }
-    V::air()
+    first_visible
 }
 
 /// Generates a [`Mesh`] for a single chunk using greedy meshing.
