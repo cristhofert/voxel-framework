@@ -25,6 +25,7 @@ pub use crate::noise::{fbm, hash3, value_noise};
 // Mesh generation
 pub use crate::mesh::{
     generate_chunk_mesh, generate_chunk_mesh_with_neighbors, ChunkNeighbors,
+    ATTRIBUTE_TEXTURE_LAYER,
 };
 
 // Generator
@@ -71,8 +72,11 @@ pub use crate::world::{
 pub use crate::world::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldReady};
 
 // Render
-pub use crate::render::{ChunkMaterial, ChunkMaterialConfig, ChunkRendered, RenderPlugin};
-pub use crate::render::material::chunk_aabb;
+pub use crate::render::{
+    ChunkMaterial, ChunkMaterialConfig, ChunkMaterialHandle, ChunkRendered,
+    ChunkTextureArray, RenderPlugin,
+};
+pub use crate::render::material::{build_texture_array, chunk_aabb};
 
 // Fragment system
 pub use crate::fragments::{Fragment, FragmentConfig, FragmentPlugin};
