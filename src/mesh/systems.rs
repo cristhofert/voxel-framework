@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
-use crate::chunk::{Chunk, ChunkCoordComp, ChunkLod, CHUNK_SIZE};
+use crate::chunk::{Chunk, ChunkCoord, ChunkCoordComp, ChunkLod, CHUNK_SIZE};
 use crate::chunk::persistence as chunk_persistence;
 use crate::render::material::{ChunkMaterial, ChunkRendered};
 use crate::voxel::VoxelType;
@@ -24,6 +24,21 @@ use crate::world::persistence::PersistenceConfig;
 
 use super::{ChunkNeighbors, generate_chunk_mesh_with_neighbors};
 use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
+
+// ─── PendingNeighborRemesh ────────────────────────────────────────────────────
+
+/// Staging buffer for neighbor re-mesh requests emitted by [`chunk_mesh_system`].
+///
+/// `chunk_mesh_system` reads `MessageReader<ChunkModified>` (which requires
+/// `Res` access to the message storage) and therefore cannot hold a
+/// `MessageWriter<ChunkModified>` (which requires `ResMut`) in the same system
+/// without triggering a Bevy B0002 access-conflict panic.
+///
+/// Instead, newly-rendered chunks push their six neighbor coords here, and
+/// [`flush_neighbor_remesh_system`] drains the buffer and emits the
+/// `ChunkModified` messages in a separate, sequentially-ordered system.
+#[derive(Resource, Default)]
+pub struct PendingNeighborRemesh(pub Vec<ChunkCoord>);
 
 // ─── chunk_mesh_system ────────────────────────────────────────────────────────
 
@@ -47,7 +62,7 @@ use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
 pub fn chunk_mesh_system<V: VoxelType>(
     mut commands: Commands,
     mut modified_reader: MessageReader<ChunkModified>,
-    mut modified_writer: MessageWriter<ChunkModified>,
+    mut pending_neighbors: ResMut<PendingNeighborRemesh>,
     manager: Res<ChunkManager>,
     chunk_material: Res<ChunkMaterial>,
     viewer: Res<ViewerPosition>,
@@ -183,17 +198,41 @@ pub fn chunk_mesh_system<V: VoxelType>(
             ));
 
             // A newly rendered chunk changes the border visibility of every
-            // adjacent chunk.  Emit ChunkModified for each loaded neighbor so
+            // adjacent chunk.  Stage ChunkModified for each loaded neighbor so
             // they re-mesh and cull (or un-cull) the faces that touch this chunk.
+            // Messages are emitted by flush_neighbor_remesh_system (runs after
+            // this system) to avoid a ResMut/Res conflict on the message storage.
             // This is only done on the first-time path to avoid cascading
             // re-meshes on every LOD or voxel-edit update.
             for &offset in &NEIGHBOR_OFFSETS {
                 let neighbor_coord = coord + offset;
                 if manager.is_loaded(neighbor_coord) {
-                    modified_writer.write(ChunkModified(neighbor_coord));
+                    pending_neighbors.0.push(neighbor_coord);
                 }
             }
         }
+    }
+}
+
+// ─── flush_neighbor_remesh_system ────────────────────────────────────────────
+
+/// Drains [`PendingNeighborRemesh`] and emits a [`ChunkModified`] message for
+/// each staged coord.
+///
+/// This system exists solely to decouple the *write* of `ChunkModified` from
+/// [`chunk_mesh_system`], which holds a `MessageReader<ChunkModified>` (i.e.
+/// `Res` access to the message store).  Having both `Res` and `ResMut` on the
+/// same resource in one system triggers Bevy's B0002 access-conflict panic.
+///
+/// By staging neighbor coords in [`PendingNeighborRemesh`] and draining them
+/// here — after `chunk_mesh_system` has finished — we keep the two accesses in
+/// separate systems, which Bevy schedules sequentially via `.after()`.
+pub fn flush_neighbor_remesh_system(
+    mut pending: ResMut<PendingNeighborRemesh>,
+    mut modified_writer: MessageWriter<ChunkModified>,
+) {
+    for coord in pending.0.drain(..) {
+        modified_writer.write(ChunkModified(coord));
     }
 }
 

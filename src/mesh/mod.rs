@@ -65,7 +65,7 @@ pub mod systems;
 
 pub use greedy::generate_chunk_mesh;
 pub use neighbor::generate_chunk_mesh_with_neighbors;
-pub use systems::{chunk_mesh_system, chunk_despawn_system, lod_update_system};
+pub use systems::{chunk_mesh_system, chunk_despawn_system, flush_neighbor_remesh_system, lod_update_system, PendingNeighborRemesh};
 
 use bevy::prelude::*;
 
@@ -123,11 +123,14 @@ impl<V: VoxelType> Default for MeshPlugin<V> {
 
 impl<V: VoxelType> Plugin for MeshPlugin<V> {
     fn build(&self, app: &mut App) {
+        app.init_resource::<systems::PendingNeighborRemesh>();
         app.add_systems(
             Update,
             (
                 systems::lod_update_system::<V>,
                 systems::chunk_mesh_system::<V>.after(GeneratorSystems),
+                systems::flush_neighbor_remesh_system
+                    .after(systems::chunk_mesh_system::<V>),
                 systems::chunk_despawn_system::<V>,
             ),
         );
