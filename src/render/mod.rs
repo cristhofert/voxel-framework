@@ -48,8 +48,8 @@ impl<V: VoxelType> Default for RenderPlugin<V> {
 impl<V: VoxelType> Plugin for RenderPlugin<V> {
     fn build(&self, app: &mut App) {
         // Embed the chunk WGSL shader into the binary.
-        // The resulting asset path is: embedded://voxel_framework/shaders/chunk.wgsl
-        embedded_asset!(app, "../shaders/chunk.wgsl");
+        // The resulting asset path is: embedded://voxel_framework/render/chunk.wgsl
+        embedded_asset!(app, "chunk.wgsl");
 
         app.add_plugins(MaterialPlugin::<ChunkMaterial>::default());
         app.init_resource::<ChunkMaterialHandle>();
