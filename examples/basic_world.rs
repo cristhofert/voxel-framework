@@ -7,6 +7,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use voxel_framework::prelude::*;
 use voxel_framework::audio::{SfxConfig, SfxEvent, SfxRequest};
+use voxel_framework::player::PlayerPlugin;
 use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings};
 
 fn main() {
@@ -20,6 +21,7 @@ fn main() {
         .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
         .add_plugins(PersistencePlugin::<DefaultVoxel>::new())
         .add_plugins(PauseMenuPlugin)
+        .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
         .insert_resource({
             let mut sfx = SfxConfig::new();
             sfx.register(SfxEvent::Mining, vec![
@@ -52,14 +54,8 @@ fn main() {
             speed: 16.0,
             ..default()
         })
-        .add_systems(Startup, (spawn_player, setup))
+        .add_systems(Startup, setup)
         .add_systems(Update, play_sfx)
-        .add_systems(
-            Update,
-            (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
-                .chain()
-                .run_if(in_state(PauseMenuState::Playing)),
-        )
         .run();
 }
 
