@@ -59,7 +59,7 @@ pub struct PersistenceConfig {
 impl Default for PersistenceConfig {
     fn default() -> Self {
         Self {
-            save_dir: "./chunks".to_string(),
+            save_dir: "./worlds/world/chunks".to_string(),
             auto_save: true,
         }
     }

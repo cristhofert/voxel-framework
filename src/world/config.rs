@@ -133,6 +133,10 @@ impl Default for LightingConfig {
     }
 }
 
+fn default_world_name() -> String {
+    "world".to_string()
+}
+
 /// Top-level world configuration loaded from `world.toml`.
 ///
 /// Inserted as a Bevy [`Resource`] by [`WorldConfigPlugin`] during the
@@ -151,6 +155,7 @@ impl Default for LightingConfig {
 ///
 /// | Field | Default |
 /// |---|---|
+/// | `world_name` | `"world"` |
 /// | `seed` | `42` |
 /// | `spawn_position` | `[0.0, 0.0, 0.0]` |
 /// | `load_distance` | `150.0` |
@@ -165,11 +170,18 @@ impl Default for LightingConfig {
 /// use voxel_framework::world::WorldConfig;
 ///
 /// let config = WorldConfig::from_file("world.toml").unwrap_or_default();
+/// println!("world = {}", config.world_name);
 /// println!("seed = {}", config.seed);
-/// println!("load_distance = {}", config.load_distance);
 /// ```
 #[derive(Resource, Debug, Clone, serde::Deserialize)]
 pub struct WorldConfig {
+    /// Name of this world, used as the folder under `worlds/` for chunk and
+    /// player data storage.  Default: `"world"`.
+    ///
+    /// Set in `world.toml` as `world_name = "survival"`.  The framework stores
+    /// all data for this world under `./worlds/{world_name}/`.
+    #[serde(default = "default_world_name")]
+    pub world_name: String,
     /// Global world seed used for all deterministic generation. Default: `42`.
     pub seed: u64,
     /// Player/viewer spawn position in world space as `[x, y, z]`. Default: `[0.0, 0.0, 0.0]`.
@@ -197,6 +209,7 @@ pub struct WorldConfig {
 impl Default for WorldConfig {
     fn default() -> Self {
         Self {
+            world_name: "world".to_string(),
             seed: 42,
             spawn_position: [0.0, 0.0, 0.0],
             load_distance: 150.0,
@@ -262,6 +275,13 @@ impl WorldConfig {
         SkyboxConfig { mode }
     }
 
+    /// Returns the base data directory for this world: `./worlds/{world_name}`.
+    ///
+    /// All world-specific files (chunks, player data) are stored under this path.
+    pub fn world_data_dir(&self) -> String {
+        format!("./worlds/{}", self.world_name)
+    }
+
     /// Loads a [`WorldConfig`] from a TOML file at `path`.
     ///
     /// # Errors
@@ -298,7 +318,15 @@ impl WorldConfig {
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Startup system that loads `WorldConfig` and applies it to [`ChunkManager`].
-fn load_world_config(mut commands: Commands, mut chunk_manager: ResMut<ChunkManager>) {
+///
+/// Also updates [`super::PersistenceConfig::save_dir`] when
+/// [`PersistencePlugin`](super::PersistencePlugin) is active, so chunk files
+/// land under `./worlds/{world_name}/chunks/`.
+fn load_world_config(
+    mut commands: Commands,
+    mut chunk_manager: ResMut<ChunkManager>,
+    mut persistence: Option<ResMut<super::PersistenceConfig>>,
+) {
     let config = WorldConfig::from_file("world.toml")
         .inspect_err(|e| {
             eprintln!("voxel-framework: world.toml not found or invalid ({e}), using default WorldConfig");
@@ -307,6 +335,10 @@ fn load_world_config(mut commands: Commands, mut chunk_manager: ResMut<ChunkMana
 
     chunk_manager.load_distance = config.load_distance;
     chunk_manager.unload_distance = config.unload_distance;
+
+    if let Some(ref mut pc) = persistence {
+        pc.save_dir = format!("{}/chunks", config.world_data_dir());
+    }
 
     commands.insert_resource(config);
 }
