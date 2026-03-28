@@ -140,6 +140,23 @@ pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Has
         1.0
     }
 
+    /// Minimum tool level required to break this voxel.
+    ///
+    /// | Level | Example tool |
+    /// |-------|-------------|
+    /// | `0`   | Bare hands / any tool |
+    /// | `1`   | Stone pickaxe or better |
+    /// | `2`   | Iron pickaxe or better |
+    /// | `3`   | Diamond pickaxe |
+    ///
+    /// If the player's active tool level is below this value, mining makes
+    /// no progress (effective break time is treated as infinite).
+    ///
+    /// Default: `0` — breakable with bare hands.
+    fn mining_level(&self) -> u8 {
+        0
+    }
+
     /// Returns the empty/air voxel for this type.
     ///
     /// The default implementation delegates to `Self::default()`, which is
@@ -380,6 +397,15 @@ impl VoxelType for DefaultTerrainVoxel {
             DefaultTerrainVoxel::Gravel => 0.75,
             DefaultTerrainVoxel::Snow   => 0.3,
             DefaultTerrainVoxel::Water  => 0.0, // unbreakable
+        }
+    }
+
+    #[inline]
+    fn mining_level(&self) -> u8 {
+        match self {
+            DefaultTerrainVoxel::Stone  => 1, // requires stone pickaxe or better
+            DefaultTerrainVoxel::Gravel => 1,
+            _ => 0,                           // breakable bare-handed
         }
     }
 }

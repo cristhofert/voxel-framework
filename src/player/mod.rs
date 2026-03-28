@@ -95,6 +95,8 @@ use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
 use crate::world::{ChunkManager, ViewerPosition, get_voxel_at};
 
+pub mod persistence;
+
 // ─── Health & damage messages ─────────────────────────────────────────────────
 
 /// Emitted when the player takes damage from any source.
@@ -212,6 +214,13 @@ pub const PLAYER_RADIUS: f32 = 0.6;
 /// world units. In 6DOF mode this axis rolls with the player's orientation.
 pub const PLAYER_HALF_HEIGHT: f32 = 1.8;
 
+/// Half-height of the capsule when crouching (≈ 60% of normal).
+///
+/// Reduces the total capsule height enough to let the player pass through
+/// gaps that are one voxel tall. Used by [`player_resolve_collision`] when
+/// [`Player::crouching`] is `true` in [`PlayerMode::Grounded`] mode.
+pub const CROUCH_HALF_HEIGHT: f32 = PLAYER_HALF_HEIGHT * 0.6;
+
 /// Lerp factor applied when the player is accelerating.
 const ACCEL: f32 = 12.0;
 
@@ -297,6 +306,20 @@ pub struct Player {
     /// terrain surface does not instantly kill the player.  Cleared on first
     /// contact with solid ground.
     pub(crate) spawn_immune: bool,
+    /// Whether the player is currently sprinting.
+    ///
+    /// `true` when `Shift` is held in [`PlayerMode::Grounded`] with
+    /// [`Player::on_ground`] `true`, and [`Player::crouching`] is `false`.
+    /// Crouch takes priority: if both are held this is `false`.
+    /// Always `false` in [`PlayerMode::FreeFlight`].
+    pub sprinting: bool,
+    /// Whether the player is currently crouching.
+    ///
+    /// `true` when `Ctrl` is held in [`PlayerMode::Grounded`] mode.
+    /// Reduces the effective capsule half-height to [`CROUCH_HALF_HEIGHT`]
+    /// and movement speed to 40% of base speed.
+    /// Always `false` in [`PlayerMode::FreeFlight`].
+    pub crouching: bool,
 }
 
 impl Default for Player {
@@ -313,6 +336,8 @@ impl Default for Player {
             footstep_timer: 0.0,
             world_loaded: false,
             spawn_immune: true,
+            sprinting: false,
+            crouching: false,
         }
     }
 }
@@ -444,6 +469,8 @@ pub fn spawn_player(
             footstep_timer: 0.0,
             world_loaded: false,
             spawn_immune: true,
+            sprinting: false,
+            crouching: false,
         },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -559,6 +586,10 @@ pub fn player_move(
 
     match player.mode.clone() {
         PlayerMode::FreeFlight => {
+            // Sprint/crouch are not applicable in FreeFlight.
+            player.sprinting = false;
+            player.crouching = false;
+
             // Local-space axes — full 6DOF.
             let forward = transform.rotation * Vec3::NEG_Z;
             let right   = transform.rotation * Vec3::X;
@@ -596,12 +627,19 @@ pub fn player_move(
             if keys.pressed(KeyCode::KeyA) { h_dir -= right;   }
             if keys.pressed(KeyCode::KeyD) { h_dir += right;   }
 
-            // Sprint (ShiftLeft) and crouch (ControlLeft) speed multipliers.
+            // Sprint (Shift) and crouch (Ctrl) speed multipliers.
             // Crouch takes priority over sprint if both are held.
-            let crouching = keys.pressed(KeyCode::ControlLeft);
-            let sprinting = !crouching && keys.pressed(KeyCode::ShiftLeft);
+            // Sprint only activates when on solid ground (no air-sprinting).
+            let crouching = keys.pressed(KeyCode::ControlLeft)
+                || keys.pressed(KeyCode::ControlRight);
+            let sprinting = !crouching
+                && player.on_ground
+                && (keys.pressed(KeyCode::ShiftLeft)
+                    || keys.pressed(KeyCode::ShiftRight));
+            player.crouching = crouching;
+            player.sprinting = sprinting;
             let speed_mult = if crouching {
-                0.5
+                0.4
             } else if sprinting {
                 1.6
             } else {
@@ -679,12 +717,20 @@ pub fn player_resolve_collision<V: VoxelType>(
         player.impact_speed = 0.0; // reset each frame; set below on landing
     }
 
+    // Use reduced capsule height when crouching so the player fits through
+    // 1-block-tall gaps. In FreeFlight mode crouching is always false.
+    let half_height = if player.crouching {
+        CROUCH_HALF_HEIGHT
+    } else {
+        PLAYER_HALF_HEIGHT
+    };
+
     // Enable gravity only once the chunk containing the player's feet is
     // registered in ChunkManager — meaning the generator has actually produced
     // terrain data for that chunk.  Checking a distant chunk being present
     // (chunk_q.is_empty) is not sufficient: it fires too early.
     if !player.world_loaded {
-        let feet = player_tf.translation - Vec3::Y * PLAYER_HALF_HEIGHT;
+        let feet = player_tf.translation - Vec3::Y * half_height;
         let coord = crate::chunk::world_to_chunk_coord(feet);
         if manager.is_loaded(coord) {
             player.world_loaded = true;
@@ -700,7 +746,7 @@ pub fn player_resolve_collision<V: VoxelType>(
         player_tf.rotation * Vec3::Y
     };
 
-    let extent = PLAYER_HALF_HEIGHT + PLAYER_RADIUS;
+    let extent = half_height + PLAYER_RADIUS;
     let voxel_size = VOXEL_SIZE;
 
     for (chunk, chunk_tf) in &chunk_q {
@@ -730,7 +776,7 @@ pub fn player_resolve_collision<V: VoxelType>(
                     if !chunk.is_solid_at(vx as usize, vy as usize, vz as usize) {
                         continue;
                     }
-                    let new_pos = push_capsule_out(pos, up, chunk_pos, vx, vy, vz);
+                    let new_pos = push_capsule_out(pos, up, half_height, chunk_pos, vx, vy, vz);
 
                     // In grounded mode detect landing: a positive Y correction
                     // means the player was pushed upward off a solid surface.
@@ -851,7 +897,7 @@ pub fn player_fall_damage(
 /// Returns the corrected capsule-center position after pushing out of a solid voxel.
 ///
 /// The algorithm treats the capsule as a swept sphere along the spine segment
-/// `[pos − up*PLAYER_HALF_HEIGHT, pos + up*PLAYER_HALF_HEIGHT]`:
+/// `[pos − up*half_height, pos + up*half_height]`:
 ///
 /// 1. Find the point on the spine segment closest to the voxel AABB center
 ///    (clamped parametric projection, `t ∈ [0, 1]`).
@@ -867,6 +913,7 @@ pub fn player_fall_damage(
 fn push_capsule_out(
     pos: Vec3,
     up: Vec3,
+    half_height: f32,
     chunk_pos: Vec3,
     vx: i32,
     vy: i32,
@@ -876,8 +923,8 @@ fn push_capsule_out(
     let vmax = vmin + Vec3::splat(VOXEL_SIZE);
 
     // Capsule spine endpoints.
-    let p0 = pos - up * PLAYER_HALF_HEIGHT;
-    let p1 = pos + up * PLAYER_HALF_HEIGHT;
+    let p0 = pos - up * half_height;
+    let p1 = pos + up * half_height;
     let spine = p1 - p0;
 
     // Closest point on spine to the voxel center.
@@ -968,54 +1015,21 @@ pub fn player_footstep_system<V: VoxelType>(
 
 // ─── Spawn persistence ────────────────────────────────────────────────────────
 
-/// Default filename written to the working directory for spawn persistence.
-const SPAWN_FILE: &str = "spawn.dat";
-
-/// Saves the spawn position to a plain-text file.
-///
-/// The file contains three space-separated `f32` values (X Y Z) on one line.
-/// Creates the file and any missing parent directories.
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be created or written.
-pub fn save_spawn_position(
-    path: &std::path::Path,
-    pos: Vec3,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-    std::fs::write(path, format!("{} {} {}", pos.x, pos.y, pos.z))?;
-    Ok(())
-}
-
-/// Loads a spawn position previously saved with [`save_spawn_position`].
-///
-/// Returns `None` if the file does not exist or cannot be parsed.
-pub fn load_spawn_position(path: &std::path::Path) -> Option<Vec3> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let mut parts = data.split_whitespace();
-    let x: f32 = parts.next()?.parse().ok()?;
-    let y: f32 = parts.next()?.parse().ok()?;
-    let z: f32 = parts.next()?.parse().ok()?;
-    Some(Vec3::new(x, y, z))
-}
-
 /// Startup system that applies a persisted spawn position to [`PlayerConfig`]
 /// and [`PlayerHealth`] before the player entity is spawned.
 ///
 /// Runs before [`spawn_player`] so the loaded position takes effect on the
-/// initial spawn.  Silent no-op if `spawn.dat` does not exist.
+/// initial spawn.  Silent no-op if `player_data.json` does not exist.
 fn load_spawn_on_startup(
     mut config: ResMut<PlayerConfig>,
     mut health: ResMut<PlayerHealth>,
 ) {
-    if let Some(pos) = load_spawn_position(std::path::Path::new(SPAWN_FILE)) {
+    if let Some(pos) = persistence::load_spawn_position() {
         config.spawn_position = pos;
         health.spawn_position = pos;
+    } else {
+        // First run: persist the configured default so subsequent runs reload it.
+        persistence::save_spawn_position(config.spawn_position);
     }
 }
 
@@ -1029,10 +1043,7 @@ fn save_spawn_on_exit(
     mut exit_reader: bevy::ecs::message::MessageReader<AppExit>,
 ) {
     for _ in exit_reader.read() {
-        let _ = save_spawn_position(
-            std::path::Path::new(SPAWN_FILE),
-            health.spawn_position,
-        );
+        persistence::save_spawn_position(health.spawn_position);
     }
 }
 

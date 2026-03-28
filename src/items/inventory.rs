@@ -98,6 +98,24 @@ pub trait ItemType:
     fn is_empty(&self) -> bool {
         false
     }
+
+    /// Tool level provided when this item is the active hotbar selection.
+    ///
+    /// `0` = bare hands. Matched against [`crate::voxel::VoxelType::mining_level`]:
+    /// if `tool_level < voxel.mining_level()`, mining makes no progress.
+    ///
+    /// Default: `0`.
+    fn tool_level(&self) -> u8 {
+        0
+    }
+
+    /// Mining speed multiplier when this item is the active tool.
+    ///
+    /// The effective break time is divided by this value (`2.0` = twice as fast).
+    /// Default: `1.0`.
+    fn tool_speed(&self) -> f32 {
+        1.0
+    }
 }
 
 // ─── InventorySlot ────────────────────────────────────────────────────────────
@@ -312,6 +330,12 @@ pub enum DefaultItem {
     Crystal,
     /// Rare mineral node; drops from high-value voxels.
     RareMineral,
+    /// Wooden pickaxe — tool level 1, normal speed. Crafted from wood.
+    WoodenPickaxe,
+    /// Stone pickaxe — tool level 1, 2× speed. Crafted from rock fragments.
+    StonePickaxe,
+    /// Iron pickaxe — tool level 2, 4× speed. Crafted from iron ore.
+    IronPickaxe,
 }
 
 impl ItemType for DefaultItem {
@@ -322,6 +346,9 @@ impl ItemType for DefaultItem {
             DefaultItem::IronOre => "Iron Ore",
             DefaultItem::Crystal => "Crystal",
             DefaultItem::RareMineral => "Rare Mineral",
+            DefaultItem::WoodenPickaxe => "Wooden Pickaxe",
+            DefaultItem::StonePickaxe => "Stone Pickaxe",
+            DefaultItem::IronPickaxe => "Iron Pickaxe",
         }
     }
 
@@ -332,6 +359,9 @@ impl ItemType for DefaultItem {
             DefaultItem::IronOre => [0.55, 0.35, 0.20, 1.0],
             DefaultItem::Crystal => [0.40, 0.50, 0.80, 1.0],
             DefaultItem::RareMineral => [0.20, 0.85, 0.60, 1.0],
+            DefaultItem::WoodenPickaxe => [0.55, 0.35, 0.20, 1.0],
+            DefaultItem::StonePickaxe => [0.50, 0.50, 0.50, 1.0],
+            DefaultItem::IronPickaxe => [0.70, 0.75, 0.80, 1.0],
         }
     }
 
@@ -342,6 +372,9 @@ impl ItemType for DefaultItem {
             DefaultItem::IronOre => 2,
             DefaultItem::Crystal => 3,
             DefaultItem::RareMineral => 4,
+            DefaultItem::WoodenPickaxe => 5,
+            DefaultItem::StonePickaxe => 6,
+            DefaultItem::IronPickaxe => 7,
         }
     }
 
@@ -351,12 +384,33 @@ impl ItemType for DefaultItem {
             2 => DefaultItem::IronOre,
             3 => DefaultItem::Crystal,
             4 => DefaultItem::RareMineral,
+            5 => DefaultItem::WoodenPickaxe,
+            6 => DefaultItem::StonePickaxe,
+            7 => DefaultItem::IronPickaxe,
             _ => DefaultItem::Empty,
         }
     }
 
     fn is_empty(&self) -> bool {
         matches!(self, DefaultItem::Empty)
+    }
+
+    fn tool_level(&self) -> u8 {
+        match self {
+            DefaultItem::WoodenPickaxe => 1,
+            DefaultItem::StonePickaxe  => 1,
+            DefaultItem::IronPickaxe   => 2,
+            _ => 0,
+        }
+    }
+
+    fn tool_speed(&self) -> f32 {
+        match self {
+            DefaultItem::WoodenPickaxe => 1.0,
+            DefaultItem::StonePickaxe  => 2.0,
+            DefaultItem::IronPickaxe   => 4.0,
+            _ => 1.0,
+        }
     }
 }
 

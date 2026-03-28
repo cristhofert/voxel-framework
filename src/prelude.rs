@@ -107,9 +107,9 @@ pub use crate::player::{
     Player, PlayerConfig, PlayerMode, PlayerPlugin,
     PlayerHealth, PlayerDamaged, PlayerDied,
     spawn_player, player_look, player_move, player_resolve_collision, player_cursor_system,
-    save_spawn_position, load_spawn_position,
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT,
 };
+pub use crate::player::persistence::{save_spawn_position, load_spawn_position};
 
 // Mobs
 pub use crate::mobs::{

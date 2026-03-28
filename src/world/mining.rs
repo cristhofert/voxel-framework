@@ -48,6 +48,7 @@
 use bevy::prelude::*;
 
 use crate::chunk::Chunk;
+use crate::items::{HotbarState, Inventory, ItemType};
 use crate::voxel::VoxelType;
 
 use super::{ChunkManager, ChunkModified};
@@ -107,6 +108,38 @@ impl Default for MiningState {
             progress: 0.0,
             effective_break_time: 1.0,
         }
+    }
+}
+
+/// Active-tool statistics derived from the hotbar selection each frame.
+///
+/// [`MiningInputPlugin`] keeps this resource up to date via
+/// `hotbar_to_tool_system`. Game code that calls [`tick_mining`] directly
+/// can read or override it as needed.
+#[derive(Resource, Debug, Clone)]
+pub struct ToolStats {
+    /// Minimum tool level required to mine a voxel.
+    ///
+    /// Matched against [`crate::voxel::VoxelType::mining_level`]:
+    /// if `tool_level < voxel.mining_level()`, mining makes no progress.
+    pub tool_level: u8,
+    /// Mining speed multiplier for the active tool.
+    ///
+    /// The effective break time is divided by this value (`2.0` = twice as fast).
+    pub tool_speed: f32,
+}
+
+impl ToolStats {
+    /// Resets stats to bare-hands defaults (level 0, speed 1.0).
+    pub fn reset(&mut self) {
+        self.tool_level = 0;
+        self.tool_speed = 1.0;
+    }
+}
+
+impl Default for ToolStats {
+    fn default() -> Self {
+        Self { tool_level: 0, tool_speed: 1.0 }
     }
 }
 
@@ -330,19 +363,25 @@ impl Plugin for MiningPlugin {
 
 /// Convenience plugin that wires mouse input to the mining API automatically.
 ///
-/// `MiningInputPlugin<V>` adds a single [`Update`] system that:
+/// `MiningInputPlugin<V, I>` adds two [`Update`] systems:
 ///
-/// 1. Raycasts from the active [`Camera3d`] (max `6.0` world units).
-/// 2. While the **left mouse button** is held and the ray hits a solid voxel,
-///    calls [`tick_mining`] to accumulate break progress.
-/// 3. When the button is released (or no voxel is hit), calls [`stop_mining`]
-///    to clear accumulated progress.
+/// 1. `hotbar_to_tool_system` — reads the active hotbar slot from [`Inventory<I>`]
+///    and updates [`ToolStats`] with the slot's tool level and speed each frame.
+/// 2. `mining_input_system` — raycasts from the active [`Camera3d`] (max
+///    `6.0` world units). While the **left mouse button** is held and the ray
+///    hits a solid voxel whose [`crate::voxel::VoxelType::mining_level`] is
+///    satisfied by the current [`ToolStats::tool_level`], calls [`tick_mining`]
+///    to accumulate break progress. When the button is released (or no voxel is
+///    hit, or the tool level is too low), calls [`stop_mining`].
 ///
 /// # Prerequisites
 ///
 /// [`MiningPlugin`] must be added **before** this plugin so that the required
 /// resources ([`MiningState`], [`MiningConfig`]) and message channels
 /// ([`VoxelBroken`], [`MiningProgress`]) are already registered.
+///
+/// An [`Inventory<I>`] resource must also be present (typically inserted by
+/// game startup).
 ///
 /// # Example
 ///
@@ -351,39 +390,61 @@ impl Plugin for MiningPlugin {
 /// use voxel_framework::{VoxelPlugin, generator::{GeneratorPlugin, GeneratorResource}};
 /// use voxel_framework::world::mining::MiningInputPlugin;
 /// use voxel_framework::voxel::DefaultTerrainVoxel;
+/// use voxel_framework::items::DefaultItem;
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
 ///     .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
-///     .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel>::new())
+///     .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
 ///     .run();
 /// ```
-pub struct MiningInputPlugin<V: VoxelType> {
-    _m: std::marker::PhantomData<V>,
+pub struct MiningInputPlugin<V: VoxelType, I: ItemType> {
+    _m: std::marker::PhantomData<(V, I)>,
 }
 
-impl<V: VoxelType> MiningInputPlugin<V> {
-    /// Creates a new [`MiningInputPlugin`] for voxel type `V`.
+impl<V: VoxelType, I: ItemType> MiningInputPlugin<V, I> {
+    /// Creates a new [`MiningInputPlugin`] for voxel type `V` and item type `I`.
     pub fn new() -> Self {
         Self { _m: std::marker::PhantomData }
     }
 }
 
-impl<V: VoxelType> Default for MiningInputPlugin<V> {
+impl<V: VoxelType, I: ItemType> Default for MiningInputPlugin<V, I> {
     fn default() -> Self { Self::new() }
 }
 
-impl<V: VoxelType> Plugin for MiningInputPlugin<V> {
+impl<V: VoxelType, I: ItemType> Plugin for MiningInputPlugin<V, I> {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, mining_input_system::<V>);
+        app.init_resource::<ToolStats>();
+        app.add_systems(Update, (
+            hotbar_to_tool_system::<I>,
+            mining_input_system::<V>,
+        ).chain());
+    }
+}
+
+/// Updates [`ToolStats`] from the active hotbar slot each frame.
+///
+/// Added automatically by [`MiningInputPlugin`] — do not add manually.
+pub fn hotbar_to_tool_system<I: ItemType>(
+    hotbar: Res<HotbarState>,
+    inventory: Res<Inventory<I>>,
+    mut tool_stats: ResMut<ToolStats>,
+) {
+    let active_slot = hotbar.selected;
+    if let Some(slot) = inventory.slots.get(active_slot).and_then(|s| s.as_ref()) {
+        tool_stats.tool_level = slot.item.tool_level();
+        tool_stats.tool_speed = slot.item.tool_speed();
+    } else {
+        tool_stats.reset();
     }
 }
 
 /// System added by [`MiningInputPlugin`].
 ///
 /// Raycasts from the camera and drives [`tick_mining`] / [`stop_mining`] based
-/// on left-mouse-button state. Added automatically — do not add this system
-/// manually when using [`MiningInputPlugin`].
+/// on left-mouse-button state and [`ToolStats`]. Added automatically — do not
+/// add this system manually when using [`MiningInputPlugin`].
 pub fn mining_input_system<V: VoxelType>(
     buttons: Res<ButtonInput<MouseButton>>,
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
@@ -391,6 +452,7 @@ pub fn mining_input_system<V: VoxelType>(
     mut chunks: Query<&mut crate::chunk::Chunk<V>>,
     mut state: ResMut<MiningState>,
     config: Res<MiningConfig>,
+    tool_stats: Res<ToolStats>,
     mut broken: MessageWriter<VoxelBroken>,
     mut progress: MessageWriter<MiningProgress>,
     mut modified: MessageWriter<ChunkModified>,
@@ -417,10 +479,27 @@ pub fn mining_input_system<V: VoxelType>(
         return;
     };
 
+    // Check that the active tool can mine this voxel type.
+    let voxel_mining_level = lens.query()
+        .get(manager.get_entity(hit.chunk_coord).unwrap_or(Entity::PLACEHOLDER))
+        .map(|chunk| {
+            let (x, y, z) = hit.local;
+            chunk.get(x, y, z).mining_level()
+        })
+        .unwrap_or(0);
+
+    if tool_stats.tool_level < voxel_mining_level {
+        stop_mining(&mut state);
+        return;
+    }
+
+    // Apply tool speed to the effective delta — faster tools reduce break time.
+    let effective_delta = time.delta_secs() * tool_stats.tool_speed;
+
     tick_mining(
         hit.chunk_coord,
         hit.local,
-        time.delta_secs(),
+        effective_delta,
         &mut state,
         &config,
         &manager,
