@@ -318,15 +318,7 @@ impl WorldConfig {
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Startup system that loads `WorldConfig` and applies it to [`ChunkManager`].
-///
-/// Also updates [`super::PersistenceConfig::save_dir`] when
-/// [`PersistencePlugin`](super::PersistencePlugin) is active, so chunk files
-/// land under `./worlds/{world_name}/chunks/`.
-fn load_world_config(
-    mut commands: Commands,
-    mut chunk_manager: ResMut<ChunkManager>,
-    mut persistence: Option<ResMut<super::PersistenceConfig>>,
-) {
+fn load_world_config(mut commands: Commands, mut chunk_manager: ResMut<ChunkManager>) {
     let config = WorldConfig::from_file("world.toml")
         .inspect_err(|e| {
             eprintln!("voxel-framework: world.toml not found or invalid ({e}), using default WorldConfig");
@@ -335,10 +327,6 @@ fn load_world_config(
 
     chunk_manager.load_distance = config.load_distance;
     chunk_manager.unload_distance = config.unload_distance;
-
-    if let Some(ref mut pc) = persistence {
-        pc.save_dir = format!("{}/chunks", config.world_data_dir());
-    }
 
     commands.insert_resource(config);
 }

@@ -103,7 +103,7 @@ pub use collision::{
 pub use config::{WorldConfig, WorldConfigPlugin};
 pub use loading::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldReady};
 pub use occlusion::{OcclusionPlugin, is_chunk_occluded};
-pub use persistence::{PersistenceConfig, PersistencePlugin, chunk_autosave_system, try_load_chunk};
+pub use persistence::{PersistenceConfig, PersistencePlugin, WorldDataDir, chunk_autosave_system, try_load_chunk};
 pub use raycast::{RaycastHit, raycast};
 pub use mining::{
     tick_mining, stop_mining, mining_input_system,

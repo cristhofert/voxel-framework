@@ -20,6 +20,40 @@ use crate::chunk::{Chunk, ChunkCoord, persistence as chunk_persistence};
 use crate::voxel::VoxelType;
 use crate::world::{ChunkManager, ChunkModified};
 
+// ─── WorldDataDir ─────────────────────────────────────────────────────────────
+
+/// Resource that holds the base data directory for the active world.
+///
+/// Set automatically by [`PersistencePlugin::with_world`] and
+/// [`PlayerPlugin::with_world`].  All world-specific files (chunks,
+/// `player_data.json`) are stored under this path:
+///
+/// ```text
+/// ./worlds/{world_name}/
+///   ├── chunks/
+///   │   └── chunk_X_Y_Z.bin
+///   └── player_data.json
+/// ```
+///
+/// The default value (`"./worlds/world"`) matches the default world name.
+#[derive(Resource, Clone, Debug)]
+pub struct WorldDataDir(pub String);
+
+impl Default for WorldDataDir {
+    fn default() -> Self {
+        Self("./worlds/world".to_string())
+    }
+}
+
+impl WorldDataDir {
+    /// Creates a `WorldDataDir` for the given world name.
+    pub fn for_world(world_name: &str) -> Self {
+        Self(format!("./worlds/{}", world_name))
+    }
+    /// Returns the directory path as a string slice.
+    pub fn as_str(&self) -> &str { &self.0 }
+}
+
 // ─── PersistenceConfig ────────────────────────────────────────────────────────
 
 /// Configuration resource that controls chunk persistence behaviour.
@@ -161,13 +195,34 @@ pub fn chunk_autosave_system<V: VoxelType>(
 /// ```
 pub struct PersistencePlugin<V: VoxelType> {
     _marker: std::marker::PhantomData<V>,
+    world_name: String,
 }
 
 impl<V: VoxelType> PersistencePlugin<V> {
-    /// Creates a new `PersistencePlugin`.
+    /// Creates a `PersistencePlugin` using the default world name (`"world"`).
     pub fn new() -> Self {
         Self {
             _marker: std::marker::PhantomData,
+            world_name: String::new(),
+        }
+    }
+
+    /// Creates a `PersistencePlugin` that saves chunks under
+    /// `./worlds/{world_name}/chunks/`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use bevy::prelude::*;
+    /// use voxel_framework::world::PersistencePlugin;
+    /// use voxel_framework::voxel::DefaultVoxel;
+    ///
+    /// App::new().add_plugins(PersistencePlugin::<DefaultVoxel>::with_world("survival"));
+    /// ```
+    pub fn with_world(world_name: impl Into<String>) -> Self {
+        Self {
+            _marker: std::marker::PhantomData,
+            world_name: world_name.into(),
         }
     }
 }
@@ -180,7 +235,9 @@ impl<V: VoxelType> Default for PersistencePlugin<V> {
 
 impl<V: VoxelType> Plugin for PersistencePlugin<V> {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PersistenceConfig>();
+        let name = if self.world_name.is_empty() { "world" } else { &self.world_name };
+        let save_dir = format!("./worlds/{}/chunks", name);
+        app.insert_resource(PersistenceConfig { save_dir, auto_save: true });
         app.add_systems(Update, chunk_autosave_system::<V>);
     }
 }

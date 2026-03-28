@@ -35,9 +35,9 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
         .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
-        .add_plugins(PersistencePlugin::<DefaultVoxel>::new())
+        .add_plugins(PersistencePlugin::<DefaultVoxel>::with_world(&world_config.world_name))
         .add_plugins(PauseMenuPlugin)
-        .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+        .add_plugins(PlayerPlugin::<DefaultVoxel>::with_world(&world_config.world_name))
         .insert_resource({
             let mut sfx = SfxConfig::new();
             sfx.register(SfxEvent::Mining, vec![
