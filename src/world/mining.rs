@@ -178,6 +178,76 @@ pub struct MiningProgress {
 
 // ─── Free functions ───────────────────────────────────────────────────────────
 
+/// Breaks a single voxel at world-voxel coordinates `world_voxel` if it is
+/// solid and its chunk is loaded.  Emits [`VoxelBroken`], [`ChunkModified`],
+/// and border-neighbor notifications.
+fn break_voxel<V: VoxelType>(
+    world_voxel: IVec3,
+    manager: &ChunkManager,
+    chunks: &mut Query<&mut Chunk<V>>,
+    broken: &mut MessageWriter<VoxelBroken>,
+    modified: &mut MessageWriter<ChunkModified>,
+) {
+    use crate::chunk::CHUNK_SIZE;
+    let cs = CHUNK_SIZE as i32;
+    let chunk_coord = IVec3::new(
+        world_voxel.x.div_euclid(cs),
+        world_voxel.y.div_euclid(cs),
+        world_voxel.z.div_euclid(cs),
+    );
+    let local = (
+        world_voxel.x.rem_euclid(cs) as usize,
+        world_voxel.y.rem_euclid(cs) as usize,
+        world_voxel.z.rem_euclid(cs) as usize,
+    );
+
+    let Some(entity) = manager.get_entity(chunk_coord) else { return };
+    let Ok(mut chunk) = chunks.get_mut(entity) else { return };
+    if !chunk.is_solid_at(local.0, local.1, local.2) {
+        return;
+    }
+    chunk.set(local.0, local.1, local.2, V::air());
+    drop(chunk);
+
+    let wp = voxel_world_pos(chunk_coord, local);
+    broken.write(VoxelBroken { chunk_coord, local, world_pos: wp });
+    modified.write(ChunkModified(chunk_coord));
+    notify_border_neighbors(chunk_coord, local, modified);
+}
+
+/// Returns the three extra world-voxel offsets that form a 2×2 square on the
+/// hit face together with the primary voxel.
+///
+/// The two tangent axes are determined by `face_normal`.  For each axis the
+/// sign of the offset is chosen so that the 2×2 quad lies in the quadrant
+/// where the ray actually entered the face (using `hit_point` vs
+/// `voxel_center`).
+fn quad_offsets(face_normal: Vec3, hit_point: Vec3, voxel_center: Vec3) -> [IVec3; 3] {
+    let sign = |coord: f32, center: f32| -> i32 {
+        if coord >= center { 1 } else { -1 }
+    };
+    let (du, dv) = if face_normal.x.abs() > 0.5 {
+        // X face → perpendicular plane is YZ
+        (
+            IVec3::new(0, sign(hit_point.y, voxel_center.y), 0),
+            IVec3::new(0, 0, sign(hit_point.z, voxel_center.z)),
+        )
+    } else if face_normal.y.abs() > 0.5 {
+        // Y face → perpendicular plane is XZ
+        (
+            IVec3::new(sign(hit_point.x, voxel_center.x), 0, 0),
+            IVec3::new(0, 0, sign(hit_point.z, voxel_center.z)),
+        )
+    } else {
+        // Z face (or zero normal) → perpendicular plane is XY
+        (
+            IVec3::new(sign(hit_point.x, voxel_center.x), 0, 0),
+            IVec3::new(0, sign(hit_point.y, voxel_center.y), 0),
+        )
+    };
+    [du, dv, du + dv]
+}
+
 /// Sends [`ChunkModified`] for any neighboring chunks whose border shares the
 /// face of the voxel at `local` within `chunk_coord`.
 ///
@@ -525,6 +595,9 @@ pub fn mining_input_system<V: VoxelType>(
     // Apply tool speed to the effective delta — faster tools reduce break time.
     let effective_delta = time.delta_secs() * tool_stats.tool_speed;
 
+    // Snapshot before tick so we can detect the break event below.
+    let was_mining = state.target.is_some();
+
     tick_mining(
         hit.chunk_coord,
         hit.local,
@@ -537,6 +610,23 @@ pub fn mining_input_system<V: VoxelType>(
         &mut progress,
         &mut modified,
     );
+
+    // If the primary block just broke, also break the 3 adjacent blocks that
+    // form a 2×2 square on the struck face.
+    if was_mining && state.target.is_none() {
+        use crate::chunk::CHUNK_SIZE;
+        let cs = CHUNK_SIZE as i32;
+        let vx = hit.chunk_coord.x * cs + hit.local.0 as i32;
+        let vy = hit.chunk_coord.y * cs + hit.local.1 as i32;
+        let vz = hit.chunk_coord.z * cs + hit.local.2 as i32;
+        let primary = IVec3::new(vx, vy, vz);
+        let center  = Vec3::new(vx as f32 + 0.5, vy as f32 + 0.5, vz as f32 + 0.5);
+        let hit_pt  = origin + hit.distance * direction.normalize();
+
+        for offset in quad_offsets(hit.face_normal, hit_pt, center) {
+            break_voxel(primary + offset, &manager, &mut chunks, &mut broken, &mut modified);
+        }
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
