@@ -163,6 +163,23 @@ pub fn chunk_mesh_system<V: VoxelType>(
                     ChunkRendered,
                     ChunkLod,
                 )>();
+                // Notify neighbors — they may now have exposed border faces.
+                for &offset in &NEIGHBOR_OFFSETS {
+                    let neighbor_coord = coord + offset;
+                    if manager.is_loaded(neighbor_coord) {
+                        pending_neighbors.0.push(neighbor_coord);
+                    }
+                }
+            } else if !has_empty_mesh {
+                // First time seeing this air chunk — notify neighbors so they
+                // can generate faces that border this empty space.
+                commands.entity(entity).insert(EmptyMesh);
+                for &offset in &NEIGHBOR_OFFSETS {
+                    let neighbor_coord = coord + offset;
+                    if manager.is_loaded(neighbor_coord) {
+                        pending_neighbors.0.push(neighbor_coord);
+                    }
+                }
             }
             continue;
         }
