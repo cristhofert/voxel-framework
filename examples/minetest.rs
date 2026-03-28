@@ -123,14 +123,16 @@ fn update_block_info(
 }
 
 fn main() {
+    let world_config = WorldConfig::from_file("examples/minetest.toml").unwrap_or_default();
+
     App::new()
         .add_plugins(DefaultPlugins)
         // ── Engine (terrain voxel type) ──────────────────────────────────────
         .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
         .add_plugins(GeneratorPlugin::<DefaultTerrainVoxel>::new())
-        .add_plugins(PersistencePlugin::<DefaultTerrainVoxel>::with_world("minetest"))
+        .add_plugins(PersistencePlugin::<DefaultTerrainVoxel>::with_world(&world_config.world_name))
         // ── Player (grounded with gravity) ───────────────────────────────────
-        .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::with_world("minetest"))
+        .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::with_world(&world_config.world_name))
         // ── Mining & placement input (batteries-included) ────────────────────
         .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())

@@ -1,0 +1,14 @@
+world_name = "minetest"
+seed = 42
+spawn_position = [8.0, 60.0, 8.0]
+load_distance = 150.0
+unload_distance = 200.0
+
+[lighting]
+sun_illuminance = 15000.0
+ambient_brightness = 0.1
+
+[skybox]
+mode = "starfield"
+star_count = 800
+star_radius = 900.0
