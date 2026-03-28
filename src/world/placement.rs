@@ -120,6 +120,33 @@ pub struct VoxelPlaced {
 
 // ─── Free functions ───────────────────────────────────────────────────────────
 
+/// Sends [`ChunkModified`] for neighboring chunks that share the border of
+/// the voxel at `local` within `chunk_coord`.
+///
+/// Placement and mining on a chunk border also affects the adjacent chunk's
+/// mesh — its border faces need to be re-evaluated with the updated data.
+fn notify_border_neighbors(
+    chunk_coord: IVec3,
+    local: (usize, usize, usize),
+    modified: &mut MessageWriter<ChunkModified>,
+) {
+    use crate::chunk::CHUNK_SIZE;
+    let (x, y, z) = local;
+    let offsets: [(usize, IVec3); 6] = [
+        (x, IVec3::NEG_X),
+        (CHUNK_SIZE - 1 - x, IVec3::X),
+        (y, IVec3::NEG_Y),
+        (CHUNK_SIZE - 1 - y, IVec3::Y),
+        (z, IVec3::NEG_Z),
+        (CHUNK_SIZE - 1 - z, IVec3::Z),
+    ];
+    for (dist, dir) in offsets {
+        if dist == 0 {
+            modified.write(ChunkModified(chunk_coord + dir));
+        }
+    }
+}
+
 /// Compute the world-space center of a voxel given its chunk coord and local index.
 fn voxel_world_pos(chunk_coord: IVec3, local: (usize, usize, usize)) -> Vec3 {
     let chunk_origin = chunk_coord.as_vec3() * crate::chunk::CHUNK_SIZE as f32;
@@ -240,6 +267,7 @@ pub fn try_place_voxel<V: VoxelType>(
     });
 
     modified.write(ChunkModified(target_chunk));
+    notify_border_neighbors(target_chunk, target_local, modified);
 
     true
 }

@@ -117,14 +117,32 @@ fn is_face_visible<V: VoxelType>(
     match &neighbors.faces[face_index] {
         None => true, // No neighbor data — treat as air.
         Some(slice) => {
-            // Look up the voxel in the neighbor slice.
-            // A neighbor occludes only when it is solid AND fully opaque (alpha >= 1.0).
+            // At step > 1 (LOD 1/2) the current super-voxel covers a step×step
+            // region on the neighbor's border face.  Check ALL step×step neighbor
+            // voxels — the face is visible if ANY of them is non-solid or
+            // transparent (i.e. cull only when the entire region is fully solid).
+            //
+            // Checking only the corner voxel (u_coord, v_coord) caused incorrect
+            // face culling when the corner was solid but other voxels in the region
+            // were air, producing transparent holes at LOD 1+ chunk boundaries.
             let u_coord = coords[face.u_axis];
             let v_coord = coords[face.v_axis];
 
-            let slice_index = border_slice_index(face_index, u_coord, v_coord);
-            let neighbor = slice[slice_index];
-            !neighbor.is_solid() || neighbor.color()[3] < 1.0
+            for du in 0..step {
+                for dv in 0..step {
+                    let u = u_coord + du;
+                    let v = v_coord + dv;
+                    if u >= CHUNK_SIZE || v >= CHUNK_SIZE {
+                        return true; // out of bounds → treat as air → face visible
+                    }
+                    let slice_index = border_slice_index(face_index, u, v);
+                    let neighbor = slice[slice_index];
+                    if !neighbor.is_solid() || neighbor.color()[3] < 1.0 {
+                        return true; // any gap in the step×step region → face visible
+                    }
+                }
+            }
+            false // entire step×step region is solid and opaque → cull
         }
     }
 }
