@@ -25,24 +25,24 @@ fn main() {
         .insert_resource({
             let mut sfx = SfxConfig::new();
             sfx.register(SfxEvent::Mining, vec![
-                "audio/impactMining_000.ogg",
-                "audio/impactMining_001.ogg",
-                "audio/impactMining_002.ogg",
-                "audio/impactMining_003.ogg",
-                "audio/impactMining_004.ogg",
+                "basic_world/audio/impactMining_000.ogg",
+                "basic_world/audio/impactMining_001.ogg",
+                "basic_world/audio/impactMining_002.ogg",
+                "basic_world/audio/impactMining_003.ogg",
+                "basic_world/audio/impactMining_004.ogg",
             ]);
             sfx.register(SfxEvent::MiningComplete, vec![
-                "audio/impactGeneric_light_000.ogg",
-                "audio/impactGeneric_light_001.ogg",
-                "audio/impactGeneric_light_002.ogg",
+                "basic_world/audio/impactGeneric_light_000.ogg",
+                "basic_world/audio/impactGeneric_light_001.ogg",
+                "basic_world/audio/impactGeneric_light_002.ogg",
             ]);
             sfx.register(SfxEvent::BlockPlace, vec![
-                "audio/impactTin_medium_002.ogg",
+                "basic_world/audio/impactTin_medium_002.ogg",
             ]);
-            sfx.register(SfxEvent::ItemPickup,    vec!["audio/rollover1.ogg"]);
-            sfx.register(SfxEvent::HotbarScroll,  vec!["audio/rollover1.ogg"]);
-            sfx.register(SfxEvent::PauseOpen,     vec!["audio/click1.ogg"]);
-            sfx.register(SfxEvent::PauseClose,    vec!["audio/click1.ogg"]);
+            sfx.register(SfxEvent::ItemPickup,    vec!["basic_world/audio/rollover1.ogg"]);
+            sfx.register(SfxEvent::HotbarScroll,  vec!["basic_world/audio/rollover1.ogg"]);
+            sfx.register(SfxEvent::PauseOpen,     vec!["basic_world/audio/click1.ogg"]);
+            sfx.register(SfxEvent::PauseClose,    vec!["basic_world/audio/click1.ogg"]);
             sfx
         })
         .insert_resource(GeneratorResource::<DefaultVoxel> {
@@ -88,6 +88,6 @@ fn setup(mut commands: Commands, mut viewer: ResMut<ViewerPosition>, config: Res
     ));
 
     commands.insert_resource(PauseMenuConfig {
-        font: asset_server.load("fonts/NotoSans-Regular.ttf"),
+        font: asset_server.load("basic_world/fonts/NotoSans-Regular.ttf"),
     });
 }
