@@ -14,6 +14,7 @@ pub mod material;
 
 pub use material::build_texture_array;
 pub use material::chunk_aabb;
+pub use material::upgrade_to_texture_material;
 pub use material::ChunkMaterial;
 pub use material::ChunkMaterialConfig;
 pub use material::ChunkMaterialHandle;
@@ -54,5 +55,6 @@ impl<V: VoxelType> Plugin for RenderPlugin<V> {
         app.init_resource::<ChunkMaterialHandle>();
         app.init_resource::<ChunkMaterialConfig>();
         app.add_systems(Startup, material::setup_chunk_material);
+        app.add_systems(Update, material::upgrade_to_texture_material);
     }
 }
