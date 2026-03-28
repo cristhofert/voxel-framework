@@ -93,7 +93,7 @@ use bevy::prelude::*;
 use crate::audio::{SfxEvent, SfxRequest};
 use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
-use crate::world::{ChunkManager, ViewerPosition, get_voxel_at};
+use crate::world::{ChunkManager, ViewerPosition, WorldConfig, get_voxel_at};
 
 pub mod persistence;
 
@@ -1015,6 +1015,13 @@ pub fn player_footstep_system<V: VoxelType>(
 
 // ─── Spawn persistence ────────────────────────────────────────────────────────
 
+/// Returns the world data directory derived from `world.toml`, or the default.
+fn resolve_world_data_dir() -> String {
+    WorldConfig::from_file("world.toml")
+        .map(|c| c.world_data_dir())
+        .unwrap_or_else(|_| "./worlds/world".to_string())
+}
+
 /// Startup system that applies a persisted spawn position to [`PlayerConfig`]
 /// and [`PlayerHealth`] before the player entity is spawned.
 ///
@@ -1024,12 +1031,13 @@ fn load_spawn_on_startup(
     mut config: ResMut<PlayerConfig>,
     mut health: ResMut<PlayerHealth>,
 ) {
-    if let Some(pos) = persistence::load_spawn_position() {
+    let data_dir = resolve_world_data_dir();
+    if let Some(pos) = persistence::load_spawn_position(&data_dir) {
         config.spawn_position = pos;
         health.spawn_position = pos;
     } else {
         // First run: persist the configured default so subsequent runs reload it.
-        persistence::save_spawn_position(config.spawn_position);
+        persistence::save_spawn_position(config.spawn_position, &data_dir);
     }
 }
 
@@ -1043,7 +1051,8 @@ fn save_spawn_on_exit(
     mut exit_reader: bevy::ecs::message::MessageReader<AppExit>,
 ) {
     for _ in exit_reader.read() {
-        persistence::save_spawn_position(health.spawn_position);
+        let data_dir = resolve_world_data_dir();
+        persistence::save_spawn_position(health.spawn_position, &data_dir);
     }
 }
 

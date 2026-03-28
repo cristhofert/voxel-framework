@@ -1,6 +1,6 @@
 /target
 Cargo.lock
-chunks/
+worlds/
 *.swp
 .DS_Store
 assets/
