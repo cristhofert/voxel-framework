@@ -25,6 +25,20 @@ use crate::world::persistence::PersistenceConfig;
 use super::{ChunkNeighbors, generate_chunk_mesh_with_neighbors};
 use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
 
+// ─── EmptyMesh ────────────────────────────────────────────────────────────────
+
+/// Marker component attached to chunk entities whose last meshing pass produced
+/// zero vertices (all faces were culled by loaded neighbors).
+///
+/// When a neighbor subsequently loads and triggers a re-mesh that produces
+/// geometry, [`chunk_mesh_system`] removes this marker and propagates a
+/// [`ChunkModified`] event to all six neighbors so they too can re-evaluate
+/// their border faces.  This enables recursive multi-layer propagation: each
+/// chunk that transitions from empty → non-empty signals its neighbors, which
+/// may then transition themselves the following frame.
+#[derive(Component)]
+pub struct EmptyMesh;
+
 // ─── PendingNeighborRemesh ────────────────────────────────────────────────────
 
 /// Staging buffer for neighbor re-mesh requests emitted by [`chunk_mesh_system`].
@@ -67,7 +81,7 @@ pub fn chunk_mesh_system<V: VoxelType>(
     chunk_material: Res<ChunkMaterial>,
     viewer: Res<ViewerPosition>,
     mut meshes: ResMut<Assets<Mesh>>,
-    chunks: Query<(&Chunk<V>, Option<&Mesh3d>, Option<&ChunkLod>)>,
+    chunks: Query<(&Chunk<V>, Option<&Mesh3d>, Option<&ChunkLod>, Has<EmptyMesh>)>,
 ) {
     let Some(material_handle) = chunk_material.handle.clone() else {
         // Material not yet set up — skip until next frame.
@@ -98,7 +112,7 @@ pub fn chunk_mesh_system<V: VoxelType>(
             continue;
         };
 
-        let Ok((chunk, maybe_mesh3d, _maybe_lod)) = chunks.get(entity) else {
+        let Ok((chunk, maybe_mesh3d, _maybe_lod, has_empty_mesh)) = chunks.get(entity) else {
             // Chunk component not yet attached (race between systems).
             continue;
         };
@@ -115,7 +129,7 @@ pub fn chunk_mesh_system<V: VoxelType>(
             for &offset in &NEIGHBOR_OFFSETS {
                 let neighbor_coord = coord + offset;
                 if let Some(neighbor_entity) = manager.get_entity(neighbor_coord) {
-                    if let Ok((_, _, Some(neighbor_lod))) = chunks.get(neighbor_entity) {
+                    if let Ok((_, _, Some(neighbor_lod), _)) = chunks.get(neighbor_entity) {
                         let neighbor_step = lod_to_step(neighbor_lod.0);
                         min_step = min_step.min(neighbor_step);
                     }
@@ -129,7 +143,7 @@ pub fn chunk_mesh_system<V: VoxelType>(
         for (face_index, &offset) in NEIGHBOR_OFFSETS.iter().enumerate() {
             let neighbor_coord = coord + offset;
             if let Some(neighbor_entity) = manager.get_entity(neighbor_coord) {
-                if let Ok((neighbor_chunk, _, _)) = chunks.get(neighbor_entity) {
+                if let Ok((neighbor_chunk, _, _, _)) = chunks.get(neighbor_entity) {
                     // The face of the neighbor that is adjacent to our face_index
                     // is the opposite direction: face_index ^ 1.
                     let opposite_face = face_index ^ 1;
@@ -167,6 +181,12 @@ pub fn chunk_mesh_system<V: VoxelType>(
                     ChunkLod,
                 )>();
             }
+            // Tag this entity so we know its mesh is empty. When a neighbor
+            // loads later and triggers another re-mesh that produces geometry,
+            // we propagate the signal to our own neighbors at that point.
+            if !has_empty_mesh {
+                commands.entity(entity).insert(EmptyMesh);
+            }
             continue;
         }
 
@@ -177,6 +197,21 @@ pub fn chunk_mesh_system<V: VoxelType>(
             }
             // Update the LOD component to reflect the current level.
             commands.entity(entity).insert(ChunkLod(lod));
+
+            // If this chunk was previously empty (all faces culled) and now has
+            // geometry, its border faces changed from invisible to visible.
+            // Propagate to neighbors so they can re-evaluate their own faces.
+            // This enables multi-layer propagation: each depth level transitions
+            // one frame at a time until all chunks converge.
+            if has_empty_mesh {
+                commands.entity(entity).remove::<EmptyMesh>();
+                for &offset in &NEIGHBOR_OFFSETS {
+                    let neighbor_coord = coord + offset;
+                    if manager.is_loaded(neighbor_coord) {
+                        pending_neighbors.0.push(neighbor_coord);
+                    }
+                }
+            }
         } else {
             // First-time path: allocate new handle and attach all render components.
             let mesh_handle = meshes.add(new_mesh);
