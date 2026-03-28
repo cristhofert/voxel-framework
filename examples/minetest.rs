@@ -122,8 +122,22 @@ fn update_block_info(
     };
 }
 
+/// Reads `--world <name>` from CLI args.  Falls back to `default_name`.
+/// Loads `examples/<name>.toml` and returns the parsed config.
+fn load_world_config(default_name: &str) -> WorldConfig {
+    let args: Vec<String> = std::env::args().collect();
+    let name = args.windows(2)
+        .find(|w| w[0] == "--world")
+        .map(|w| w[1].clone())
+        .unwrap_or_else(|| default_name.to_string());
+    let path = format!("examples/{}.toml", name);
+    WorldConfig::from_file(&path)
+        .inspect_err(|e| eprintln!("No se pudo cargar '{path}': {e}. Usando defaults."))
+        .unwrap_or_else(|_| WorldConfig { world_name: name, ..WorldConfig::default() })
+}
+
 fn main() {
-    let world_config = WorldConfig::from_file("examples/minetest.toml").unwrap_or_default();
+    let world_config = load_world_config("minetest");
 
     App::new()
         .add_plugins(DefaultPlugins)
