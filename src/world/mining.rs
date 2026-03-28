@@ -178,6 +178,34 @@ pub struct MiningProgress {
 
 // ─── Free functions ───────────────────────────────────────────────────────────
 
+/// Sends [`ChunkModified`] for any neighboring chunks whose border shares the
+/// face of the voxel at `local` within `chunk_coord`.
+///
+/// When a voxel on the edge of a chunk is added or removed, the adjacent
+/// chunk's mesh must also be regenerated — its border faces were previously
+/// culled by this voxel and are now exposed (or vice versa for placement).
+fn notify_border_neighbors(
+    chunk_coord: IVec3,
+    local: (usize, usize, usize),
+    modified: &mut MessageWriter<ChunkModified>,
+) {
+    use crate::chunk::CHUNK_SIZE;
+    let (x, y, z) = local;
+    let offsets: [(usize, IVec3); 6] = [
+        (x, IVec3::NEG_X),
+        (CHUNK_SIZE - 1 - x, IVec3::X),
+        (y, IVec3::NEG_Y),
+        (CHUNK_SIZE - 1 - y, IVec3::Y),
+        (z, IVec3::NEG_Z),
+        (CHUNK_SIZE - 1 - z, IVec3::Z),
+    ];
+    for (dist, dir) in offsets {
+        if dist == 0 {
+            modified.write(ChunkModified(chunk_coord + dir));
+        }
+    }
+}
+
 /// Compute the world-space center of a voxel given its chunk coord and local index.
 fn voxel_world_pos(chunk_coord: IVec3, local: (usize, usize, usize)) -> Vec3 {
     let chunk_origin = chunk_coord.as_vec3() * crate::chunk::CHUNK_SIZE as f32;
@@ -307,6 +335,7 @@ pub fn tick_mining<V: VoxelType>(
         });
 
         modified.write(ChunkModified(target_chunk));
+        notify_border_neighbors(target_chunk, target_local, modified);
 
         // Reset state.
         state.target = None;

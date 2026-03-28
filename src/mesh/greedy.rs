@@ -598,24 +598,63 @@ fn emit_quad<V: VoxelType>(
     // i.e. use the "CCW" branch when face.positive != (face.axis == 2).
     //
     // Additionally, flip the triangulation when ao_v0 + ao_v2 < ao_v1 + ao_v3.
-    // This avoids the AO anisotropy seam artifact that appears when the default
-    // diagonal cuts across a corner with mismatched AO values (Mikola Lysenko's fix).
+    // This avoids the AO anisotropy seam artifact (Mikola Lysenko's fix).
+    //
+    // IMPORTANT: the flip must switch the DIAGONAL used to split the quad, NOT
+    // the winding direction.  Inverting the winding would reverse the face
+    // normal and cause Bevy's back-face culling to discard the triangle —
+    // producing transparent holes.  Each case below independently maintains
+    // correct CCW / CW winding while using the other diagonal (v1-v3 instead
+    // of the default v0-v2) when `ao_flip` is true.
+    //
+    // Quad vertex layout (u increases right, v increases up):
+    //   v3 --- v2
+    //   |       |
+    //   v0 --- v1
+    //
+    // Default diagonal v0-v2: triangles (v0,v2,v1) + (v0,v3,v2)  [CCW]
+    //                                or (v0,v1,v2) + (v0,v2,v3)  [CW]
+    // Alt diagonal    v1-v3: triangles (v0,v3,v1) + (v1,v3,v2)  [CCW]
+    //                                or (v0,v1,v3) + (v1,v2,v3)  [CW]
     let ao_flip = ao_v0 + ao_v2 < ao_v1 + ao_v3;
-    let ccw = (face.positive != (face.axis == 2)) != ao_flip;
-    if ccw {
-        indices.push(base_idx);
-        indices.push(base_idx + 2);
-        indices.push(base_idx + 1);
-        indices.push(base_idx);
-        indices.push(base_idx + 3);
-        indices.push(base_idx + 2);
-    } else {
-        indices.push(base_idx);
-        indices.push(base_idx + 1);
-        indices.push(base_idx + 2);
-        indices.push(base_idx);
-        indices.push(base_idx + 2);
-        indices.push(base_idx + 3);
+    let ccw = face.positive != (face.axis == 2);
+    match (ccw, ao_flip) {
+        (true, false) => {
+            // Default diagonal, CCW winding.
+            indices.push(base_idx);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 1);
+            indices.push(base_idx);
+            indices.push(base_idx + 3);
+            indices.push(base_idx + 2);
+        }
+        (true, true) => {
+            // Alt diagonal (v1-v3), CCW winding — avoids AO seam.
+            indices.push(base_idx);
+            indices.push(base_idx + 3);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 3);
+            indices.push(base_idx + 2);
+        }
+        (false, false) => {
+            // Default diagonal, CW winding.
+            indices.push(base_idx);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 2);
+            indices.push(base_idx);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 3);
+        }
+        (false, true) => {
+            // Alt diagonal (v1-v3), CW winding — avoids AO seam.
+            indices.push(base_idx);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 3);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 3);
+        }
     }
 }
 
