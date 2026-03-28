@@ -1,3 +1,4 @@
+# Configuración para examples/minetest.rs
 world_name = "minetest"
 seed = 42
 spawn_position = [8.0, 60.0, 8.0]
