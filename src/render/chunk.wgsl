@@ -18,8 +18,8 @@ struct VertexOutput {
     @location(3) @interpolate(flat) texture_layer: u32,
 };
 
-@group(2) @binding(0) var texture_array: texture_2d_array<f32>;
-@group(2) @binding(1) var texture_sampler: sampler;
+@group(3) @binding(0) var texture_array: texture_2d_array<f32>;
+@group(3) @binding(1) var texture_sampler: sampler;
 
 @vertex
 fn vertex(in: Vertex) -> VertexOutput {
