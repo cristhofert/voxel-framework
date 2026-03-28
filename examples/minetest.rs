@@ -128,8 +128,9 @@ fn main() {
         // ── Engine (terrain voxel type) ──────────────────────────────────────
         .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
         .add_plugins(GeneratorPlugin::<DefaultTerrainVoxel>::new())
+        .add_plugins(PersistencePlugin::<DefaultTerrainVoxel>::with_world("minetest"))
         // ── Player (grounded with gravity) ───────────────────────────────────
-        .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::new())
+        .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::with_world("minetest"))
         // ── Mining & placement input (batteries-included) ────────────────────
         .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())

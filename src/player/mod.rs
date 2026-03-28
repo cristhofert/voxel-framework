@@ -93,7 +93,7 @@ use bevy::prelude::*;
 use crate::audio::{SfxEvent, SfxRequest};
 use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
-use crate::world::{ChunkManager, ViewerPosition, WorldConfig, get_voxel_at};
+use crate::world::{ChunkManager, ViewerPosition, WorldDataDir, get_voxel_at};
 
 pub mod persistence;
 
@@ -1015,29 +1015,24 @@ pub fn player_footstep_system<V: VoxelType>(
 
 // ─── Spawn persistence ────────────────────────────────────────────────────────
 
-/// Returns the world data directory derived from `world.toml`, or the default.
-fn resolve_world_data_dir() -> String {
-    WorldConfig::from_file("world.toml")
-        .map(|c| c.world_data_dir())
-        .unwrap_or_else(|_| "./worlds/world".to_string())
-}
-
 /// Startup system that applies a persisted spawn position to [`PlayerConfig`]
 /// and [`PlayerHealth`] before the player entity is spawned.
 ///
-/// Runs before [`spawn_player`] so the loaded position takes effect on the
-/// initial spawn.  Silent no-op if `player_data.json` does not exist.
+/// Reads the world data directory from [`WorldDataDir`] (set by
+/// [`PlayerPlugin::with_world`]).  Silent no-op if `player_data.json` does not
+/// exist.
 fn load_spawn_on_startup(
     mut config: ResMut<PlayerConfig>,
     mut health: ResMut<PlayerHealth>,
+    world_data_dir: Res<WorldDataDir>,
 ) {
-    let data_dir = resolve_world_data_dir();
-    if let Some(pos) = persistence::load_spawn_position(&data_dir) {
+    let data_dir = world_data_dir.as_str();
+    if let Some(pos) = persistence::load_spawn_position(data_dir) {
         config.spawn_position = pos;
         health.spawn_position = pos;
     } else {
         // First run: persist the configured default so subsequent runs reload it.
-        persistence::save_spawn_position(config.spawn_position, &data_dir);
+        persistence::save_spawn_position(config.spawn_position, data_dir);
     }
 }
 
@@ -1048,11 +1043,11 @@ fn load_spawn_on_startup(
 /// fallback when no file exists.
 fn save_spawn_on_exit(
     health: Res<PlayerHealth>,
+    world_data_dir: Res<WorldDataDir>,
     mut exit_reader: bevy::ecs::message::MessageReader<AppExit>,
 ) {
     for _ in exit_reader.read() {
-        let data_dir = resolve_world_data_dir();
-        persistence::save_spawn_position(health.spawn_position, &data_dir);
+        persistence::save_spawn_position(health.spawn_position, world_data_dir.as_str());
     }
 }
 
@@ -1096,11 +1091,19 @@ fn save_spawn_on_exit(
 /// solid-voxel data.
 pub struct PlayerPlugin<V: VoxelType> {
     _marker: std::marker::PhantomData<V>,
+    world_name: String,
 }
 
 impl<V: VoxelType> PlayerPlugin<V> {
+    /// Creates a `PlayerPlugin` using the default world name (`"world"`).
     pub fn new() -> Self {
-        Self { _marker: std::marker::PhantomData }
+        Self { _marker: std::marker::PhantomData, world_name: String::new() }
+    }
+
+    /// Creates a `PlayerPlugin` that stores player data under
+    /// `./worlds/{world_name}/player_data.json`.
+    pub fn with_world(world_name: impl Into<String>) -> Self {
+        Self { _marker: std::marker::PhantomData, world_name: world_name.into() }
     }
 }
 
@@ -1110,9 +1113,10 @@ impl<V: VoxelType> Default for PlayerPlugin<V> {
     }
 }
 
-
 impl<V: VoxelType> Plugin for PlayerPlugin<V> {
     fn build(&self, app: &mut App) {
+        let name = if self.world_name.is_empty() { "world" } else { &self.world_name };
+        app.insert_resource(WorldDataDir::for_world(name));
         app.init_resource::<PlayerConfig>();
         app.init_resource::<PlayerHealth>();
         app.add_message::<PlayerDamaged>();
