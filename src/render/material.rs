@@ -14,7 +14,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::math::bounding::Aabb3d;
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
+use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MeshPipelineKey};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
@@ -58,19 +58,33 @@ pub struct ChunkMaterial {
 
 impl Material for ChunkMaterial {
     fn vertex_shader() -> ShaderRef {
-        "embedded://voxel_framework/shaders/chunk.wgsl".into()
+        "embedded://voxel_framework/render/chunk.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "embedded://voxel_framework/shaders/chunk.wgsl".into()
+        "embedded://voxel_framework/render/chunk.wgsl".into()
     }
 
     fn specialize(
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialPipelineKey<Self>,
+        key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        // The prepass pipelines (depth, normal, motion-vector) use Bevy's
+        // built-in prepass vertex shader, which has its own vertex attribute
+        // expectations. Don't override the vertex buffer layout for them —
+        // Bevy sets it up correctly. Our custom layout is only needed for the
+        // main pass where chunk.wgsl's vertex function runs.
+        let is_prepass = key.mesh_key.intersects(
+            MeshPipelineKey::DEPTH_PREPASS
+                | MeshPipelineKey::NORMAL_PREPASS
+                | MeshPipelineKey::MOTION_VECTOR_PREPASS,
+        );
+        if is_prepass {
+            return Ok(());
+        }
+
         let vertex_layout = layout.0.get_layout(&[
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
