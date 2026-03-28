@@ -143,7 +143,6 @@ fn setup(
 /// `texture_2d_array` and inserts [`ChunkTextureArray`].
 fn assemble_texture_array(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut pending: ResMut<PendingTextures>,
 ) {
@@ -151,11 +150,11 @@ fn assemble_texture_array(
         return;
     }
 
-    // Wait until all handles have finished loading.
-    let all_loaded = pending.handles.iter().all(|h| {
-        asset_server.is_loaded_with_dependencies(h)
-    });
-    if !all_loaded {
+    // Wait until all image assets are available in the Assets<Image> store.
+    // We don't use is_loaded_with_dependencies because it requires all
+    // RecursiveDependencies to be Loaded, which can stall for certain PNG formats.
+    let all_ready = pending.handles.iter().all(|h| images.contains(h));
+    if !all_ready {
         return;
     }
 
