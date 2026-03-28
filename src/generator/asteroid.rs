@@ -351,6 +351,19 @@ impl ChunkGenerator<DefaultVoxel> for AsteroidGenerator {
                             continue;
                         }
 
+                        // Voxels deep inside the asteroid (farther than noise can
+                        // ever displace the surface inward) are always solid.
+                        // This prevents FBM from carving internal cavities that
+                        // look like transparent holes from the outside.
+                        let inner_solid_radius =
+                            asteroid.radius * (1.0 - self.config.noise_amplitude);
+                        if dist < inner_solid_radius {
+                            let voxel = Self::determine_mineral(world_pos, asteroid.seed);
+                            chunk.set(lx, ly, lz, voxel);
+                            break;
+                        }
+
+                        // Surface band: apply FBM displacement to decide solid vs air.
                         // Normalized coordinates for FBM sampling
                         let norm = world_pos / (asteroid.radius * 2.0);
 

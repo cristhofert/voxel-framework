@@ -1151,7 +1151,7 @@ mod tests {
     fn push_capsule_no_collision() {
         // Voxel at origin, player far away — should not move.
         let pos = Vec3::new(10.0, 10.0, 10.0);
-        let result = push_capsule_out(pos, Vec3::Y, Vec3::ZERO, 0, 0, 0);
+        let result = push_capsule_out(pos, Vec3::Y, PLAYER_HALF_HEIGHT, Vec3::ZERO, 0, 0, 0);
         assert_eq!(result, pos);
     }
 
@@ -1159,7 +1159,7 @@ mod tests {
     fn push_capsule_resolves_overlap() {
         // Player center directly on top of a voxel — must be pushed out.
         let pos = Vec3::new(0.5, 0.5, 0.5); // inside voxel [0,0,0]
-        let result = push_capsule_out(pos, Vec3::Y, Vec3::ZERO, 0, 0, 0);
+        let result = push_capsule_out(pos, Vec3::Y, PLAYER_HALF_HEIGHT, Vec3::ZERO, 0, 0, 0);
         // After push, capsule sphere should clear the voxel.
         let vox_center = Vec3::splat(0.5);
         let closest = result.clamp(Vec3::ZERO, Vec3::ONE);
