@@ -14,6 +14,93 @@ use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
 use voxel_framework::items::{DefaultItem, Inventory};
 use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
 
+// ─── Block-info overlay ──────────────────────────────────────────────────────
+
+/// Cached result of the per-frame "looked-at" raycast.
+#[derive(Resource, Default)]
+struct LookedAtBlock {
+    /// Voxel the camera crosshair is pointing at, or `None` if the ray missed.
+    voxel: Option<(DefaultTerrainVoxel, IVec3)>, // (type, world grid position)
+}
+
+/// Marker component for the block-info HUD text node.
+#[derive(Component)]
+struct BlockInfoText;
+
+/// Human-readable name for each terrain voxel type.
+fn voxel_name(v: DefaultTerrainVoxel) -> &'static str {
+    match v {
+        DefaultTerrainVoxel::Air    => "Air",
+        DefaultTerrainVoxel::Grass  => "Grass",
+        DefaultTerrainVoxel::Dirt   => "Dirt",
+        DefaultTerrainVoxel::Stone  => "Stone",
+        DefaultTerrainVoxel::Sand   => "Sand",
+        DefaultTerrainVoxel::Wood   => "Wood",
+        DefaultTerrainVoxel::Leaves => "Leaves",
+        DefaultTerrainVoxel::Gravel => "Gravel",
+        DefaultTerrainVoxel::Snow   => "Snow",
+        DefaultTerrainVoxel::Water  => "Water",
+    }
+}
+
+/// Spawns the block-info HUD text — always visible, top-left below the F3 overlay.
+fn spawn_block_info_ui(mut commands: Commands) {
+    commands.spawn((
+        BlockInfoText,
+        Text::new(""),
+        TextFont { font_size: 14.0, ..default() },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(8.0),
+            // Placed to the right so it doesn't overlap the F3 overlay (left side).
+            right: Val::Px(8.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+        ZIndex(199),
+    ));
+}
+
+/// Raycasts from the camera every frame and updates `LookedAtBlock` + the HUD.
+fn update_block_info(
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    manager: Res<ChunkManager>,
+    chunks: Query<&Chunk<DefaultTerrainVoxel>>,
+    mut looked_at: ResMut<LookedAtBlock>,
+    mut text_q: Query<&mut Text, With<BlockInfoText>>,
+) {
+    let Ok(cam_tf) = camera_q.single() else { return };
+    let origin    = cam_tf.translation();
+    let direction = cam_tf.forward().as_vec3();
+
+    let hit = raycast(origin, direction, 8.0, &manager, &chunks);
+
+    looked_at.voxel = hit.as_ref().and_then(|h| {
+        let entity = manager.get_entity(h.chunk_coord)?;
+        let chunk  = chunks.get(entity).ok()?;
+        let (x, y, z) = h.local;
+        let v = chunk.get(x, y, z);
+        // World-grid position of the hit voxel
+        let world_grid = h.chunk_coord * CHUNK_SIZE as i32
+            + IVec3::new(x as i32, y as i32, z as i32);
+        Some((v, world_grid))
+    });
+
+    let Ok(mut text) = text_q.single_mut() else { return };
+
+    *text = match &looked_at.voxel {
+        Some((v, pos)) => Text::new(format!(
+            "Mirando: {} (hardness: {:.1}, lvl: {})\nPos: ({}, {}, {})",
+            voxel_name(*v),
+            v.hardness(),
+            v.mining_level(),
+            pos.x, pos.y, pos.z,
+        )),
+        None => Text::new("Mirando: —"),
+    };
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -23,7 +110,7 @@ fn main() {
         // ── Player (grounded with gravity) ───────────────────────────────────
         .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::new())
         // ── Mining & placement input (batteries-included) ────────────────────
-        .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel>::new())
+        .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
         // ── Inventory UI (E to open) ─────────────────────────────────────────
         .add_plugins(InventoryUiPlugin::<DefaultItem>::new())
@@ -55,7 +142,10 @@ fn main() {
             ..default()
         })
         .insert_resource(Inventory::<DefaultItem>::default())
-        .add_systems(Startup, (setup_crafting, setup_audio, setup_mobs))
+        // ── Block-info overlay (looked-at block) ─────────────────────────────
+        .init_resource::<LookedAtBlock>()
+        .add_systems(Startup, (setup_crafting, setup_audio, setup_mobs, spawn_block_info_ui))
+        .add_systems(Update, update_block_info)
         .run();
 }
 

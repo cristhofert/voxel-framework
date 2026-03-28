@@ -47,6 +47,7 @@ use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
 pub fn chunk_mesh_system<V: VoxelType>(
     mut commands: Commands,
     mut modified_reader: MessageReader<ChunkModified>,
+    mut modified_writer: MessageWriter<ChunkModified>,
     manager: Res<ChunkManager>,
     chunk_material: Res<ChunkMaterial>,
     viewer: Res<ViewerPosition>,
@@ -180,6 +181,18 @@ pub fn chunk_mesh_system<V: VoxelType>(
                 ChunkRendered,
                 ChunkLod(lod),
             ));
+
+            // A newly rendered chunk changes the border visibility of every
+            // adjacent chunk.  Emit ChunkModified for each loaded neighbor so
+            // they re-mesh and cull (or un-cull) the faces that touch this chunk.
+            // This is only done on the first-time path to avoid cascading
+            // re-meshes on every LOD or voxel-edit update.
+            for &offset in &NEIGHBOR_OFFSETS {
+                let neighbor_coord = coord + offset;
+                if manager.is_loaded(neighbor_coord) {
+                    modified_writer.write(ChunkModified(neighbor_coord));
+                }
+            }
         }
     }
 }
