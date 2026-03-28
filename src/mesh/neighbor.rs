@@ -104,10 +104,12 @@ fn is_face_visible<V: VoxelType>(
 
     if neighbor_on_axis < CHUNK_SIZE {
         // Neighbor is within the chunk — check directly.
+        // A neighbor occludes only when it is solid AND fully opaque (alpha >= 1.0),
+        // consistent with the build_mask condition (color()[3] > 0.0).
         let mut nc = [x, y, z];
         nc[axis] = neighbor_on_axis;
         let sv = super_voxel(chunk, nc[0], nc[1], nc[2], step);
-        return !sv.is_solid();
+        return !sv.is_solid() || sv.color()[3] < 1.0;
     }
 
     // Neighbor is outside the chunk — consult the border slice.
@@ -116,11 +118,13 @@ fn is_face_visible<V: VoxelType>(
         None => true, // No neighbor data — treat as air.
         Some(slice) => {
             // Look up the voxel in the neighbor slice.
+            // A neighbor occludes only when it is solid AND fully opaque (alpha >= 1.0).
             let u_coord = coords[face.u_axis];
             let v_coord = coords[face.v_axis];
 
             let slice_index = border_slice_index(face_index, u_coord, v_coord);
-            !slice[slice_index].is_solid()
+            let neighbor = slice[slice_index];
+            !neighbor.is_solid() || neighbor.color()[3] < 1.0
         }
     }
 }

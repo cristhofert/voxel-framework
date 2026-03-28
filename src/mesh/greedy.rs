@@ -186,8 +186,15 @@ pub fn generate_chunk_mesh<V: VoxelType>(chunk: &Chunk<V>, step: usize) -> Mesh 
 }
 
 /// The default face-visibility test: a face is visible if the neighbor in
-/// the given direction is air (not solid). At chunk borders, the neighbor
-/// is always treated as air.
+/// the given direction does not fully occlude it.
+///
+/// A neighbor occludes a face only when it is both solid (`is_solid()`) **and**
+/// fully opaque (`color()[3] >= 1.0`).  This matches the condition used in
+/// [`build_mask`] — a voxel generates geometry when `color()[3] > 0.0` —
+/// ensuring consistency: a neighbor that would itself generate no geometry
+/// (alpha = 0) should never hide the current face.
+///
+/// At chunk borders, the neighbor is always treated as air (face visible).
 #[inline]
 fn default_face_visible<V: VoxelType>(
     chunk: &Chunk<V>,
@@ -202,7 +209,8 @@ fn default_face_visible<V: VoxelType>(
         // Outside chunk bounds — treat as air (face visible).
         return true;
     }
-    !super_voxel(chunk, nx, ny, nz, step).is_solid()
+    let neighbor = super_voxel(chunk, nx, ny, nz, step);
+    !neighbor.is_solid() || neighbor.color()[3] < 1.0
 }
 
 /// Computes the neighbor coordinates in the direction of `face`, offset by `step`.
