@@ -210,6 +210,52 @@ pub fn chunk_aabb() -> Aabb3d {
     Aabb3d::new(Vec3A::splat(8.0), Vec3A::splat(8.0))
 }
 
+// ─── upgrade_to_texture_material ─────────────────────────────────────────────
+
+/// Upgrades existing chunk entities from `StandardMaterial` to `ChunkMaterial`
+/// once [`ChunkTextureArray`] becomes available (i.e. after async texture loading).
+///
+/// `setup_chunk_material` runs at `Startup` — before any textures have loaded —
+/// so it always falls back to `StandardMaterial`. This system runs every `Update`
+/// frame, does nothing until `ChunkTextureArray` is inserted AND
+/// `ChunkMaterialHandle.custom` is still `None`, then:
+///
+/// 1. Creates a `ChunkMaterial` from the texture array handle.
+/// 2. Stores it in `ChunkMaterialHandle.custom`.
+/// 3. Replaces `MeshMaterial3d<StandardMaterial>` with `MeshMaterial3d<ChunkMaterial>`
+///    on every entity that already has a [`ChunkRendered`] marker.
+///
+/// Because the greedy mesher always emits `ATTRIBUTE_TEXTURE_LAYER` vertices,
+/// existing meshes are already compatible with `ChunkMaterial` — no remesh needed.
+pub fn upgrade_to_texture_material(
+    mut commands: Commands,
+    mut chunk_materials: ResMut<Assets<ChunkMaterial>>,
+    mut handle: ResMut<ChunkMaterialHandle>,
+    texture_array: Option<Res<ChunkTextureArray>>,
+    rendered_chunks: Query<Entity, (With<ChunkRendered>, With<MeshMaterial3d<StandardMaterial>>)>,
+) {
+    // Only act once: when ChunkTextureArray appears but we haven't upgraded yet.
+    if handle.custom.is_some() {
+        return;
+    }
+    let Some(tex) = texture_array else { return; };
+
+    let mat = ChunkMaterial {
+        texture_array: tex.handle.clone(),
+    };
+    let mat_handle = chunk_materials.add(mat);
+    handle.custom = Some(mat_handle.clone());
+
+    // Swap the material on every already-rendered chunk.
+    for entity in &rendered_chunks {
+        commands.entity(entity)
+            .remove::<MeshMaterial3d<StandardMaterial>>()
+            .insert(MeshMaterial3d(mat_handle.clone()));
+    }
+
+    eprintln!("voxel texture array active — {} chunk(s) upgraded to ChunkMaterial", rendered_chunks.iter().count());
+}
+
 // ─── build_texture_array ─────────────────────────────────────────────────────
 
 /// Assembles N identically-sized [`Image`]s into a single GPU `texture_2d_array`.
