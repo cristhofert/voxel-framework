@@ -113,7 +113,9 @@ pub fn chunk_mesh_system<V: VoxelType>(
         };
 
         let Ok((chunk, maybe_mesh3d, _maybe_lod, has_empty_mesh)) = chunks.get(entity) else {
-            // Chunk component not yet attached (race between systems).
+            // Chunk component not yet attached — deferred command not flushed yet.
+            // Re-queue so we retry next frame when the component is available.
+            pending_neighbors.0.push(coord);
             continue;
         };
 
@@ -239,7 +241,8 @@ pub fn chunk_mesh_system<V: VoxelType>(
             // AABB sized to the full chunk extent for frustum culling.
             let aabb = Aabb::from_min_max(Vec3::ZERO, Vec3::splat(chunk_size_f));
 
-            commands.entity(entity).insert((
+            let mut entity_cmd = commands.entity(entity);
+            entity_cmd.insert((
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(material_handle.clone()),
                 Transform::from_translation(translation),
@@ -248,6 +251,10 @@ pub fn chunk_mesh_system<V: VoxelType>(
                 ChunkRendered,
                 ChunkLod(lod),
             ));
+            // If this chunk had EmptyMesh from a previous 0-vertex pass, remove it.
+            if has_empty_mesh {
+                entity_cmd.remove::<EmptyMesh>();
+            }
 
             // A newly rendered chunk changes the border visibility of every
             // adjacent chunk.  Stage ChunkModified for each loaded neighbor so
