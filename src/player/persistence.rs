@@ -54,11 +54,11 @@ pub fn save_spawn_position(pos: Vec3) {
     match serde_json::to_string(&data) {
         Ok(json) => {
             if let Err(e) = std::fs::write(SPAWN_FILE, json) {
-                warn!("Failed to save spawn position: {}", e);
+                eprintln!("[warn] Failed to save spawn position: {}", e);
             }
         }
         Err(e) => {
-            warn!("Failed to serialise spawn position: {}", e);
+            eprintln!("[warn] Failed to serialise spawn position: {}", e);
         }
     }
 }
@@ -83,7 +83,7 @@ pub fn load_spawn_position() -> Option<Vec3> {
     let data: PlayerSaveData = match serde_json::from_str(&json) {
         Ok(d) => d,
         Err(e) => {
-            warn!("Failed to parse {}: {}", SPAWN_FILE, e);
+            eprintln!("[warn] Failed to parse {}: {}", SPAWN_FILE, e);
             return None;
         }
     };
