@@ -26,8 +26,22 @@ struct PendingTextures {
     assembled: bool,
 }
 
+/// Reads `--world <name>` from CLI args.  Falls back to `default_name`.
+/// Loads `examples/<name>.toml` and returns the parsed config.
+fn load_world_config(default_name: &str) -> WorldConfig {
+    let args: Vec<String> = std::env::args().collect();
+    let name = args.windows(2)
+        .find(|w| w[0] == "--world")
+        .map(|w| w[1].clone())
+        .unwrap_or_else(|| default_name.to_string());
+    let path = format!("examples/{}.toml", name);
+    WorldConfig::from_file(&path)
+        .inspect_err(|e| eprintln!("No se pudo cargar '{path}': {e}. Usando defaults."))
+        .unwrap_or_else(|_| WorldConfig { world_name: name, ..WorldConfig::default() })
+}
+
 fn main() {
-    let world_config = WorldConfig::from_file("examples/basic_world.toml").unwrap_or_default();
+    let world_config = load_world_config("basic_world");
     let generator    = world_config.build_asteroid_generator();
     let spawn_pos    = Vec3::from_array(world_config.spawn_position);
 
