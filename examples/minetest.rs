@@ -293,7 +293,6 @@ fn setup_textures(
 /// `texture_2d_array` and inserts [`ChunkTextureArray`].
 fn assemble_texture_array(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut pending: ResMut<PendingTextures>,
 ) {
@@ -301,10 +300,8 @@ fn assemble_texture_array(
         return;
     }
 
-    let all_loaded = pending.handles.iter().all(|h| {
-        asset_server.is_loaded_with_dependencies(h)
-    });
-    if !all_loaded {
+    let all_ready = pending.handles.iter().all(|h| images.contains(h));
+    if !all_ready {
         return;
     }
 
