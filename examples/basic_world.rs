@@ -27,7 +27,7 @@ struct PendingTextures {
 }
 
 fn main() {
-    let world_config = WorldConfig::from_file("world.toml").unwrap_or_default();
+    let world_config = WorldConfig::from_file("examples/basic_world.toml").unwrap_or_default();
     let generator    = world_config.build_asteroid_generator();
     let spawn_pos    = Vec3::from_array(world_config.spawn_position);
 

@@ -133,9 +133,10 @@ impl Default for LightingConfig {
     }
 }
 
-fn default_world_name() -> String {
-    "world".to_string()
-}
+fn default_world_name() -> String { "world".to_string() }
+fn default_seed() -> u64 { 42 }
+fn default_load_distance() -> f32 { 150.0 }
+fn default_unload_distance() -> f32 { 200.0 }
 
 /// Top-level world configuration loaded from `world.toml`.
 ///
@@ -178,27 +179,33 @@ pub struct WorldConfig {
     /// Name of this world, used as the folder under `worlds/` for chunk and
     /// player data storage.  Default: `"world"`.
     ///
-    /// Set in `world.toml` as `world_name = "survival"`.  The framework stores
+    /// Set in the world TOML as `world_name = "survival"`.  The framework stores
     /// all data for this world under `./worlds/{world_name}/`.
     #[serde(default = "default_world_name")]
     pub world_name: String,
     /// Global world seed used for all deterministic generation. Default: `42`.
+    #[serde(default = "default_seed")]
     pub seed: u64,
     /// Player/viewer spawn position in world space as `[x, y, z]`. Default: `[0.0, 0.0, 0.0]`.
+    #[serde(default)]
     pub spawn_position: [f32; 3],
     /// Radius in world units within which chunks are loaded. Default: `150.0`.
     ///
     /// Copied into [`ChunkManager::load_distance`] by [`WorldConfigPlugin`].
+    #[serde(default = "default_load_distance")]
     pub load_distance: f32,
     /// Radius in world units beyond which chunks are unloaded. Default: `200.0`.
     ///
     /// Must be greater than [`load_distance`](WorldConfig::load_distance) to
     /// maintain the hysteresis band. Copied into
     /// [`ChunkManager::unload_distance`] by [`WorldConfigPlugin`].
+    #[serde(default = "default_unload_distance")]
     pub unload_distance: f32,
     /// Asteroid generation parameters from the `[asteroids]` section.
+    #[serde(default)]
     pub asteroids: AsteroidConfigToml,
     /// Scene lighting parameters from the `[lighting]` section.
+    #[serde(default)]
     pub lighting: LightingConfig,
     /// Skybox configuration from the `[skybox]` section. Defaults to a
     /// starfield when the section is absent.

@@ -1,0 +1,20 @@
+world_name = "basic_world"
+seed = 42
+spawn_position = [0.0, 0.0, 150.0]
+load_distance = 160.0
+unload_distance = 220.0
+
+[asteroids]
+seed = 42
+count = 20
+min_radius = 40.0
+max_radius = 100.0
+
+[lighting]
+sun_illuminance = 15000.0
+ambient_brightness = 0.1
+
+[skybox]
+mode = "starfield"
+star_count = 800
+star_radius = 900.0
