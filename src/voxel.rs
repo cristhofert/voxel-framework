@@ -157,6 +157,25 @@ pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Has
         0
     }
 
+    /// Returns the texture array layer index for this voxel on the given face.
+    ///
+    /// Face index convention (matches `FACE_DIRS` in the greedy mesher):
+    /// - `0` = +Y (top)
+    /// - `1` = -Y (bottom)
+    /// - `2` = +X
+    /// - `3` = -X
+    /// - `4` = +Z
+    /// - `5` = -Z
+    ///
+    /// The returned value selects which layer of the GPU texture array is
+    /// sampled by the `ChunkMaterial` shader. Layer indices correspond to the
+    /// order in which textures are assembled into the array by the game.
+    ///
+    /// Default: all faces use layer `0`.
+    fn texture_layer(&self, _face_index: usize) -> u32 {
+        0
+    }
+
     /// Returns the empty/air voxel for this type.
     ///
     /// The default implementation delegates to `Self::default()`, which is
@@ -260,6 +279,25 @@ impl VoxelType for DefaultVoxel {
             3 => DefaultVoxel::SiliconCrystal,
             4 => DefaultVoxel::RareMineral,
             _ => DefaultVoxel::Air,
+        }
+    }
+
+    /// Returns the texture array layer index for this voxel.
+    ///
+    /// Layers align with the loading order in `basic_world`:
+    /// - `0` = Air placeholder (grey)
+    /// - `1` = Rock (stone.png)
+    /// - `2` = IronOre (iron_ore.png)
+    /// - `3` = SiliconCrystal (amethyst_block.png)
+    /// - `4` = RareMineral (emerald_ore.png)
+    #[inline]
+    fn texture_layer(&self, _face_index: usize) -> u32 {
+        match self {
+            DefaultVoxel::Air => 0,
+            DefaultVoxel::Rock => 1,
+            DefaultVoxel::IronOre => 2,
+            DefaultVoxel::SiliconCrystal => 3,
+            DefaultVoxel::RareMineral => 4,
         }
     }
 }

@@ -63,7 +63,7 @@ mod neighbor;
 pub mod lod;
 pub mod systems;
 
-pub use greedy::generate_chunk_mesh;
+pub use greedy::{generate_chunk_mesh, ATTRIBUTE_TEXTURE_LAYER};
 pub use neighbor::generate_chunk_mesh_with_neighbors;
 pub use systems::{chunk_mesh_system, chunk_despawn_system, flush_neighbor_remesh_system, lod_update_system, PendingNeighborRemesh};
 

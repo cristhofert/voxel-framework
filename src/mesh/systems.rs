@@ -17,7 +17,7 @@ use bevy::prelude::*;
 
 use crate::chunk::{Chunk, ChunkCoord, ChunkCoordComp, ChunkLod, CHUNK_SIZE};
 use crate::chunk::persistence as chunk_persistence;
-use crate::render::material::{ChunkMaterial, ChunkRendered};
+use crate::render::material::{ChunkMaterial, ChunkMaterialHandle, ChunkRendered};
 use crate::voxel::VoxelType;
 use crate::world::{ChunkManager, ChunkModified, ChunkUnloadRequest, ViewerPosition};
 use crate::world::persistence::PersistenceConfig;
@@ -68,8 +68,8 @@ pub struct PendingNeighborRemesh(pub Vec<ChunkCoord>);
 /// 6. **Update path** — if the entity already has a `Mesh3d` handle, replaces
 ///    the mesh asset data in-place and updates the [`ChunkLod`] component.
 /// 7. **First-time path** — otherwise, allocates a new handle and inserts
-///    `Mesh3d`, `MeshMaterial3d<StandardMaterial>`, `Transform`, `Visibility`,
-///    AABB, [`ChunkRendered`], and [`ChunkLod`].
+///    `Mesh3d`, `MeshMaterial3d<StandardMaterial>` or `MeshMaterial3d<ChunkMaterial>`,
+///    `Transform`, `Visibility`, AABB, [`ChunkRendered`], and [`ChunkLod`].
 ///
 /// If the chunk material has not yet been created (startup system hasn't run)
 /// or the entity no longer exists, the event is silently skipped.
@@ -78,15 +78,19 @@ pub fn chunk_mesh_system<V: VoxelType>(
     mut modified_reader: MessageReader<ChunkModified>,
     mut pending_neighbors: ResMut<PendingNeighborRemesh>,
     manager: Res<ChunkManager>,
-    chunk_material: Res<ChunkMaterial>,
+    chunk_material: Res<ChunkMaterialHandle>,
     viewer: Res<ViewerPosition>,
     mut meshes: ResMut<Assets<Mesh>>,
     chunks: Query<(&Chunk<V>, Option<&Mesh3d>, Option<&ChunkLod>, Has<EmptyMesh>)>,
 ) {
-    let Some(material_handle) = chunk_material.handle.clone() else {
+    // Determine which material path is active.
+    // Custom (texture array) takes priority; fall back to StandardMaterial.
+    let use_custom = chunk_material.custom.is_some();
+    let has_material = chunk_material.custom.is_some() || chunk_material.standard.is_some();
+    if !has_material {
         // Material not yet set up — skip until next frame.
         return;
-    };
+    }
 
     let chunk_size_f = CHUNK_SIZE as f32;
 
@@ -154,17 +158,27 @@ pub fn chunk_mesh_system<V: VoxelType>(
             }
         }
 
+        // Helper: remove all material-related render components from an entity.
+        // Both MeshMaterial3d variants must be removed regardless of which path
+        // is currently active, because the entity might have been created under
+        // the other path (e.g. if ChunkTextureArray was inserted mid-session).
+        let remove_render = |cmd: &mut EntityCommands| {
+            cmd.remove::<(
+                Mesh3d,
+                MeshMaterial3d<StandardMaterial>,
+                MeshMaterial3d<ChunkMaterial>,
+                ChunkRendered,
+                ChunkLod,
+            )>();
+        };
+
         // Skip meshing entirely for all-air chunks — no render components needed.
         if chunk.is_empty() {
             if maybe_mesh3d.is_some() {
                 // Chunk was previously non-empty (e.g. all voxels mined out);
                 // strip render components so it becomes invisible.
-                commands.entity(entity).remove::<(
-                    Mesh3d,
-                    MeshMaterial3d<StandardMaterial>,
-                    ChunkRendered,
-                    ChunkLod,
-                )>();
+                let mut ec = commands.entity(entity);
+                remove_render(&mut ec);
                 // Notify neighbors — they may now have exposed border faces.
                 for &offset in &NEIGHBOR_OFFSETS {
                     let neighbor_coord = coord + offset;
@@ -193,12 +207,8 @@ pub fn chunk_mesh_system<V: VoxelType>(
             // Mesher produced no geometry (e.g. all faces are hidden by neighbors).
             // Remove render components if they were previously attached.
             if maybe_mesh3d.is_some() {
-                commands.entity(entity).remove::<(
-                    Mesh3d,
-                    MeshMaterial3d<StandardMaterial>,
-                    ChunkRendered,
-                    ChunkLod,
-                )>();
+                let mut ec = commands.entity(entity);
+                remove_render(&mut ec);
             }
             // Tag this entity so we know its mesh is empty. When a neighbor
             // loads later and triggers another re-mesh that produces geometry,
@@ -242,18 +252,36 @@ pub fn chunk_mesh_system<V: VoxelType>(
             let aabb = Aabb::from_min_max(Vec3::ZERO, Vec3::splat(chunk_size_f));
 
             let mut entity_cmd = commands.entity(entity);
-            entity_cmd.insert((
-                Mesh3d(mesh_handle),
-                MeshMaterial3d(material_handle.clone()),
-                Transform::from_translation(translation),
-                Visibility::default(),
-                aabb,
-                ChunkRendered,
-                ChunkLod(lod),
-            ));
+
+            if use_custom {
+                // Texture-array path.
+                let mat = chunk_material.custom.as_ref().unwrap().clone();
+                entity_cmd.insert((
+                    Mesh3d(mesh_handle),
+                    MeshMaterial3d(mat),
+                    Transform::from_translation(translation),
+                    Visibility::default(),
+                    aabb,
+                    ChunkRendered,
+                    ChunkLod(lod),
+                ));
+            } else {
+                // Fallback StandardMaterial path.
+                let mat = chunk_material.standard.as_ref().unwrap().clone();
+                entity_cmd.insert((
+                    Mesh3d(mesh_handle),
+                    MeshMaterial3d(mat),
+                    Transform::from_translation(translation),
+                    Visibility::default(),
+                    aabb,
+                    ChunkRendered,
+                    ChunkLod(lod),
+                ));
+            }
+
             // If this chunk had EmptyMesh from a previous 0-vertex pass, remove it.
             if has_empty_mesh {
-                entity_cmd.remove::<EmptyMesh>();
+                commands.entity(entity).remove::<EmptyMesh>();
             }
 
             // A newly rendered chunk changes the border visibility of every

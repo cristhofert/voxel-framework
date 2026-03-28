@@ -29,10 +29,21 @@
 //! chosen for its O(step³) simplicity and acceptable visual quality at distance.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
+use bevy::mesh::{Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
 
 use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
+
+/// Custom mesh vertex attribute carrying the texture array layer index.
+///
+/// Each vertex stores a `u32` that selects which layer of the GPU texture
+/// array the `ChunkMaterial` shader samples when rendering that vertex.
+/// The value comes from [`crate::voxel::VoxelType::texture_layer`].
+pub const ATTRIBUTE_TEXTURE_LAYER: MeshVertexAttribute = MeshVertexAttribute::new(
+    "Vertex_TextureLayer",
+    988540919,
+    VertexFormat::Uint32,
+);
 
 /// Face direction descriptor used by the greedy mesher.
 ///
@@ -248,12 +259,13 @@ pub(crate) fn build_mesh<V: VoxelType>(
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut texture_layers: Vec<u32> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     // Temporary mask buffer, reused across slices.
     let mut mask: Vec<Option<V>> = vec![None; size * size];
 
-    for face in &FACE_DIRS {
+    for (face_index, face) in FACE_DIRS.iter().enumerate() {
         for d in 0..size {
             // Build the 2D mask for this slice.
             build_mask(chunk, face, d, step, size, &mut mask, face_visible);
@@ -264,12 +276,14 @@ pub(crate) fn build_mesh<V: VoxelType>(
                 &mut mask,
                 size,
                 face,
+                face_index,
                 d,
                 step,
                 &mut positions,
                 &mut normals,
                 &mut uvs,
                 &mut colors,
+                &mut texture_layers,
                 &mut indices,
             );
         }
@@ -280,6 +294,7 @@ pub(crate) fn build_mesh<V: VoxelType>(
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+        .with_inserted_attribute(ATTRIBUTE_TEXTURE_LAYER, texture_layers)
         .with_inserted_indices(Indices::U32(indices))
 }
 
@@ -334,12 +349,14 @@ fn greedy_merge<V: VoxelType>(
     mask: &mut [Option<V>],
     size: usize,
     face: &FaceDir,
+    face_index: usize,
     d: usize,
     step: usize,
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
     colors: &mut Vec<[f32; 4]>,
+    texture_layers: &mut Vec<u32>,
     indices: &mut Vec<u32>,
 ) {
     for v in 0..size {
@@ -379,8 +396,8 @@ fn greedy_merge<V: VoxelType>(
 
             // Emit the quad.
             emit_quad(
-                chunk, face, d, u, v, width, height, step, voxel, positions, normals, uvs, colors,
-                indices,
+                chunk, face, face_index, d, u, v, width, height, step, voxel,
+                positions, normals, uvs, colors, texture_layers, indices,
             );
 
             u += width;
@@ -481,6 +498,7 @@ fn vertex_ao<V: VoxelType>(
 fn emit_quad<V: VoxelType>(
     chunk: &Chunk<V>,
     face: &FaceDir,
+    face_index: usize,
     d: usize,
     u: usize,
     v: usize,
@@ -492,6 +510,7 @@ fn emit_quad<V: VoxelType>(
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
     colors: &mut Vec<[f32; 4]>,
+    texture_layers: &mut Vec<u32>,
     indices: &mut Vec<u32>,
 ) {
     let s = step as f32 * VOXEL_SIZE;
@@ -552,12 +571,17 @@ fn emit_quad<V: VoxelType>(
 
     let base_idx = positions.len() as u32;
     // VoxelType::color() returns sRGB values (as humans define them).
-    // Bevy's PBR shader treats ATTRIBUTE_COLOR as *linear* RGB, so we convert.
+    // The ChunkMaterial shader treats ATTRIBUTE_COLOR as linear RGB (used for AO),
+    // so we convert here. The shader multiplies texture color by vertex color to
+    // apply the baked AO.
     let srgb = voxel.color();
     let to_linear = |c: f32| -> f32 {
         if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
     };
     let base_color = [to_linear(srgb[0]), to_linear(srgb[1]), to_linear(srgb[2]), srgb[3]];
+
+    // Texture layer for this face — same for all 4 vertices.
+    let layer = voxel.texture_layer(face_index);
 
     for &(cu, cv, ao) in &corners {
         let mut pos = [0.0f32; 3];
@@ -567,21 +591,25 @@ fn emit_quad<V: VoxelType>(
         positions.push(pos);
         normals.push(face.normal);
         // Multiply linear RGB by the AO factor; alpha is left unchanged.
+        // When ChunkMaterial is active the RGB carries the AO value (1.0 = no
+        // occlusion, 0.4 = fully occluded). The shader multiplies the sampled
+        // texture color by this value to apply AO.
         colors.push([
             base_color[0] * ao,
             base_color[1] * ao,
             base_color[2] * ao,
             base_color[3],
         ]);
+        texture_layers.push(layer);
     }
 
-    // UVs scaled by actual world-space size for texture coord consistency.
-    let w_uv = (width * step) as f32;
-    let h_uv = (height * step) as f32;
+    // UVs fixed to 0→1 per quad so the texture is displayed once per face
+    // regardless of the merged quad size.  Tiling is intentionally disabled —
+    // the texture array layers already contain the correct per-voxel texture.
     uvs.push([0.0, 0.0]);
-    uvs.push([w_uv, 0.0]);
-    uvs.push([w_uv, h_uv]);
-    uvs.push([0.0, h_uv]);
+    uvs.push([1.0, 0.0]);
+    uvs.push([1.0, 1.0]);
+    uvs.push([0.0, 1.0]);
 
     // Two triangles with CCW winding when viewed from the normal direction.
     // Bevy uses a right-hand coordinate system with CCW front faces.
