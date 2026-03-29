@@ -15,6 +15,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::math::bounding::Aabb3d;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MeshPipelineKey};
+use bevy::render::alpha::AlphaMode;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
@@ -201,11 +202,14 @@ pub fn setup_chunk_material(
         handle.custom = Some(chunk_materials.add(mat));
     } else {
         // Fallback path — standard PBR material with vertex colors.
+        // AlphaMode::Blend allows transparent voxels (e.g. water) to render
+        // correctly using the alpha channel baked into vertex colors.
         let material = StandardMaterial {
             base_color: config.base_color,
             perceptual_roughness: config.perceptual_roughness,
             metallic: config.metallic,
             reflectance: config.reflectance,
+            alpha_mode: AlphaMode::Blend,
             ..default()
         };
         handle.standard = Some(standard_materials.add(material));

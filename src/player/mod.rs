@@ -705,6 +705,15 @@ pub fn player_move<V: VoxelType>(
             // Apply gravity.
             player.vertical_velocity -= gravity * modifier.gravity_mult * dt;
 
+            // Water buoyancy: if the player's center voxel is transparent (e.g.
+            // water), apply a gentle upward push each frame to make them float
+            // toward the surface. The movement_modifier already reduces gravity
+            // via gravity_mult; buoyancy adds a positive upward impulse.
+            let center_voxel = get_voxel_at::<V>(transform.translation, &manager, &chunks);
+            if center_voxel.map(|v| v.alpha() < 1.0).unwrap_or(false) {
+                player.vertical_velocity += jump_speed * 0.3 * dt;
+            }
+
             // Translate: horizontal from smoothed velocity + vertical from gravity.
             transform.translation += player.velocity * dt;
             transform.translation.y += player.vertical_velocity * dt;
