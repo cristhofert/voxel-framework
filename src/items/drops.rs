@@ -36,7 +36,7 @@ use bevy::prelude::*;
 
 use crate::world::VoxelBroken;
 
-use super::inventory::{Inventory, ItemPickedUp, ItemType};
+use super::inventory::{ContainerComponent, ItemPickedUp, ItemType, PrimaryContainer};
 
 // ─── DropTable ────────────────────────────────────────────────────────────────
 
@@ -262,13 +262,14 @@ fn derive_voxel_byte(event: &VoxelBroken) -> u8 {
 }
 
 /// Applies magnet force toward [`ItemCollector`] and picks up items within
-/// pickup range, adding them to [`Inventory`] and emitting [`ItemPickedUp`].
+/// pickup range, adding them to the [`ContainerComponent`] on the
+/// [`PrimaryContainer`] entity and emitting [`ItemPickedUp`].
 fn magnet_system<I: ItemType>(
     time: Res<Time>,
     config: Res<MagnetConfig>,
     collector_query: Query<&Transform, With<ItemCollector>>,
     mut item_query: Query<(Entity, &mut DroppedItem<I>, Option<&Transform>)>,
-    mut inventory: ResMut<Inventory<I>>,
+    mut container_query: Query<&mut ContainerComponent<I>, With<PrimaryContainer>>,
     mut pickup_writer: MessageWriter<ItemPickedUp<I>>,
     mut commands: Commands,
 ) {
@@ -296,8 +297,11 @@ fn magnet_system<I: ItemType>(
         let dist = diff.length();
 
         if dist < 0.5 {
-            // Close enough — pick up.
-            let added = dropped.count - inventory.add(dropped.item, dropped.count);
+            // Close enough — pick up via PrimaryContainer entity.
+            let Ok(mut container) = container_query.single_mut() else {
+                continue;
+            };
+            let added = dropped.count - container.0.add(dropped.item, dropped.count);
             if added > 0 {
                 pickup_writer.write(ItemPickedUp {
                     item: dropped.item,
@@ -363,7 +367,6 @@ impl<I: ItemType> Plugin for DropsPlugin<I> {
     fn build(&self, app: &mut App) {
         app.init_resource::<DropTable<I>>();
         app.init_resource::<MagnetConfig>();
-        app.init_resource::<Inventory<I>>();
         app.add_message::<ItemPickedUp<I>>();
         app.add_systems(Update, spawn_drops_system::<I>);
         app.add_systems(Update, magnet_system::<I>);

@@ -13,7 +13,8 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::asset::RenderAssetUsages;
 use voxel_framework::prelude::*;
 use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
-use voxel_framework::items::{DefaultItem, Inventory};
+use voxel_framework::items::{DefaultItem, ItemCollector};
+use voxel_framework::items::inventory::{ContainerComponent, PrimaryContainer};
 use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
 
 /// Handles to the voxel textures pending assembly into a texture array.
@@ -150,8 +151,6 @@ fn main() {
         // ── Mining & placement input (batteries-included) ────────────────────
         .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
-        // ── Inventory UI (E to open) ─────────────────────────────────────────
-        .add_plugins(InventoryUiPlugin::<DefaultItem>::new())
         // ── Crafting (C to open) ─────────────────────────────────────────────
         .add_plugins(CraftingPlugin::<DefaultItem>::new())
         // ── Day/night cycle (manages sun + sky color) ────────────────────────
@@ -179,19 +178,29 @@ fn main() {
             time_of_day: 0.35,      // start mid-morning — sun visible
             ..default()
         })
-        .insert_resource(Inventory::<DefaultItem>::default())
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
-        .add_systems(Startup, (setup_crafting, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures))
+        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures))
         .add_systems(Update, (update_block_info, assemble_texture_array))
         .run();
+}
+
+/// Spawns the player's item container entity with `ContainerComponent`,
+/// `PrimaryContainer`, and `ItemCollector` so the magnet, hotbar, and crafting
+/// systems can locate it via ECS queries.
+fn spawn_player_container(mut commands: Commands) {
+    commands.spawn((
+        ContainerComponent::<DefaultItem>::new(36),
+        PrimaryContainer,
+        ItemCollector,
+    ));
 }
 
 /// Seeds the crafting registry with example recipes and the inventory with
 /// starting materials so the player can try crafting immediately.
 fn setup_crafting(
     mut registry: ResMut<CraftingRegistry<DefaultItem>>,
-    mut inventory: ResMut<Inventory<DefaultItem>>,
+    mut container_query: Query<&mut ContainerComponent<DefaultItem>, With<PrimaryContainer>>,
 ) {
     // Sample recipes.
     registry.add(CraftingRecipe {
@@ -214,8 +223,10 @@ fn setup_crafting(
     });
 
     // Seed starting items so the player can try crafting right away.
-    inventory.add(DefaultItem::IronOre, 12);
-    inventory.add(DefaultItem::RockFragment, 5);
+    if let Ok(mut container) = container_query.single_mut() {
+        container.0.add(DefaultItem::IronOre, 12);
+        container.0.add(DefaultItem::RockFragment, 5);
+    }
 }
 
 /// Registers sound effect asset paths.
