@@ -8,7 +8,7 @@ pub use crate::voxel::{DefaultVoxel, DefaultTerrainVoxel, MovementModifier, Voxe
 
 // Crafting
 pub use crate::crafting::{
-    CraftingIngredient, CraftingPlugin, CraftingRecipe, CraftingRegistry,
+    CraftingIngredient, CraftingPlugin, CraftingUiPlugin, CraftingRecipe, CraftingRegistry,
     CraftingMenuState, CraftingError, can_craft, try_craft,
 };
 
