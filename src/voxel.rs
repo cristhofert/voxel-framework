@@ -217,6 +217,13 @@ pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Has
     fn movement_modifier(&self) -> MovementModifier {
         MovementModifier::default()
     }
+
+    /// Returns the opacity of this voxel (1.0 = fully opaque, 0.0 = invisible).
+    /// Used by the mesh generator to set vertex color alpha.
+    #[inline]
+    fn alpha(&self) -> f32 {
+        1.0
+    }
 }
 
 /// Per-surface movement modifiers applied by [`VoxelType::movement_modifier`].
@@ -501,7 +508,7 @@ impl VoxelType for DefaultTerrainVoxel {
             DefaultTerrainVoxel::Leaves => [0.20, 0.55, 0.15, 1.0],
             DefaultTerrainVoxel::Gravel => [0.55, 0.52, 0.50, 1.0],
             DefaultTerrainVoxel::Snow   => [0.92, 0.95, 0.98, 1.0],
-            DefaultTerrainVoxel::Water       => [0.15, 0.40, 0.75, 1.0],
+            DefaultTerrainVoxel::Water       => [0.15, 0.40, 0.75, 0.7],
             DefaultTerrainVoxel::CoalOre     => [0.30, 0.30, 0.30, 1.0],
             DefaultTerrainVoxel::IronOre     => [0.60, 0.45, 0.35, 1.0],
             DefaultTerrainVoxel::Cobblestone => [0.40, 0.40, 0.40, 1.0],
@@ -627,6 +634,14 @@ impl VoxelType for DefaultTerrainVoxel {
                 ..MovementModifier::default()
             },
             _ => MovementModifier::default(),
+        }
+    }
+
+    #[inline]
+    fn alpha(&self) -> f32 {
+        match self {
+            Self::Water => 0.7,
+            _ => 1.0,
         }
     }
 }
