@@ -478,6 +478,18 @@ pub enum DefaultItem {
     StonePickaxe,
     /// Iron pickaxe — tool level 2, 4× speed. Crafted from iron ore.
     IronPickaxe,
+    /// Dirt block; drops from Grass and Dirt voxels.
+    Dirt,
+    /// Cobblestone; drops from Stone voxels.
+    Cobblestone,
+    /// Sand; drops from Sand voxels.
+    Sand,
+    /// Gravel; drops from Gravel voxels.
+    Gravel,
+    /// Wood log; drops from Wood voxels.
+    Log,
+    /// Snowball; drops from Snow voxels.
+    Snowball,
 }
 
 impl ItemType for DefaultItem {
@@ -491,6 +503,12 @@ impl ItemType for DefaultItem {
             DefaultItem::WoodenPickaxe => "Wooden Pickaxe",
             DefaultItem::StonePickaxe => "Stone Pickaxe",
             DefaultItem::IronPickaxe => "Iron Pickaxe",
+            DefaultItem::Dirt => "Dirt",
+            DefaultItem::Cobblestone => "Cobblestone",
+            DefaultItem::Sand => "Sand",
+            DefaultItem::Gravel => "Gravel",
+            DefaultItem::Log => "Log",
+            DefaultItem::Snowball => "Snowball",
         }
     }
 
@@ -504,6 +522,12 @@ impl ItemType for DefaultItem {
             DefaultItem::WoodenPickaxe => [0.55, 0.35, 0.20, 1.0],
             DefaultItem::StonePickaxe => [0.50, 0.50, 0.50, 1.0],
             DefaultItem::IronPickaxe => [0.70, 0.75, 0.80, 1.0],
+            DefaultItem::Dirt => [0.42, 0.28, 0.18, 1.0],
+            DefaultItem::Cobblestone => [0.45, 0.45, 0.45, 1.0],
+            DefaultItem::Sand => [0.85, 0.80, 0.55, 1.0],
+            DefaultItem::Gravel => [0.50, 0.48, 0.46, 1.0],
+            DefaultItem::Log => [0.40, 0.28, 0.12, 1.0],
+            DefaultItem::Snowball => [0.92, 0.95, 1.00, 1.0],
         }
     }
 
@@ -517,6 +541,12 @@ impl ItemType for DefaultItem {
             DefaultItem::WoodenPickaxe => 5,
             DefaultItem::StonePickaxe => 6,
             DefaultItem::IronPickaxe => 7,
+            DefaultItem::Dirt => 8,
+            DefaultItem::Cobblestone => 9,
+            DefaultItem::Sand => 10,
+            DefaultItem::Gravel => 11,
+            DefaultItem::Log => 12,
+            DefaultItem::Snowball => 13,
         }
     }
 
@@ -529,6 +559,12 @@ impl ItemType for DefaultItem {
             5 => DefaultItem::WoodenPickaxe,
             6 => DefaultItem::StonePickaxe,
             7 => DefaultItem::IronPickaxe,
+            8 => DefaultItem::Dirt,
+            9 => DefaultItem::Cobblestone,
+            10 => DefaultItem::Sand,
+            11 => DefaultItem::Gravel,
+            12 => DefaultItem::Log,
+            13 => DefaultItem::Snowball,
             _ => DefaultItem::Empty,
         }
     }
