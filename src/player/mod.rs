@@ -53,7 +53,7 @@
 //! App::new()
 //!     .add_systems(Startup, spawn_player)
 //!     .add_systems(Update,
-//!         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+//!         (player_look, player_move::<DefaultVoxel>, player_resolve_collision::<DefaultVoxel>)
 //!             .chain()
 //!             .run_if(in_state(AppState::Playing)),
 //!     )
@@ -1089,7 +1089,7 @@ fn save_spawn_on_exit(
 /// App::new()
 ///     .add_systems(Startup, spawn_player)
 ///     .add_systems(Update,
-///         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+///         (player_look, player_move::<DefaultVoxel>, player_resolve_collision::<DefaultVoxel>)
 ///             .chain()
 ///             .run_if(in_state(AppState::Playing)),
 ///     );
