@@ -415,33 +415,54 @@ fn handle_craft_click<I: ItemType>(
     }
 }
 
-// ─── Plugin ───────────────────────────────────────────────────────────────────
+// ─── Plugins ──────────────────────────────────────────────────────────────────
 
-/// Plugin that adds the crafting system for item type `I`.
+/// Core crafting plugin — registers [`CraftingRegistry<I>`] only.
 ///
-/// Registers [`CraftingRegistry<I>`] and [`CraftingMenuState`] as resources,
-/// spawns the crafting menu UI panel, and wires up the `C`-key toggle, recipe
-/// highlighting, and click-to-craft handling.
+/// No UI, no input, no systems. Use alongside [`CraftingUiPlugin<I>`] when you
+/// want the built-in `C`-key crafting menu, or provide your own UI by reading
+/// [`CraftingRegistry<I>`] and calling [`can_craft`] / [`try_craft`] directly.
 ///
-/// Populate [`CraftingRegistry<I>`] from a startup system to register recipes
-/// before the menu is first opened. The menu rebuilds its recipe list each time
-/// it is opened.
+/// Mirrors the [`MiningPlugin`] / [`MiningInputPlugin`] split pattern.
+pub struct CraftingPlugin<I: ItemType> {
+    _m: PhantomData<I>,
+}
+
+impl<I: ItemType> CraftingPlugin<I> {
+    pub fn new() -> Self {
+        Self { _m: PhantomData }
+    }
+}
+
+impl<I: ItemType> Default for CraftingPlugin<I> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<I: ItemType> Plugin for CraftingPlugin<I> {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<CraftingRegistry<I>>();
+    }
+}
+
+/// Batteries-included crafting UI plugin.
+///
+/// Adds [`CraftingMenuState`], spawns the in-game crafting panel, and wires the
+/// `C`-key toggle, recipe highlighting, and click-to-craft. Requires
+/// [`CraftingPlugin<I>`] to have been added first (for the registry).
 ///
 /// # Example
 ///
 /// ```no_run
 /// use bevy::prelude::*;
-/// use voxel_framework::crafting::{CraftingPlugin, CraftingRecipe, CraftingIngredient};
+/// use voxel_framework::crafting::{CraftingPlugin, CraftingUiPlugin, CraftingRecipe, CraftingIngredient};
 /// use voxel_framework::items::DefaultItem;
 ///
 /// App::new()
 ///     .add_plugins(CraftingPlugin::<DefaultItem>::new())
+///     .add_plugins(CraftingUiPlugin::<DefaultItem>::new())
 ///     .add_systems(Startup, register_recipes);
 ///
-/// fn register_recipes(
-///     mut registry: ResMut<voxel_framework::crafting::CraftingRegistry<DefaultItem>>,
-/// ) {
-///     use voxel_framework::crafting::CraftingRegistry;
+/// fn register_recipes(mut registry: ResMut<voxel_framework::crafting::CraftingRegistry<DefaultItem>>) {
 ///     registry.add(CraftingRecipe {
 ///         name: "Iron Block",
 ///         ingredients: vec![CraftingIngredient { item: DefaultItem::IronOre, count: 9 }],
@@ -449,26 +470,22 @@ fn handle_craft_click<I: ItemType>(
 ///     });
 /// }
 /// ```
-pub struct CraftingPlugin<I: ItemType> {
+pub struct CraftingUiPlugin<I: ItemType> {
     _m: PhantomData<I>,
 }
 
-impl<I: ItemType> CraftingPlugin<I> {
-    /// Creates a new [`CraftingPlugin`] for item type `I`.
+impl<I: ItemType> CraftingUiPlugin<I> {
     pub fn new() -> Self {
         Self { _m: PhantomData }
     }
 }
 
-impl<I: ItemType> Default for CraftingPlugin<I> {
-    fn default() -> Self {
-        Self::new()
-    }
+impl<I: ItemType> Default for CraftingUiPlugin<I> {
+    fn default() -> Self { Self::new() }
 }
 
-impl<I: ItemType> Plugin for CraftingPlugin<I> {
+impl<I: ItemType> Plugin for CraftingUiPlugin<I> {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CraftingRegistry<I>>();
         app.init_resource::<CraftingMenuState>();
         app.add_systems(Startup, spawn_crafting_menu);
         app.add_systems(

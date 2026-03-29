@@ -153,6 +153,7 @@ fn main() {
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
         // ── Crafting (C to open) ─────────────────────────────────────────────
         .add_plugins(CraftingPlugin::<DefaultItem>::new())
+        .add_plugins(CraftingUiPlugin::<DefaultItem>::new())
         // ── Day/night cycle (manages sun + sky color) ────────────────────────
         .add_plugins(DayCyclePlugin)
         // ── Debug overlay (F3 toggle) ────────────────────────────────────────
