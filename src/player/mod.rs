@@ -1060,6 +1060,21 @@ fn save_spawn_on_exit(
     }
 }
 
+// ─── Run condition ────────────────────────────────────────────────────────────
+
+/// Returns `true` when gameplay should be active.
+///
+/// If [`crate::ui::PauseMenuState`] is registered, returns `true`
+/// only while in the `Playing` variant. If the state is not present (i.e.
+/// [`crate::ui::PauseMenuPlugin`] was not added), always returns `true` so the
+/// player systems run unconditionally.
+fn gameplay_active(
+    state: Option<Res<bevy::prelude::State<crate::ui::PauseMenuState>>>,
+) -> bool {
+    use crate::ui::PauseMenuState;
+    state.map_or(true, |s| matches!(s.get(), PauseMenuState::Playing))
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Plugin that wires up the complete 6DOF player controller.
@@ -1140,7 +1155,8 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
                 player_fall_damage,
                 player_footstep_system::<V>,
             )
-                .chain(),
+                .chain()
+                .run_if(gameplay_active),
         );
         app.add_systems(Update, player_cursor_system);
         app.add_systems(PostUpdate, save_spawn_on_exit);
