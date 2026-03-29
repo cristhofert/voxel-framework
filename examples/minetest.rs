@@ -150,6 +150,9 @@ fn main() {
         .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::with_world(&world_config.world_name))
         // ── Mining & placement input (batteries-included) ────────────────────
         .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
+        .add_plugins(DropsPlugin::<DefaultItem>::new())
+        // PlacementInputPlugin maps hotbar slot N to voxel byte N+1:
+        // slot 0 → Grass, slot 1 → Dirt, slot 2 → Stone, etc.
         .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
         // ── Crafting (C to open) ─────────────────────────────────────────────
         .add_plugins(CraftingPlugin::<DefaultItem>::new())
@@ -181,7 +184,7 @@ fn main() {
         })
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
-        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures))
+        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures))
         .add_systems(Update, (update_block_info, assemble_texture_array))
         .run();
 }
@@ -223,11 +226,34 @@ fn setup_crafting(
         outputs: vec![CraftingIngredient { item: DefaultItem::RockFragment, count: 3 }],
     });
 
-    // Seed starting items so the player can try crafting right away.
+    // Seed starting tools and a small rock stash so the player can mine and
+    // try crafting immediately.  Resources like IronOre must be earned by mining.
     if let Ok(mut container) = container_query.single_mut() {
-        container.0.add(DefaultItem::IronOre, 12);
-        container.0.add(DefaultItem::RockFragment, 5);
+        container.0.add(DefaultItem::WoodenPickaxe, 1);
+        container.0.add(DefaultItem::StonePickaxe, 1);
+        container.0.add(DefaultItem::RockFragment, 3);
     }
+}
+
+/// Populates the [`DropTable`] with item drops for each terrain voxel.
+///
+/// Byte mapping (matches `DefaultTerrainVoxel::to_byte`):
+///   1 = Grass, 2 = Dirt, 3 = Stone, 4 = Sand, 5 = Wood, 7 = Gravel
+///
+/// Leaves (6), Snow (8), and Water (9) drop nothing and are not registered.
+fn setup_drops(mut drop_table: ResMut<DropTable<DefaultItem>>) {
+    // Grass → Dirt-like loose material
+    drop_table.register(1, DefaultItem::RockFragment, 1, 2);
+    // Dirt
+    drop_table.register(2, DefaultItem::RockFragment, 1, 2);
+    // Stone — most valuable; requires stone pickaxe (mining_level 1)
+    drop_table.register(3, DefaultItem::RockFragment, 2, 4);
+    // Sand
+    drop_table.register(4, DefaultItem::RockFragment, 1, 2);
+    // Wood — approximation for planks/wood material
+    drop_table.register(5, DefaultItem::RockFragment, 2, 3);
+    // Gravel (mining_level 1)
+    drop_table.register(7, DefaultItem::RockFragment, 1, 3);
 }
 
 /// Registers sound effect asset paths.
