@@ -48,7 +48,8 @@
 use bevy::prelude::*;
 
 use crate::chunk::Chunk;
-use crate::items::{HotbarState, Inventory, ItemType};
+use crate::items::{HotbarState, ItemType};
+use crate::items::inventory::{ContainerComponent, PrimaryContainer};
 use crate::voxel::VoxelType;
 
 use super::{ChunkManager, ChunkModified};
@@ -479,8 +480,9 @@ impl Plugin for MiningPlugin {
 /// resources ([`MiningState`], [`MiningConfig`]) and message channels
 /// ([`VoxelBroken`], [`MiningProgress`]) are already registered.
 ///
-/// An [`Inventory<I>`] resource must also be present (typically inserted by
-/// game startup).
+/// A player entity with [`crate::items::inventory::ContainerComponent<I>`] and
+/// [`crate::items::inventory::PrimaryContainer`] must be present (typically spawned
+/// in a `Startup` system).
 ///
 /// # Example
 ///
@@ -524,14 +526,21 @@ impl<V: VoxelType, I: ItemType> Plugin for MiningInputPlugin<V, I> {
 
 /// Updates [`ToolStats`] from the active hotbar slot each frame.
 ///
+/// Reads the [`ContainerComponent`] on the [`PrimaryContainer`] entity.
+/// If no such entity exists, resets to bare-hands stats silently.
+///
 /// Added automatically by [`MiningInputPlugin`] — do not add manually.
 pub fn hotbar_to_tool_system<I: ItemType>(
     hotbar: Res<HotbarState>,
-    inventory: Res<Inventory<I>>,
+    container_query: Query<&ContainerComponent<I>, With<PrimaryContainer>>,
     mut tool_stats: ResMut<ToolStats>,
 ) {
+    let Ok(container) = container_query.single() else {
+        tool_stats.reset();
+        return;
+    };
     let active_slot = hotbar.selected;
-    if let Some(slot) = inventory.slots.get(active_slot).and_then(|s| s.as_ref()) {
+    if let Some(slot) = container.0.slots.get(active_slot).and_then(|s| s.as_ref()) {
         tool_stats.tool_level = slot.item.tool_level();
         tool_stats.tool_speed = slot.item.tool_speed();
     } else {

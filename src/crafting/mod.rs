@@ -43,7 +43,8 @@ use std::marker::PhantomData;
 
 use bevy::prelude::*;
 
-use crate::items::{Inventory, ItemType};
+use crate::items::ItemType;
+use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
 
 // ─── Data layer ───────────────────────────────────────────────────────────────
 
@@ -101,12 +102,12 @@ pub enum CraftingError {
     InventoryFull,
 }
 
-/// Returns `true` if the inventory satisfies all ingredients of `recipe_index`.
+/// Returns `true` if the container satisfies all ingredients of `recipe_index`.
 ///
-/// Does **not** mutate the inventory.
+/// Does **not** mutate the container.
 pub fn can_craft<I: ItemType>(
     registry: &CraftingRegistry<I>,
-    inventory: &Inventory<I>,
+    inventory: &impl Container<I>,
     recipe_index: usize,
 ) -> bool {
     let Some(recipe) = registry.recipes.get(recipe_index) else {
@@ -125,15 +126,15 @@ pub fn can_craft<I: ItemType>(
 ///
 /// All preconditions are checked before any mutation:
 /// - The recipe must exist.
-/// - The inventory must hold enough of every ingredient.
-/// - The inventory must have enough free slots for output item types not yet
+/// - The container must hold enough of every ingredient.
+/// - The container must have enough free slots for output item types not yet
 ///   present.
 ///
 /// Returns `Ok(())` on success and a [`CraftingError`] without modifying the
-/// inventory on failure.
+/// container on failure.
 pub fn try_craft<I: ItemType>(
     registry: &CraftingRegistry<I>,
-    inventory: &mut Inventory<I>,
+    inventory: &mut impl Container<I>,
     recipe_index: usize,
 ) -> Result<(), CraftingError> {
     let recipe = registry
@@ -149,7 +150,7 @@ pub fn try_craft<I: ItemType>(
     }
 
     // Pre-check: free slots for new output types.
-    let free_slots = inventory.slots.iter().filter(|s| s.is_none()).count();
+    let free_slots = inventory.capacity() - inventory.iter_slots().filter(|s| s.is_some()).count();
     let new_types = recipe
         .outputs
         .iter()
@@ -362,20 +363,20 @@ fn update_crafting_row_colors<I: ItemType>(
         &Interaction,
     )>,
     registry: Res<CraftingRegistry<I>>,
-    inventory: Option<Res<Inventory<I>>>,
+    container_query: Query<&ContainerComponent<I>, With<PrimaryContainer>>,
     state: Res<CraftingMenuState>,
 ) {
     if !state.visible {
         return;
     }
-    let Some(inventory) = inventory else {
+    let Ok(container) = container_query.single() else {
         return;
     };
     for (row, mut bg, mut tc, interaction) in row_q.iter_mut() {
         if row.recipe_index == usize::MAX {
             continue;
         }
-        let craftable = can_craft(&registry, &inventory, row.recipe_index);
+        let craftable = can_craft(&registry, &container.0, row.recipe_index);
         let hovered = matches!(interaction, Interaction::Hovered | Interaction::Pressed);
 
         *bg = match (craftable, hovered) {
@@ -395,13 +396,13 @@ fn update_crafting_row_colors<I: ItemType>(
 fn handle_craft_click<I: ItemType>(
     row_q: Query<(&CraftingRecipeRow, &Interaction), Changed<Interaction>>,
     registry: Res<CraftingRegistry<I>>,
-    mut inventory: Option<ResMut<Inventory<I>>>,
+    mut container_query: Query<&mut ContainerComponent<I>, With<PrimaryContainer>>,
     state: Res<CraftingMenuState>,
 ) {
     if !state.visible {
         return;
     }
-    let Some(ref mut inventory) = inventory else {
+    let Ok(mut container) = container_query.single_mut() else {
         return;
     };
     for (row, interaction) in row_q.iter() {
@@ -409,7 +410,7 @@ fn handle_craft_click<I: ItemType>(
             continue;
         }
         if matches!(interaction, Interaction::Pressed) {
-            let _ = try_craft(&registry, inventory, row.recipe_index);
+            let _ = try_craft(&registry, &mut container.0, row.recipe_index);
         }
     }
 }

@@ -93,6 +93,7 @@ pub use crate::items::{
     HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp, ItemType, MagnetConfig,
     load_inventory, save_inventory,
 };
+pub use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
 
 // UI system
 pub use crate::ui::{
@@ -102,7 +103,6 @@ pub use crate::ui::{
     PickupNotificationConfig, PickupNotificationPlugin,
     PauseMenuConfig, PauseMenuPlugin, PauseMenuState,
     DebugOverlayPlugin, DebugOverlayState,
-    InventoryUiPlugin, InventoryUiState,
     UiPlugin,
 };
 

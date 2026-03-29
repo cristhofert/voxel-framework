@@ -14,6 +14,43 @@ use std::hash::Hash;
 
 use bevy::prelude::*;
 
+// ─── Container trait ─────────────────────────────────────────────────────────
+
+/// Abstraction over slot-based item storage.
+///
+/// Any type that holds items in indexed slots can implement this trait to be
+/// usable with the framework's pickup, hotbar, and crafting systems.
+///
+/// The framework provides two built-in implementors:
+/// - [`Inventory<I>`] — the standalone resource form (backward-compatible).
+/// - [`ContainerComponent<I>`] — the Bevy component form used by the new
+///   entity-based pipeline.
+pub trait Container<I: ItemType> {
+    /// Adds `count` of `item`.  Returns the number of items that could NOT be
+    /// inserted due to capacity (0 = all inserted).
+    fn add(&mut self, item: I, count: u32) -> u32;
+
+    /// Removes up to `count` of `item`.  Returns the number actually removed.
+    fn remove(&mut self, item: I, count: u32) -> u32;
+
+    /// Total number of `item` across all slots.
+    fn count_of(&self, item: I) -> u32;
+
+    /// Maximum number of distinct item stacks this container can hold.
+    fn capacity(&self) -> usize;
+
+    /// Returns `true` if every slot is occupied.
+    fn is_full(&self) -> bool;
+
+    /// Iterates over all slots, yielding `Some(&InventorySlot<I>)` for occupied
+    /// slots and `None` for empty ones.  Yields exactly `capacity()` items.
+    fn iter_slots(&self) -> impl Iterator<Item = Option<&InventorySlot<I>>>;
+
+    /// Returns the slot at `index`, or `None` if the index is out of bounds or
+    /// the slot is empty.  Never panics.
+    fn slot_at(&self, index: usize) -> Option<&InventorySlot<I>>;
+}
+
 // ─── ItemType trait ───────────────────────────────────────────────────────────
 
 /// Contract that all item types must satisfy to participate in the item pipeline.
@@ -268,6 +305,111 @@ impl<I: ItemType> Default for Inventory<I> {
     }
 }
 
+// ─── Container impl for Inventory ────────────────────────────────────────────
+
+impl<I: ItemType> Container<I> for Inventory<I> {
+    fn add(&mut self, item: I, count: u32) -> u32 {
+        Inventory::add(self, item, count)
+    }
+
+    fn remove(&mut self, item: I, count: u32) -> u32 {
+        Inventory::remove(self, item, count)
+    }
+
+    fn count_of(&self, item: I) -> u32 {
+        Inventory::count_of(self, item)
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn is_full(&self) -> bool {
+        Inventory::is_full(self)
+    }
+
+    fn iter_slots(&self) -> impl Iterator<Item = Option<&InventorySlot<I>>> {
+        self.slots.iter().map(|s| s.as_ref())
+    }
+
+    fn slot_at(&self, index: usize) -> Option<&InventorySlot<I>> {
+        self.slots.get(index).and_then(|s| s.as_ref())
+    }
+}
+
+// ─── ContainerComponent ───────────────────────────────────────────────────────
+
+/// Bevy [`Component`] newtype that wraps an [`Inventory<I>`] for use in the
+/// entity-based item pipeline.
+///
+/// Add this alongside [`PrimaryContainer`] on the player entity so the magnet,
+/// hotbar, and crafting systems can locate the player's inventory via ECS
+/// queries instead of a global resource.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::items::{ContainerComponent, PrimaryContainer, DefaultItem};
+///
+/// fn spawn_player(mut commands: Commands) {
+///     commands.spawn((
+///         ContainerComponent::<DefaultItem>::new(36),
+///         PrimaryContainer,
+///     ));
+/// }
+/// ```
+#[derive(Component)]
+pub struct ContainerComponent<I: ItemType>(pub Inventory<I>);
+
+impl<I: ItemType> ContainerComponent<I> {
+    /// Creates a new `ContainerComponent` wrapping a fresh [`Inventory`] with
+    /// the given `capacity`.
+    pub fn new(capacity: usize) -> Self {
+        Self(Inventory::new(capacity))
+    }
+}
+
+impl<I: ItemType> Container<I> for ContainerComponent<I> {
+    fn add(&mut self, item: I, count: u32) -> u32 {
+        self.0.add(item, count)
+    }
+
+    fn remove(&mut self, item: I, count: u32) -> u32 {
+        self.0.remove(item, count)
+    }
+
+    fn count_of(&self, item: I) -> u32 {
+        self.0.count_of(item)
+    }
+
+    fn capacity(&self) -> usize {
+        self.0.capacity
+    }
+
+    fn is_full(&self) -> bool {
+        self.0.is_full()
+    }
+
+    fn iter_slots(&self) -> impl Iterator<Item = Option<&InventorySlot<I>>> {
+        self.0.slots.iter().map(|s| s.as_ref())
+    }
+
+    fn slot_at(&self, index: usize) -> Option<&InventorySlot<I>> {
+        self.0.slots.get(index).and_then(|s| s.as_ref())
+    }
+}
+
+// ─── PrimaryContainer marker ──────────────────────────────────────────────────
+
+/// Zero-size marker component that identifies the entity whose
+/// [`ContainerComponent`] is the player's primary backpack.
+///
+/// Exactly one entity should carry this marker at runtime.  If zero or more
+/// than one exist, the pickup and hotbar systems skip silently — no panic.
+#[derive(Component, Default)]
+pub struct PrimaryContainer;
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 /// Message emitted when one or more items are successfully added to the inventory.
@@ -481,5 +623,43 @@ mod tests {
         // Adding more should return a leftover.
         let leftover = inv.add(DefaultItem::RockFragment, 5);
         assert_eq!(leftover, 5);
+    }
+
+    // ── Container trait via Inventory ─────────────────────────────────────────
+
+    #[test]
+    fn container_trait_add_and_count() {
+        let mut inv = Inventory::<DefaultItem>::new(9);
+        let leftover = Container::add(&mut inv, DefaultItem::IronOre, 5);
+        assert_eq!(leftover, 0);
+        assert_eq!(Container::count_of(&inv, DefaultItem::IronOre), 5);
+    }
+
+    #[test]
+    fn container_slot_at_out_of_bounds_returns_none() {
+        let inv = Inventory::<DefaultItem>::new(9);
+        assert!(Container::slot_at(&inv, 100).is_none());
+    }
+
+    #[test]
+    fn container_iter_slots_yields_capacity_items() {
+        let inv = Inventory::<DefaultItem>::new(9);
+        assert_eq!(Container::iter_slots(&inv).count(), 9);
+    }
+
+    // ── ContainerComponent ───────────────────────────────────────────────────
+
+    #[test]
+    fn container_component_delegates_correctly() {
+        let mut cc = ContainerComponent::<DefaultItem>::new(9);
+        cc.add(DefaultItem::Crystal, 3);
+        assert_eq!(cc.count_of(DefaultItem::Crystal), 3);
+        assert_eq!(cc.0.count_of(DefaultItem::Crystal), 3);
+    }
+
+    #[test]
+    fn container_component_slot_at_oob_no_panic() {
+        let cc = ContainerComponent::<DefaultItem>::new(9);
+        assert!(cc.slot_at(100).is_none());
     }
 }
