@@ -176,6 +176,28 @@ pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Has
         0
     }
 
+    /// Returns the texture array layer index for this voxel on the given face,
+    /// taking into account the block's placement state.
+    ///
+    /// `face_index` follows the same convention as [`texture_layer`]:
+    /// - `0` = +Y (top), `1` = -Y (bottom), `2` = +X, `3` = -X, `4` = +Z, `5` = -Z
+    ///
+    /// `state` is the raw byte stored in [`crate::chunk::Chunk::get_state`].
+    /// Bits 0–2 hold the placement face (see [`crate::chunk::face_to_state`]);
+    /// bits 3–7 are available for game-specific use.
+    ///
+    /// Override this method to make a block render differently depending on
+    /// which face it was placed against (e.g. a log block that shows end-grain
+    /// on the faces perpendicular to its axis).
+    ///
+    /// Default: delegates to [`texture_layer`], ignoring `state`.
+    ///
+    /// [`texture_layer`]: VoxelType::texture_layer
+    #[inline]
+    fn texture_layer_for_state(&self, face_index: usize, _state: u8) -> u32 {
+        self.texture_layer(face_index)
+    }
+
     /// Returns the empty/air voxel for this type.
     ///
     /// The default implementation delegates to `Self::default()`, which is

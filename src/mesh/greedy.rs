@@ -263,7 +263,12 @@ pub(crate) fn build_mesh<V: VoxelType>(
     let mut indices: Vec<u32> = Vec::new();
 
     // Temporary mask buffer, reused across slices.
-    let mut mask: Vec<Option<V>> = vec![None; size * size];
+    // Each cell stores `Some((voxel, state))` when the face is visible, or
+    // `None` when it should be skipped.  Two cells are only merged when both
+    // the voxel type AND the state byte match, ensuring that blocks placed
+    // against different faces (which may use different textures) are never
+    // incorrectly merged into a single quad.
+    let mut mask: Vec<Option<(V, u8)>> = vec![None; size * size];
 
     for (face_index, face) in FACE_DIRS.iter().enumerate() {
         for d in 0..size {
@@ -300,9 +305,11 @@ pub(crate) fn build_mesh<V: VoxelType>(
 
 /// Builds the 2D visibility mask for a single slice.
 ///
-/// For each cell `(u, v)` in the slice plane, the mask contains `Some(voxel)`
-/// if the super-voxel is solid and its face in the current direction is
-/// visible (neighbor is air), or `None` otherwise.
+/// For each cell `(u, v)` in the slice plane, the mask contains
+/// `Some((voxel, state))` if the super-voxel is solid and its face in the
+/// current direction is visible (neighbor is air), or `None` otherwise.
+/// The state byte is used by the greedy merge step to prevent cells with
+/// different states from being merged into the same quad.
 #[allow(clippy::type_complexity)]
 #[inline]
 fn build_mask<V: VoxelType>(
@@ -311,7 +318,7 @@ fn build_mask<V: VoxelType>(
     d: usize,
     step: usize,
     size: usize,
-    mask: &mut [Option<V>],
+    mask: &mut [Option<(V, u8)>],
     face_visible: &dyn Fn(&Chunk<V>, usize, usize, usize, &FaceDir, usize) -> bool,
 ) {
     for v in 0..size {
@@ -324,7 +331,8 @@ fn build_mask<V: VoxelType>(
             // is always skipped.
             let has_color = voxel.color()[3] > 0.0;
             if has_color && face_visible(chunk, x, y, z, face, step) {
-                mask[v * size + u] = Some(voxel);
+                let state = chunk.get_state(x, y, z);
+                mask[v * size + u] = Some((voxel, state));
             } else {
                 mask[v * size + u] = None;
             }
@@ -343,10 +351,16 @@ fn slice_to_chunk(face: &FaceDir, d: usize, u: usize, v: usize) -> (usize, usize
 }
 
 /// Greedy-merges the mask and emits quads into the output buffers.
+///
+/// Two cells are merged only when both the voxel type AND the state byte are
+/// identical.  This ensures that blocks placed against different faces — which
+/// may map to different texture layers via
+/// [`crate::voxel::VoxelType::texture_layer_for_state`] — are never collapsed
+/// into a single quad that would display the wrong texture on part of it.
 #[allow(clippy::too_many_arguments)] // All args are distinct output buffers; splitting would add indirection.
 fn greedy_merge<V: VoxelType>(
     chunk: &Chunk<V>,
-    mask: &mut [Option<V>],
+    mask: &mut [Option<(V, u8)>],
     size: usize,
     face: &FaceDir,
     face_index: usize,
@@ -362,17 +376,17 @@ fn greedy_merge<V: VoxelType>(
     for v in 0..size {
         let mut u = 0;
         while u < size {
-            let voxel = match mask[v * size + u] {
-                Some(vx) => vx,
+            let (voxel, state) = match mask[v * size + u] {
+                Some(entry) => entry,
                 None => {
                     u += 1;
                     continue;
                 }
             };
 
-            // Find width: extend in u while same voxel type.
+            // Find width: extend in u while same voxel type AND same state.
             let mut width = 1;
-            while u + width < size && mask[v * size + u + width] == Some(voxel) {
+            while u + width < size && mask[v * size + u + width] == Some((voxel, state)) {
                 width += 1;
             }
 
@@ -380,7 +394,7 @@ fn greedy_merge<V: VoxelType>(
             let mut height = 1;
             'outer: while v + height < size {
                 for du in 0..width {
-                    if mask[(v + height) * size + u + du] != Some(voxel) {
+                    if mask[(v + height) * size + u + du] != Some((voxel, state)) {
                         break 'outer;
                     }
                 }
@@ -396,7 +410,7 @@ fn greedy_merge<V: VoxelType>(
 
             // Emit the quad.
             emit_quad(
-                chunk, face, face_index, d, u, v, width, height, step, voxel,
+                chunk, face, face_index, d, u, v, width, height, step, voxel, state,
                 positions, normals, uvs, colors, texture_layers, indices,
             );
 
@@ -506,6 +520,7 @@ fn emit_quad<V: VoxelType>(
     height: usize,
     step: usize,
     voxel: V,
+    state: u8,
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
@@ -581,7 +596,11 @@ fn emit_quad<V: VoxelType>(
     let base_color = [to_linear(srgb[0]), to_linear(srgb[1]), to_linear(srgb[2]), srgb[3]];
 
     // Texture layer for this face — same for all 4 vertices.
-    let layer = voxel.texture_layer(face_index);
+    // Uses texture_layer_for_state so that voxels with different placement
+    // states can map to different texture layers (e.g. a log showing end-grain
+    // on its top/bottom faces).  The default implementation ignores state and
+    // delegates to texture_layer, so existing code is unaffected.
+    let layer = voxel.texture_layer_for_state(face_index, state);
 
     for &(cu, cv, ao) in &corners {
         let mut pos = [0.0f32; 3];
