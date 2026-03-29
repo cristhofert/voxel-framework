@@ -5,7 +5,8 @@
 //!   Shift — sprint  |  Ctrl — crouch
 //!   Left click — mine block  |  Right click — place block from hotbar
 //!   Scroll wheel — switch hotbar slot
-//!   Escape — pause menu  |  F3 — debug overlay  |  C — crafting menu
+//!   E — inventory  |  C — crafting menu
+//!   Escape — pause menu  |  F3 — debug overlay
 
 use std::sync::Arc;
 use bevy::prelude::*;
@@ -184,8 +185,8 @@ fn main() {
         })
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
-        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures))
-        .add_systems(Update, (update_block_info, assemble_texture_array))
+        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures, spawn_inventory_ui))
+        .add_systems(Update, (update_block_info, assemble_texture_array, toggle_inventory_ui, update_inventory_ui))
         .run();
 }
 
@@ -242,18 +243,21 @@ fn setup_crafting(
 ///
 /// Leaves (6), Snow (8), and Water (9) drop nothing and are not registered.
 fn setup_drops(mut drop_table: ResMut<DropTable<DefaultItem>>) {
-    // Grass → Dirt-like loose material
-    drop_table.register(1, DefaultItem::RockFragment, 1, 2);
-    // Dirt
-    drop_table.register(2, DefaultItem::RockFragment, 1, 2);
-    // Stone — most valuable; requires stone pickaxe (mining_level 1)
-    drop_table.register(3, DefaultItem::RockFragment, 2, 4);
-    // Sand
-    drop_table.register(4, DefaultItem::RockFragment, 1, 2);
-    // Wood — approximation for planks/wood material
-    drop_table.register(5, DefaultItem::RockFragment, 2, 3);
-    // Gravel (mining_level 1)
-    drop_table.register(7, DefaultItem::RockFragment, 1, 3);
+    // Grass → Dirt (like Minetest: grass block drops dirt)
+    drop_table.register(1, DefaultItem::Dirt, 1, 1);
+    // Dirt → Dirt
+    drop_table.register(2, DefaultItem::Dirt, 1, 1);
+    // Stone → Cobblestone (mining_level 1, requires pickaxe)
+    drop_table.register(3, DefaultItem::Cobblestone, 1, 1);
+    // Sand → Sand
+    drop_table.register(4, DefaultItem::Sand, 1, 2);
+    // Wood → Log
+    drop_table.register(5, DefaultItem::Log, 1, 1);
+    // Gravel → Gravel (mining_level 1)
+    drop_table.register(7, DefaultItem::Gravel, 1, 2);
+    // Snow → Snowball
+    drop_table.register(8, DefaultItem::Snowball, 1, 2);
+    // Leaves and Water drop nothing
 }
 
 /// Registers sound effect asset paths.
@@ -426,4 +430,130 @@ fn normalise_to_rgba32(img: &Image) -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+// ─── Inventory UI ─────────────────────────────────────────────────────────────
+
+/// Marker for the root inventory overlay node.
+#[derive(Component)]
+struct InventoryUiRoot;
+
+/// Marker for individual inventory slot nodes (index stored as component).
+#[derive(Component)]
+struct InventorySlotNode(usize);
+
+/// Spawns a 4×9 inventory grid overlay (hidden by default, toggle with E).
+fn spawn_inventory_ui(mut commands: Commands) {
+    const COLS: usize = 9;
+    const ROWS: usize = 4;
+    const SLOT_SIZE: f32 = 44.0;
+    const GAP: f32 = 4.0;
+
+    commands
+        .spawn((
+            InventoryUiRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)),
+            Visibility::Hidden,
+            ZIndex(200),
+        ))
+        .with_children(|root| {
+            // Title
+            root.spawn((
+                Text::new("Inventario"),
+                TextFont { font_size: 20.0, ..default() },
+                TextColor(Color::WHITE),
+                Node { margin: UiRect::bottom(Val::Px(12.0)), ..default() },
+            ));
+
+            // Grid container
+            root.spawn(Node {
+                display: Display::Grid,
+                grid_template_columns: vec![RepeatedGridTrack::px(GridTrackRepetition::Count(COLS as u16), SLOT_SIZE)],
+                column_gap: Val::Px(GAP),
+                row_gap: Val::Px(GAP),
+                ..default()
+            })
+            .with_children(|grid| {
+                for i in 0..(COLS * ROWS) {
+                    grid.spawn((
+                        InventorySlotNode(i),
+                        Node {
+                            width: Val::Px(SLOT_SIZE),
+                            height: Val::Px(SLOT_SIZE),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.9)),
+                    ))
+                    .with_children(|slot| {
+                        slot.spawn((
+                            Text::new(""),
+                            TextFont { font_size: 11.0, ..default() },
+                            TextColor(Color::WHITE),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                bottom: Val::Px(2.0),
+                                right: Val::Px(4.0),
+                                ..default()
+                            },
+                        ));
+                    });
+                }
+            });
+        });
+}
+
+/// Toggles the inventory overlay on E key.
+fn toggle_inventory_ui(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut root_q: Query<&mut Visibility, With<InventoryUiRoot>>,
+) {
+    if keys.just_pressed(KeyCode::KeyE) {
+        if let Ok(mut vis) = root_q.single_mut() {
+            *vis = if *vis == Visibility::Hidden {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
+}
+
+/// Updates each slot's color and count text from the PrimaryContainer.
+fn update_inventory_ui(
+    container_q: Query<&ContainerComponent<DefaultItem>, With<PrimaryContainer>>,
+    mut slot_q: Query<(&InventorySlotNode, &mut BackgroundColor, &Children)>,
+    mut text_q: Query<&mut Text>,
+) {
+    let Ok(container) = container_q.single() else { return };
+
+    for (slot_node, mut bg, children) in &mut slot_q {
+        let item_slot = container.0.slots.get(slot_node.0).and_then(|s| s.as_ref());
+
+        if let Some(slot) = item_slot {
+            let c = slot.item.color();
+            *bg = BackgroundColor(Color::srgba(c[0], c[1], c[2], c[3]));
+            if let Some(&child) = children.first() {
+                if let Ok(mut text) = text_q.get_mut(child) {
+                    *text = Text::new(slot.count.to_string());
+                }
+            }
+        } else {
+            *bg = BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.9));
+            if let Some(&child) = children.first() {
+                if let Ok(mut text) = text_q.get_mut(child) {
+                    *text = Text::new("");
+                }
+            }
+        }
+    }
 }
