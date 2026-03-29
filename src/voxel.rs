@@ -323,6 +323,28 @@ impl VoxelType for DefaultVoxel {
         }
     }
 
+    #[inline]
+    fn hardness(&self) -> f32 {
+        match self {
+            DefaultVoxel::Air            => 0.0,
+            DefaultVoxel::Rock           => 3.0,
+            DefaultVoxel::IronOre        => 4.0,
+            DefaultVoxel::SiliconCrystal => 2.5,
+            DefaultVoxel::RareMineral    => 5.0,
+        }
+    }
+
+    #[inline]
+    fn mining_level(&self) -> u8 {
+        match self {
+            DefaultVoxel::Air            => 0,
+            DefaultVoxel::Rock           => 1,
+            DefaultVoxel::IronOre        => 2,
+            DefaultVoxel::SiliconCrystal => 1,
+            DefaultVoxel::RareMineral    => 2,
+        }
+    }
+
     /// Returns the texture array layer index for this voxel.
     ///
     /// Layers align with the loading order in `basic_world`:
