@@ -405,8 +405,14 @@ impl VoxelType for DefaultVoxel {
 /// | `Wood`   | `5` |
 /// | `Leaves` | `6` |
 /// | `Gravel` | `7` |
-/// | `Snow`   | `8` |
-/// | `Water`  | `9` |
+/// | `Snow`        | `8`  |
+/// | `Water`       | `9`  |
+/// | `CoalOre`     | `10` |
+/// | `IronOre`     | `11` |
+/// | `Cobblestone` | `12` |
+/// | `Sandstone`   | `13` |
+/// | `Planks`      | `14` |
+/// | `Brick`       | `15` |
 ///
 /// Do not change these values; doing so breaks any saved chunk data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -451,6 +457,30 @@ pub enum DefaultTerrainVoxel {
     /// Fills low-elevation air voxels up to the configured water level.
     /// Not solid — adjacent solid faces are still meshed. Linear RGBA: `[0.15, 0.40, 0.75, 1.0]`.
     Water,
+    /// Coal ore — black speckled stone.
+    ///
+    /// Common underground fuel ore. Linear RGBA: `[0.30, 0.30, 0.30, 1.0]`.
+    CoalOre,
+    /// Iron ore — rusty brown stone.
+    ///
+    /// Iron-bearing rock formation. Linear RGBA: `[0.60, 0.45, 0.35, 1.0]`.
+    IronOre,
+    /// Cobblestone — rough gray stone.
+    ///
+    /// Processed stone aggregate. Linear RGBA: `[0.40, 0.40, 0.40, 1.0]`.
+    Cobblestone,
+    /// Sandstone — beige compacted stone.
+    ///
+    /// Compressed sand layers. Linear RGBA: `[0.80, 0.72, 0.45, 1.0]`.
+    Sandstone,
+    /// Planks — warm tan wood.
+    ///
+    /// Processed wood boards. Linear RGBA: `[0.65, 0.48, 0.28, 1.0]`.
+    Planks,
+    /// Brick — deep red fired clay.
+    ///
+    /// Kiln-fired clay building block. Linear RGBA: `[0.65, 0.28, 0.20, 1.0]`.
+    Brick,
 }
 
 impl VoxelType for DefaultTerrainVoxel {
@@ -471,7 +501,13 @@ impl VoxelType for DefaultTerrainVoxel {
             DefaultTerrainVoxel::Leaves => [0.20, 0.55, 0.15, 1.0],
             DefaultTerrainVoxel::Gravel => [0.55, 0.52, 0.50, 1.0],
             DefaultTerrainVoxel::Snow   => [0.92, 0.95, 0.98, 1.0],
-            DefaultTerrainVoxel::Water  => [0.15, 0.40, 0.75, 1.0],
+            DefaultTerrainVoxel::Water       => [0.15, 0.40, 0.75, 1.0],
+            DefaultTerrainVoxel::CoalOre     => [0.30, 0.30, 0.30, 1.0],
+            DefaultTerrainVoxel::IronOre     => [0.60, 0.45, 0.35, 1.0],
+            DefaultTerrainVoxel::Cobblestone => [0.40, 0.40, 0.40, 1.0],
+            DefaultTerrainVoxel::Sandstone   => [0.80, 0.72, 0.45, 1.0],
+            DefaultTerrainVoxel::Planks      => [0.65, 0.48, 0.28, 1.0],
+            DefaultTerrainVoxel::Brick       => [0.65, 0.28, 0.20, 1.0],
         }
     }
 
@@ -487,7 +523,13 @@ impl VoxelType for DefaultTerrainVoxel {
             DefaultTerrainVoxel::Leaves => 6,
             DefaultTerrainVoxel::Gravel => 7,
             DefaultTerrainVoxel::Snow   => 8,
-            DefaultTerrainVoxel::Water  => 9,
+            DefaultTerrainVoxel::Water       => 9,
+            DefaultTerrainVoxel::CoalOre     => 10,
+            DefaultTerrainVoxel::IronOre     => 11,
+            DefaultTerrainVoxel::Cobblestone => 12,
+            DefaultTerrainVoxel::Sandstone   => 13,
+            DefaultTerrainVoxel::Planks      => 14,
+            DefaultTerrainVoxel::Brick       => 15,
         }
     }
 
@@ -502,8 +544,14 @@ impl VoxelType for DefaultTerrainVoxel {
             6 => DefaultTerrainVoxel::Leaves,
             7 => DefaultTerrainVoxel::Gravel,
             8 => DefaultTerrainVoxel::Snow,
-            9 => DefaultTerrainVoxel::Water,
-            _ => DefaultTerrainVoxel::Air,
+            9  => DefaultTerrainVoxel::Water,
+            10 => DefaultTerrainVoxel::CoalOre,
+            11 => DefaultTerrainVoxel::IronOre,
+            12 => DefaultTerrainVoxel::Cobblestone,
+            13 => DefaultTerrainVoxel::Sandstone,
+            14 => DefaultTerrainVoxel::Planks,
+            15 => DefaultTerrainVoxel::Brick,
+            _  => DefaultTerrainVoxel::Air,
         }
     }
 
@@ -519,16 +567,49 @@ impl VoxelType for DefaultTerrainVoxel {
             DefaultTerrainVoxel::Leaves => 0.3,
             DefaultTerrainVoxel::Gravel => 0.75,
             DefaultTerrainVoxel::Snow   => 0.3,
-            DefaultTerrainVoxel::Water  => 0.0, // unbreakable
+            DefaultTerrainVoxel::Water       => 0.0, // unbreakable
+            DefaultTerrainVoxel::CoalOre     => 3.0,
+            DefaultTerrainVoxel::IronOre     => 4.0,
+            DefaultTerrainVoxel::Cobblestone => 2.5,
+            DefaultTerrainVoxel::Sandstone   => 1.5,
+            DefaultTerrainVoxel::Planks      => 1.0,
+            DefaultTerrainVoxel::Brick       => 2.0,
         }
     }
 
     #[inline]
     fn mining_level(&self) -> u8 {
         match self {
-            DefaultTerrainVoxel::Stone  => 1, // requires stone pickaxe or better
-            DefaultTerrainVoxel::Gravel => 1,
-            _ => 0,                           // breakable bare-handed
+            DefaultTerrainVoxel::Stone       => 1,
+            DefaultTerrainVoxel::Gravel      => 1,
+            DefaultTerrainVoxel::CoalOre     => 1,
+            DefaultTerrainVoxel::IronOre     => 2,
+            DefaultTerrainVoxel::Cobblestone => 1,
+            DefaultTerrainVoxel::Sandstone   => 1,
+            DefaultTerrainVoxel::Brick       => 1,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    fn texture_layer(&self, _face_index: usize) -> u32 {
+        match self {
+            DefaultTerrainVoxel::Air         => 0,
+            DefaultTerrainVoxel::Grass       => 1,
+            DefaultTerrainVoxel::Dirt        => 2,
+            DefaultTerrainVoxel::Stone       => 3,
+            DefaultTerrainVoxel::Sand        => 4,
+            DefaultTerrainVoxel::Wood        => 5,
+            DefaultTerrainVoxel::Leaves      => 6,
+            DefaultTerrainVoxel::Gravel      => 7,
+            DefaultTerrainVoxel::Snow        => 8,
+            DefaultTerrainVoxel::Water       => 9,
+            DefaultTerrainVoxel::CoalOre     => 10,
+            DefaultTerrainVoxel::IronOre     => 11,
+            DefaultTerrainVoxel::Cobblestone => 12,
+            DefaultTerrainVoxel::Sandstone   => 13,
+            DefaultTerrainVoxel::Planks      => 14,
+            DefaultTerrainVoxel::Brick       => 15,
         }
     }
 

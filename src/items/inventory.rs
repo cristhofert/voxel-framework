@@ -490,6 +490,20 @@ pub enum DefaultItem {
     Log,
     /// Snowball; drops from Snow voxels.
     Snowball,
+    /// Coal lump; drops from CoalOre voxels.
+    Coal,
+    /// Smelted iron ingot; produced from IronOre.
+    IronIngot,
+    /// Raw coal ore block; placeable CoalOre voxel item.
+    CoalOre,
+    /// Raw iron ore block; placeable IronOre voxel item.
+    IronOreItem,
+    /// Sandstone block; drops from Sandstone voxels.
+    Sandstone,
+    /// Wooden planks block; drops from Planks voxels.
+    Planks,
+    /// Fired clay brick; drops from Brick voxels.
+    Brick,
 }
 
 impl ItemType for DefaultItem {
@@ -508,7 +522,14 @@ impl ItemType for DefaultItem {
             DefaultItem::Sand => "Sand",
             DefaultItem::Gravel => "Gravel",
             DefaultItem::Log => "Log",
-            DefaultItem::Snowball => "Snowball",
+            DefaultItem::Snowball    => "Snowball",
+            DefaultItem::Coal        => "Coal",
+            DefaultItem::IronIngot   => "Iron Ingot",
+            DefaultItem::CoalOre     => "Coal Ore",
+            DefaultItem::IronOreItem => "Iron Ore",
+            DefaultItem::Sandstone   => "Sandstone",
+            DefaultItem::Planks      => "Planks",
+            DefaultItem::Brick       => "Brick",
         }
     }
 
@@ -527,7 +548,14 @@ impl ItemType for DefaultItem {
             DefaultItem::Sand => [0.85, 0.80, 0.55, 1.0],
             DefaultItem::Gravel => [0.50, 0.48, 0.46, 1.0],
             DefaultItem::Log => [0.40, 0.28, 0.12, 1.0],
-            DefaultItem::Snowball => [0.92, 0.95, 1.00, 1.0],
+            DefaultItem::Snowball    => [0.92, 0.95, 1.00, 1.0],
+            DefaultItem::Coal        => [0.15, 0.15, 0.15, 1.0],
+            DefaultItem::IronIngot   => [0.75, 0.65, 0.55, 1.0],
+            DefaultItem::CoalOre     => [0.30, 0.30, 0.30, 1.0],
+            DefaultItem::IronOreItem => [0.60, 0.45, 0.35, 1.0],
+            DefaultItem::Sandstone   => [0.80, 0.72, 0.45, 1.0],
+            DefaultItem::Planks      => [0.65, 0.48, 0.28, 1.0],
+            DefaultItem::Brick       => [0.65, 0.28, 0.20, 1.0],
         }
     }
 
@@ -546,7 +574,14 @@ impl ItemType for DefaultItem {
             DefaultItem::Sand => 10,
             DefaultItem::Gravel => 11,
             DefaultItem::Log => 12,
-            DefaultItem::Snowball => 13,
+            DefaultItem::Snowball    => 13,
+            DefaultItem::Coal        => 14,
+            DefaultItem::IronIngot   => 15,
+            DefaultItem::CoalOre     => 16,
+            DefaultItem::IronOreItem => 17,
+            DefaultItem::Sandstone   => 18,
+            DefaultItem::Planks      => 19,
+            DefaultItem::Brick       => 20,
         }
     }
 
@@ -565,6 +600,13 @@ impl ItemType for DefaultItem {
             11 => DefaultItem::Gravel,
             12 => DefaultItem::Log,
             13 => DefaultItem::Snowball,
+            14 => DefaultItem::Coal,
+            15 => DefaultItem::IronIngot,
+            16 => DefaultItem::CoalOre,
+            17 => DefaultItem::IronOreItem,
+            18 => DefaultItem::Sandstone,
+            19 => DefaultItem::Planks,
+            20 => DefaultItem::Brick,
             _ => DefaultItem::Empty,
         }
     }
