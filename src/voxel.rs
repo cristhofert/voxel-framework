@@ -184,6 +184,47 @@ pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Has
     fn air() -> Self {
         Self::default()
     }
+
+    /// Returns the movement modifier applied to the player while standing on
+    /// this voxel type.
+    ///
+    /// The modifier scales speed, jump height, gravity, and friction
+    /// independently. All fields default to `1.0` (identity — no change).
+    /// Override for voxel types that should slow, accelerate, or alter
+    /// jump/friction behaviour.
+    fn movement_modifier(&self) -> MovementModifier {
+        MovementModifier::default()
+    }
+}
+
+/// Per-surface movement modifiers applied by [`VoxelType::movement_modifier`].
+///
+/// Each field is a multiplier applied to the corresponding movement parameter
+/// while the player stands on the voxel. A value of `1.0` is the identity
+/// (no change). Values below `1.0` reduce; values above `1.0` amplify.
+///
+/// | Field | Applied to |
+/// |-------|-----------|
+/// | `speed_mult`   | Horizontal target speed |
+/// | `jump_mult`    | Jump impulse |
+/// | `gravity_mult` | Per-frame gravity accumulation |
+/// | `friction_mult`| Deceleration lerp factor (`DECEL * friction_mult`) |
+///
+/// # Convention
+/// - `friction_mult < 1.0` → slippery (less decel, e.g. Ice)
+/// - `speed_mult < 1.0` → movement slowed (e.g. Water, Snow)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MovementModifier {
+    pub speed_mult: f32,
+    pub jump_mult: f32,
+    pub gravity_mult: f32,
+    pub friction_mult: f32,
+}
+
+impl Default for MovementModifier {
+    fn default() -> Self {
+        Self { speed_mult: 1.0, jump_mult: 1.0, gravity_mult: 1.0, friction_mult: 1.0 }
+    }
 }
 
 /// The built-in five-material voxel palette used by all bundled systems.
@@ -444,6 +485,23 @@ impl VoxelType for DefaultTerrainVoxel {
             DefaultTerrainVoxel::Stone  => 1, // requires stone pickaxe or better
             DefaultTerrainVoxel::Gravel => 1,
             _ => 0,                           // breakable bare-handed
+        }
+    }
+
+    #[inline]
+    fn movement_modifier(&self) -> MovementModifier {
+        match self {
+            DefaultTerrainVoxel::Water => MovementModifier {
+                speed_mult: 0.4,
+                jump_mult: 0.5,
+                gravity_mult: 1.0,
+                friction_mult: 1.0,
+            },
+            DefaultTerrainVoxel::Snow => MovementModifier {
+                speed_mult: 0.7,
+                ..MovementModifier::default()
+            },
+            _ => MovementModifier::default(),
         }
     }
 }

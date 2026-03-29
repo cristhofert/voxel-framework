@@ -4,7 +4,7 @@
 //! public framework types without needing individual imports.
 
 // Voxel types
-pub use crate::voxel::{DefaultVoxel, DefaultTerrainVoxel, VoxelPalette, VoxelType};
+pub use crate::voxel::{DefaultVoxel, DefaultTerrainVoxel, MovementModifier, VoxelPalette, VoxelType};
 
 // Crafting
 pub use crate::crafting::{

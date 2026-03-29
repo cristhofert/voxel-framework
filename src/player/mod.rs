@@ -572,11 +572,13 @@ pub fn player_look(
 /// After translating the entity, the system writes the new world position to
 /// [`ViewerPosition`] so the chunk streaming system can load/unload chunks
 /// around the player without querying the player transform directly.
-pub fn player_move(
+pub fn player_move<V: VoxelType>(
     mut query: Query<(&mut Player, &mut Transform)>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut viewer: ResMut<ViewerPosition>,
+    manager: Res<ChunkManager>,
+    chunks: Query<&Chunk<V>>,
 ) {
     let Ok((mut player, mut transform)) = query.single_mut() else {
         return;
@@ -646,13 +648,20 @@ pub fn player_move(
                 1.0
             };
 
+            // Sample the block under the player's feet to get movement modifiers.
+            let foot_pos = transform.translation - Vec3::Y * (PLAYER_HALF_HEIGHT + 0.3);
+            let modifier = get_voxel_at::<V>(foot_pos, &manager, &chunks)
+                .map(|v| v.movement_modifier())
+                .unwrap_or_default();
+
             let h_target = if h_dir != Vec3::ZERO {
-                h_dir.normalize() * player.speed * speed_mult
+                h_dir.normalize() * player.speed * speed_mult * modifier.speed_mult
             } else {
                 Vec3::ZERO
             };
 
-            let factor = if h_dir != Vec3::ZERO { ACCEL } else { DECEL };
+            let effective_decel = DECEL * modifier.friction_mult;
+            let factor = if h_dir != Vec3::ZERO { ACCEL } else { effective_decel };
             player.velocity = player.velocity.lerp(h_target, (factor * dt).min(1.0));
 
             // Freeze gravity until the initial chunk load completes so the
@@ -666,11 +675,11 @@ pub fn player_move(
 
             // Jump impulse (only when on the ground; disabled while crouching).
             if keys.just_pressed(KeyCode::Space) && player.on_ground && !crouching {
-                player.vertical_velocity = jump_speed;
+                player.vertical_velocity = jump_speed * modifier.jump_mult;
             }
 
             // Apply gravity.
-            player.vertical_velocity -= gravity * dt;
+            player.vertical_velocity -= gravity * modifier.gravity_mult * dt;
 
             // Translate: horizontal from smoothed velocity + vertical from gravity.
             transform.translation += player.velocity * dt;
@@ -1126,7 +1135,7 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
             Update,
             (
                 player_look,
-                player_move,
+                player_move::<V>,
                 player_resolve_collision::<V>,
                 player_fall_damage,
                 player_footstep_system::<V>,
