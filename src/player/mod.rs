@@ -146,6 +146,20 @@ impl Default for PlayerHealth {
     }
 }
 
+// ─── PlayerCrouching resource ─────────────────────────────────────────────────
+
+/// Tracks whether the player is currently crouching.
+///
+/// Updated every frame by [`player_move`] in [`PlayerMode::Grounded`] mode
+/// based on `ControlLeft` key state. Readable by external systems (e.g. UI,
+/// animation) without querying the [`Player`] component directly.
+///
+/// The resource mirrors [`Player::crouching`] and is kept in sync by
+/// [`player_move`] each frame. Modifying it directly has no effect — it is
+/// overwritten by the movement system.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerCrouching(pub bool);
+
 // ─── PlayerMode ──────────────────────────────────────────────────────────────
 
 /// Selects the movement model used by [`PlayerPlugin`] and the player systems.
@@ -220,6 +234,13 @@ pub const PLAYER_HALF_HEIGHT: f32 = 1.8;
 /// gaps that are one voxel tall. Used by [`player_resolve_collision`] when
 /// [`Player::crouching`] is `true` in [`PlayerMode::Grounded`] mode.
 pub const CROUCH_HALF_HEIGHT: f32 = PLAYER_HALF_HEIGHT * 0.6;
+
+/// Speed multiplier applied to horizontal movement while sprinting.
+///
+/// Active in [`PlayerMode::Grounded`] when `Shift` is held and the player is
+/// on solid ground. Crouch takes priority — if both are held this multiplier
+/// is not applied. See [`player_move`] and [`PlayerCrouching`].
+pub const SPRINT_MULTIPLIER: f32 = 1.6;
 
 /// Lerp factor applied when the player is accelerating.
 const ACCEL: f32 = 12.0;
@@ -579,6 +600,7 @@ pub fn player_move<V: VoxelType>(
     mut viewer: ResMut<ViewerPosition>,
     manager: Res<ChunkManager>,
     chunks: Query<&Chunk<V>>,
+    mut crouch_res: ResMut<PlayerCrouching>,
 ) {
     let Ok((mut player, mut transform)) = query.single_mut() else {
         return;
@@ -591,6 +613,7 @@ pub fn player_move<V: VoxelType>(
             // Sprint/crouch are not applicable in FreeFlight.
             player.sprinting = false;
             player.crouching = false;
+            crouch_res.0 = false;
 
             // Local-space axes — full 6DOF.
             let forward = transform.rotation * Vec3::NEG_Z;
@@ -640,10 +663,11 @@ pub fn player_move<V: VoxelType>(
                     || keys.pressed(KeyCode::ShiftRight));
             player.crouching = crouching;
             player.sprinting = sprinting;
+            crouch_res.0 = crouching;
             let speed_mult = if crouching {
-                0.4
+                0.5
             } else if sprinting {
-                1.6
+                SPRINT_MULTIPLIER
             } else {
                 1.0
             };
@@ -1143,6 +1167,7 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
         app.insert_resource(WorldDataDir::for_world(name));
         app.init_resource::<PlayerConfig>();
         app.init_resource::<PlayerHealth>();
+        app.init_resource::<PlayerCrouching>();
         app.add_message::<PlayerDamaged>();
         app.add_message::<PlayerDied>();
         app.add_systems(Startup, (load_spawn_on_startup, spawn_player).chain());
