@@ -376,7 +376,22 @@ impl WorldConfig {
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Startup system that loads `WorldConfig` and applies it to [`ChunkManager`].
-fn load_world_config(mut commands: Commands, mut chunk_manager: ResMut<ChunkManager>) {
+///
+/// If the game already inserted a `WorldConfig` resource (e.g. via
+/// `app.insert_resource(my_config)`), this system respects it and only
+/// syncs the distances to `ChunkManager` without overwriting.
+fn load_world_config(
+    mut commands: Commands,
+    mut chunk_manager: ResMut<ChunkManager>,
+    existing: Option<Res<WorldConfig>>,
+) {
+    if let Some(config) = existing {
+        // Game provided its own config — apply distances and skip file loading.
+        chunk_manager.load_distance = config.load_distance;
+        chunk_manager.unload_distance = config.unload_distance;
+        return;
+    }
+
     let config = WorldConfig::from_file("world.toml")
         .inspect_err(|e| {
             eprintln!("voxel-framework: world.toml not found or invalid ({e}), using default WorldConfig");
