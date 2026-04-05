@@ -34,6 +34,7 @@ use bevy::prelude::*;
 use crate::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
 use crate::skybox::{SkyboxConfig, SkyboxMode, StarfieldConfig};
 use crate::world::ChunkManager;
+use crate::world::manifest::WorldManifest;
 
 // ─── Config structs ───────────────────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ impl Default for LightingConfig {
 }
 
 fn default_world_name() -> String { "world".to_string() }
+fn default_example() -> String { "basic_world".to_string() }
 fn default_seed() -> u64 { 42 }
 fn default_load_distance() -> f32 { 150.0 }
 fn default_unload_distance() -> f32 { 200.0 }
@@ -176,6 +178,11 @@ fn default_unload_distance() -> f32 { 200.0 }
 /// ```
 #[derive(Resource, Debug, Clone, serde::Deserialize)]
 pub struct WorldConfig {
+    /// Which example game to run when launched via `examples/voxel.rs`.
+    ///
+    /// Recognized values: `"basic_world"`, `"minetest"`.  Default: `"basic_world"`.
+    #[serde(default = "default_example")]
+    pub example: String,
     /// Name of this world, used as the folder under `worlds/` for chunk and
     /// player data storage.  Default: `"world"`.
     ///
@@ -216,6 +223,7 @@ pub struct WorldConfig {
 impl Default for WorldConfig {
     fn default() -> Self {
         Self {
+            example: "basic_world".to_string(),
             world_name: "world".to_string(),
             seed: 42,
             spawn_position: [0.0, 0.0, 0.0],
@@ -319,6 +327,49 @@ impl WorldConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config: Self = toml::from_str(s)?;
         Ok(config)
+    }
+
+    /// Loads [`WorldConfig`] from a world directory's `world.json` manifest.
+    ///
+    /// Reads `worlds/{world_name}/world.json` and extracts the fields that are
+    /// stored there (`seed`, `spawn_position`, `load_distance`,
+    /// `unload_distance`). All other fields keep their [`Default`] values.
+    ///
+    /// Returns defaults (with `world_name` set) if the file is missing or
+    /// cannot be parsed — no panic occurs.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use voxel_framework::world::WorldConfig;
+    ///
+    /// // First run: world.json does not exist yet → defaults.
+    /// // Subsequent runs: world.json was written by WorldManifestPlugin → loaded.
+    /// let config = WorldConfig::from_world_dir("survival");
+    /// println!("seed = {}", config.seed);
+    /// ```
+    pub fn from_world_dir(world_name: &str) -> Self {
+        let world_dir = std::path::Path::new("worlds").join(world_name);
+        match WorldManifest::read(&world_dir) {
+            Ok(manifest) => Self {
+                world_name: manifest.world_name,
+                seed: manifest.seed,
+                spawn_position: manifest.spawn_position,
+                load_distance: manifest.load_distance,
+                unload_distance: manifest.unload_distance,
+                ..Self::default()
+            },
+            Err(e) => {
+                eprintln!(
+                    "voxel-framework: could not read worlds/{}/world.json ({e}), using defaults",
+                    world_name
+                );
+                Self {
+                    world_name: world_name.to_string(),
+                    ..Self::default()
+                }
+            }
+        }
     }
 }
 
