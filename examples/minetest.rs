@@ -151,6 +151,8 @@ fn main() {
         .add_plugins(MobPlugin::<DefaultTerrainVoxel>::new())
         // ── Audio (real bevy_audio playback) ────────────────────────────────
         .add_plugins(DefaultAudioPlugin)
+        // ── World manifest (writes world.json on first run) ──────────────────
+        .add_plugins(WorldManifestPlugin::<DefaultTerrainVoxel, DefaultItem>::new("DefaultTerrainVoxel"))
         // ── Pause menu ───────────────────────────────────────────────────────
         .add_plugins(PauseMenuPlugin)
         // ── Resources ────────────────────────────────────────────────────────

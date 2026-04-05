@@ -122,5 +122,8 @@ pub use crate::mobs::{
     spawn_mob, MOB_HALF_HEIGHT, MOB_RADIUS,
 };
 
+// World manifest
+pub use crate::world::manifest::{WorldManifest, WorldManifestPlugin, VoxelPaletteEntry};
+
 // Top-level plugins
 pub use crate::{VoxelCorePlugin, VoxelPlugin};
