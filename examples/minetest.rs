@@ -244,24 +244,25 @@ fn setup_crafting(
 /// Populates the [`DropTable`] with item drops for each terrain voxel.
 ///
 /// Byte mapping (matches `DefaultTerrainVoxel::to_byte`):
-///   1 = Grass, 2 = Dirt, 3 = Stone, 4 = Sand, 5 = Wood, 7 = Gravel
+///   1 = Grass, 3 = Stone, 5 = Wood, 8 = Snow, 10 = CoalOre
 ///
-/// Leaves (6), Snow (8), and Water (9) drop nothing and are not registered.
+/// Identity drops (voxel byte == item byte) are omitted — the framework
+/// handles those automatically via the shared byte key:
+///   Dirt (2), Sand (4), Gravel (7), Cobblestone (12), Sandstone (13),
+///   Planks (14), Brick (15).
+///
+/// Leaves (6) and Water (9) drop nothing and are not registered.
 fn setup_drops(mut drop_table: ResMut<DropTable<DefaultItem>>) {
-    // Grass → Dirt (like Minetest: grass block drops dirt)
+    // Grass → Dirt (grass block drops dirt, no placeable Grass item)
     drop_table.register(1, DefaultItem::Dirt, 1, 1);
-    // Dirt → Dirt
-    drop_table.register(2, DefaultItem::Dirt, 1, 1);
     // Stone → Cobblestone (mining_level 1, requires pickaxe)
     drop_table.register(3, DefaultItem::Cobblestone, 1, 1);
-    // Sand → Sand
-    drop_table.register(4, DefaultItem::Sand, 1, 2);
-    // Wood → Log
+    // Wood → Log (wood voxel drops a log item, not a wood block)
     drop_table.register(5, DefaultItem::Log, 1, 1);
-    // Gravel → Gravel (mining_level 1)
-    drop_table.register(7, DefaultItem::Gravel, 1, 2);
-    // Snow → Snowball
+    // Snow → Snowball (snow voxel drops a snowball, not a snow block)
     drop_table.register(8, DefaultItem::Snowball, 1, 2);
+    // CoalOre → Coal (ore drops processed coal lump)
+    drop_table.register(10, DefaultItem::Coal, 1, 1);
     // Leaves and Water drop nothing
 }
 
