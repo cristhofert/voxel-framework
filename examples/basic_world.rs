@@ -52,6 +52,7 @@ fn main() {
         .add_plugins(PersistencePlugin::<DefaultVoxel>::with_world(&world_config.world_name))
         .add_plugins(PauseMenuPlugin)
         .add_plugins(PlayerPlugin::<DefaultVoxel>::with_world(&world_config.world_name))
+        .add_plugins(WorldManifestPlugin::<DefaultVoxel, DefaultItem>::new("DefaultVoxel"))
         .insert_resource({
             let mut sfx = SfxConfig::new();
             sfx.register(SfxEvent::Mining, vec![

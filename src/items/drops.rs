@@ -87,6 +87,14 @@ impl<I: ItemType> DropTable<I> {
         self.entries.insert(voxel_byte, (item, min, max));
     }
 
+    /// Iterates over all explicitly registered drop entries.
+    ///
+    /// Yields `(voxel_byte, item, min_count, max_count)` for each registration.
+    /// Identity-fallback entries (not explicitly registered) are not included.
+    pub fn iter_entries(&self) -> impl Iterator<Item = (u8, I, u32, u32)> + '_ {
+        self.entries.iter().map(|(&voxel_byte, &(item, min, max))| (voxel_byte, item, min, max))
+    }
+
     /// Returns the drop for `voxel_byte`, using `seed` for deterministic count
     /// selection within `[min, max]`.
     ///

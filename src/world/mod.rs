@@ -86,6 +86,7 @@
 pub mod collision;
 pub mod config;
 pub mod loading;
+pub mod manifest;
 pub mod mining;
 pub mod occlusion;
 pub mod persistence;
