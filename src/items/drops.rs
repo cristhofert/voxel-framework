@@ -90,17 +90,29 @@ impl<I: ItemType> DropTable<I> {
     /// Returns the drop for `voxel_byte`, using `seed` for deterministic count
     /// selection within `[min, max]`.
     ///
-    /// Returns `None` if no entry is registered for `voxel_byte`.
+    /// Explicit registrations always win. If no entry is registered for
+    /// `voxel_byte`, falls back to the identity mapping: `I::from_byte(voxel_byte)`
+    /// with count 1. If the resulting item is the empty sentinel (i.e.
+    /// `item.to_byte() == 0`), returns `None` — meaning no drop.
     pub fn get_drop(&self, voxel_byte: u8, seed: u64) -> Option<(I, u32)> {
-        let &(item, min, max) = self.entries.get(&voxel_byte)?;
-        let count = if min == max {
-            min
+        if let Some(&(item, min, max)) = self.entries.get(&voxel_byte) {
+            let count = if min == max {
+                min
+            } else {
+                let range = (max - min + 1) as u64;
+                min + (seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) % range)
+                    as u32
+            };
+            return Some((item, count));
+        }
+
+        // Identity fallback: try mapping the voxel byte directly to an item.
+        let item = I::from_byte(voxel_byte);
+        if item.to_byte() != 0 {
+            Some((item, 1))
         } else {
-            let range = (max - min + 1) as u64;
-            min + (seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) % range)
-                as u32
-        };
-        Some((item, count))
+            None
+        }
     }
 }
 

@@ -64,6 +64,7 @@ use bevy::prelude::Resource;
 /// pub enum MyVoxel { #[default] Air, Stone }
 ///
 /// impl VoxelType for MyVoxel {
+///     fn name(&self) -> &'static str { match self { MyVoxel::Air => "Air", MyVoxel::Stone => "Stone" } }
 ///     fn is_solid(&self) -> bool { !matches!(self, MyVoxel::Air) }
 ///     fn color(&self) -> [f32; 4] {
 ///         match self {
@@ -83,6 +84,9 @@ use bevy::prelude::Resource;
 ///
 /// [`air`]: VoxelType::air
 pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash + 'static {
+    /// Human-readable name for this voxel type. Used in UI and world manifest.
+    fn name(&self) -> &'static str;
+
     /// Returns `true` if this voxel occupies space and should produce mesh geometry.
     ///
     /// The meshing system skips faces between two adjacent solid voxels, so
@@ -314,6 +318,17 @@ pub enum DefaultVoxel {
 
 impl VoxelType for DefaultVoxel {
     #[inline]
+    fn name(&self) -> &'static str {
+        match self {
+            DefaultVoxel::Air             => "Air",
+            DefaultVoxel::Rock            => "Rock",
+            DefaultVoxel::IronOre         => "Iron Ore",
+            DefaultVoxel::SiliconCrystal  => "Silicon Crystal",
+            DefaultVoxel::RareMineral     => "Rare Mineral",
+        }
+    }
+
+    #[inline]
     fn is_solid(&self) -> bool {
         !matches!(self, DefaultVoxel::Air)
     }
@@ -491,6 +506,28 @@ pub enum DefaultTerrainVoxel {
 }
 
 impl VoxelType for DefaultTerrainVoxel {
+    #[inline]
+    fn name(&self) -> &'static str {
+        match self {
+            DefaultTerrainVoxel::Air         => "Air",
+            DefaultTerrainVoxel::Grass       => "Grass",
+            DefaultTerrainVoxel::Dirt        => "Dirt",
+            DefaultTerrainVoxel::Stone       => "Stone",
+            DefaultTerrainVoxel::Sand        => "Sand",
+            DefaultTerrainVoxel::Wood        => "Wood",
+            DefaultTerrainVoxel::Leaves      => "Leaves",
+            DefaultTerrainVoxel::Gravel      => "Gravel",
+            DefaultTerrainVoxel::Snow        => "Snow",
+            DefaultTerrainVoxel::Water       => "Water",
+            DefaultTerrainVoxel::CoalOre     => "Coal Ore",
+            DefaultTerrainVoxel::IronOre     => "Iron Ore",
+            DefaultTerrainVoxel::Cobblestone => "Cobblestone",
+            DefaultTerrainVoxel::Sandstone   => "Sandstone",
+            DefaultTerrainVoxel::Planks      => "Planks",
+            DefaultTerrainVoxel::Brick       => "Brick",
+        }
+    }
+
     #[inline]
     fn is_solid(&self) -> bool {
         !matches!(self, DefaultTerrainVoxel::Air | DefaultTerrainVoxel::Water)

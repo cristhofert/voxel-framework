@@ -50,21 +50,6 @@ struct LookedAtBlock {
 #[derive(Component)]
 struct BlockInfoText;
 
-/// Human-readable name for each terrain voxel type.
-fn voxel_name(v: DefaultTerrainVoxel) -> &'static str {
-    match v {
-        DefaultTerrainVoxel::Air    => "Air",
-        DefaultTerrainVoxel::Grass  => "Grass",
-        DefaultTerrainVoxel::Dirt   => "Dirt",
-        DefaultTerrainVoxel::Stone  => "Stone",
-        DefaultTerrainVoxel::Sand   => "Sand",
-        DefaultTerrainVoxel::Wood   => "Wood",
-        DefaultTerrainVoxel::Leaves => "Leaves",
-        DefaultTerrainVoxel::Gravel => "Gravel",
-        DefaultTerrainVoxel::Snow   => "Snow",
-        DefaultTerrainVoxel::Water  => "Water",
-    }
-}
 
 /// Spawns the block-info HUD text — always visible, top-left below the F3 overlay.
 fn spawn_block_info_ui(mut commands: Commands) {
@@ -115,7 +100,7 @@ fn update_block_info(
     *text = match &looked_at.voxel {
         Some((v, pos)) => Text::new(format!(
             "Mirando: {} (hardness: {:.1}, lvl: {})\nPos: ({}, {}, {})",
-            voxel_name(*v),
+            v.name(),
             v.hardness(),
             v.mining_level(),
             pos.x, pos.y, pos.z,
@@ -186,7 +171,12 @@ fn main() {
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
         .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures, spawn_inventory_ui))
-        .add_systems(Update, (update_block_info, assemble_texture_array, toggle_inventory_ui, update_inventory_ui))
+        .add_systems(Update, (
+            update_block_info,
+            assemble_texture_array,
+            toggle_inventory_ui,
+            update_inventory_ui,
+        ).run_if(in_state(PauseMenuState::Playing)))
         .run();
 }
 
