@@ -110,16 +110,29 @@ fn update_block_info(
 }
 
 /// Reads `--world <name>` from CLI args.  Falls back to `default_name`.
-/// Loads `examples/<name>.toml` and returns the parsed config.
+///
+/// Load order:
+/// 1. `worlds/<name>/world.json` — if the world has been run before, load from
+///    the self-contained manifest written by [`WorldManifestPlugin`].
+/// 2. `examples/<name>.toml` — template config for the first run.
+/// 3. [`WorldConfig::default`] with `world_name` set — if neither file exists.
 fn load_world_config(default_name: &str) -> WorldConfig {
     let args: Vec<String> = std::env::args().collect();
     let name = args.windows(2)
         .find(|w| w[0] == "--world")
         .map(|w| w[1].clone())
         .unwrap_or_else(|| default_name.to_string());
-    let path = format!("examples/{}.toml", name);
-    WorldConfig::from_file(&path)
-        .inspect_err(|e| eprintln!("No se pudo cargar '{path}': {e}. Usando defaults."))
+
+    // Try the persisted world manifest first.
+    let manifest_path = format!("worlds/{}/world.json", name);
+    if std::path::Path::new(&manifest_path).exists() {
+        return WorldConfig::from_world_dir(&name);
+    }
+
+    // Fall back to the TOML template for the first run.
+    let toml_path = format!("examples/{}.toml", name);
+    WorldConfig::from_file(&toml_path)
+        .inspect_err(|e| eprintln!("No se pudo cargar '{toml_path}': {e}. Usando defaults."))
         .unwrap_or_else(|_| WorldConfig { world_name: name, ..WorldConfig::default() })
 }
 
