@@ -1,4 +1,5 @@
-# Configuración para examples/basic_world.rs
+# Configuración para examples/voxel.rs -- --world basic_world
+example    = "basic_world"
 world_name = "basic_world"
 seed = 42
 spawn_position = [0.0, 0.0, 150.0]
