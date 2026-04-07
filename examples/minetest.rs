@@ -183,6 +183,7 @@ fn main() {
             time_of_day: 0.35,      // start mid-morning — sun visible
             ..default()
         })
+        .insert_resource(world_config)
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
         .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures, spawn_inventory_ui))
