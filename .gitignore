@@ -4,3 +4,4 @@ worlds/
 *.swp
 .DS_Store
 assets/
+.atl/
