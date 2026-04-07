@@ -18,6 +18,66 @@ use voxel_framework::items::{DefaultItem, ItemCollector};
 use voxel_framework::items::inventory::{ContainerComponent, PrimaryContainer};
 use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
 
+// ─── Status effects ──────────────────────────────────────────────────────────
+
+#[derive(Clone, PartialEq)]
+enum MinetestEffect {
+    Speed,
+    Slowness,
+    JumpBoost,
+    Haste,
+    MiningFatigue,
+    Regeneration,
+    Poison,
+    Resistance,
+}
+
+impl StatusEffect for MinetestEffect {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Speed         => "Speed",
+            Self::Slowness      => "Slowness",
+            Self::JumpBoost     => "Jump Boost",
+            Self::Haste         => "Haste",
+            Self::MiningFatigue => "Mining Fatigue",
+            Self::Regeneration  => "Regeneration",
+            Self::Poison        => "Poison",
+            Self::Resistance    => "Resistance",
+        }
+    }
+
+    fn modifiers(&self, amplifier: u8) -> EffectModifiers {
+        let lvl = (amplifier + 1) as f32;
+        match self {
+            Self::Speed        => EffectModifiers { speed_mult: 1.0 + 0.2 * lvl, ..Default::default() },
+            Self::Slowness     => EffectModifiers { speed_mult: 1.0 / (1.0 + 0.15 * lvl), ..Default::default() },
+            Self::JumpBoost    => EffectModifiers { jump_mult: 1.0 + 0.2 * lvl, ..Default::default() },
+            Self::Haste        => EffectModifiers { mining_speed_mult: 1.0 + 0.2 * lvl, ..Default::default() },
+            Self::MiningFatigue => EffectModifiers { mining_speed_mult: 1.0 / (1.0 + 0.3 * lvl), ..Default::default() },
+            Self::Regeneration => EffectModifiers { regen_per_sec: 1.0 * lvl, ..Default::default() },
+            Self::Poison       => EffectModifiers { damage_per_sec: 1.0 * lvl, ..Default::default() },
+            Self::Resistance   => EffectModifiers { damage_resistance: 0.2 * lvl, ..Default::default() },
+        }
+    }
+
+    fn is_beneficial(&self) -> bool {
+        !matches!(self, Self::Slowness | Self::MiningFatigue | Self::Poison)
+    }
+
+    fn color(&self) -> [f32; 4] {
+        match self {
+            Self::Speed         => [0.4, 0.8, 1.0, 1.0],
+            Self::Slowness      => [0.5, 0.5, 0.7, 1.0],
+            Self::JumpBoost     => [0.5, 1.0, 0.5, 1.0],
+            Self::Haste         => [0.9, 0.7, 0.2, 1.0],
+            Self::MiningFatigue => [0.3, 0.2, 0.5, 1.0],
+            Self::Regeneration  => [0.6, 1.0, 0.6, 1.0],
+            Self::Poison        => [0.4, 0.6, 0.1, 1.0],
+            Self::Resistance    => [0.6, 0.4, 0.8, 1.0],
+        }
+    }
+}
+
 /// Handles to the voxel textures pending assembly into a texture array.
 ///
 /// Layers (match `DefaultTerrainVoxel::texture_layer`):
@@ -166,6 +226,8 @@ fn main() {
         .add_plugins(DefaultAudioPlugin)
         // ── World manifest (writes world.json on first run) ──────────────────
         .add_plugins(WorldManifestPlugin::<DefaultTerrainVoxel, DefaultItem>::new("DefaultTerrainVoxel"))
+        // ── Status effects ────────────────────────────────────────────────────
+        .add_plugins(StatusEffectsPlugin::<MinetestEffect>::new())
         // ── Pause menu ───────────────────────────────────────────────────────
         .add_plugins(PauseMenuPlugin)
         // ── Resources ────────────────────────────────────────────────────────

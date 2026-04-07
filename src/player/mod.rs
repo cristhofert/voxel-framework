@@ -95,6 +95,7 @@ use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::VoxelType;
 use crate::world::{ChunkManager, ViewerPosition, WorldDataDir, get_voxel_at};
 
+pub mod effects;
 pub mod persistence;
 
 // ─── Health & damage messages ─────────────────────────────────────────────────
@@ -601,6 +602,7 @@ pub fn player_move<V: VoxelType>(
     manager: Res<ChunkManager>,
     chunks: Query<&Chunk<V>>,
     mut crouch_res: ResMut<PlayerCrouching>,
+    applied: Option<Res<effects::AppliedEffectModifiers>>,
 ) {
     let Ok((mut player, mut transform)) = query.single_mut() else {
         return;
@@ -678,8 +680,9 @@ pub fn player_move<V: VoxelType>(
                 .map(|v| v.movement_modifier())
                 .unwrap_or_default();
 
+            let effect_speed = applied.as_deref().map(|a| a.0.speed_mult).unwrap_or(1.0);
             let h_target = if h_dir != Vec3::ZERO {
-                h_dir.normalize() * player.speed * speed_mult * modifier.speed_mult
+                h_dir.normalize() * player.speed * speed_mult * modifier.speed_mult * effect_speed
             } else {
                 Vec3::ZERO
             };
@@ -699,7 +702,8 @@ pub fn player_move<V: VoxelType>(
 
             // Jump impulse (only when on the ground; disabled while crouching).
             if keys.just_pressed(KeyCode::Space) && player.on_ground && !crouching {
-                player.vertical_velocity = jump_speed * modifier.jump_mult;
+                let effect_jump = applied.as_deref().map(|a| a.0.jump_mult).unwrap_or(1.0);
+                player.vertical_velocity = jump_speed * modifier.jump_mult * effect_jump;
             }
 
             // Apply gravity.
