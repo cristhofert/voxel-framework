@@ -7,6 +7,10 @@
 //!   Scroll wheel — switch hotbar slot
 //!   E — inventory  |  C — crafting menu
 //!   Escape — pause menu  |  F3 — debug overlay
+//!
+//! Debug effects (for demo/testing):
+//!   F5 — Speed effect  |  F6 — Regeneration effect
+//!   F7 — Poison effect  |  F8 — Jump Boost effect
 
 use std::sync::Arc;
 use bevy::prelude::*;
@@ -20,6 +24,7 @@ use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
 
 // ─── Status effects ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 enum MinetestEffect {
     Speed,
@@ -254,6 +259,7 @@ fn main() {
             assemble_texture_array,
             toggle_inventory_ui,
             update_inventory_ui,
+            debug_apply_effects,
         ).run_if(in_state(PauseMenuState::Playing)))
         .add_systems(Update, update_effects_hud)
         .run();
@@ -508,9 +514,9 @@ fn normalise_to_rgba32(img: &Image) -> Image {
 #[derive(Component)]
 struct EffectsHudRoot;
 
-/// Marker for a single effect row; the index refers to `ActiveEffects::effects`.
+/// Marker for a single effect row.
 #[derive(Component)]
-struct EffectHudRow(usize);
+struct EffectHudRow;
 
 /// Spawns the effects HUD root node — initially hidden.
 fn spawn_effects_hud(mut commands: Commands) {
@@ -552,7 +558,7 @@ fn update_effects_hud(
     *root_vis = Visibility::Visible;
 
     // 4. Spawn one row per active effect.
-    for (i, active) in effects.effects.iter().enumerate() {
+    for active in effects.effects.iter() {
         let c = active.effect.color();
         let first_char = active.effect.name().chars().next().unwrap_or('?').to_string();
         let secs_text = format!("{:.0}s", active.remaining_secs);
@@ -592,7 +598,7 @@ fn update_effects_hud(
 
         // Row (horizontal flex).
         let row = commands.spawn((
-            EffectHudRow(i),
+            EffectHudRow,
             Node {
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
@@ -603,6 +609,24 @@ fn update_effects_hud(
         .id();
 
         commands.entity(root_entity).add_child(row);
+    }
+}
+
+fn debug_apply_effects(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut effects: ResMut<ActiveEffects<MinetestEffect>>,
+) {
+    if keys.just_pressed(KeyCode::F5) {
+        effects.apply(MinetestEffect::Speed, 1, 10.0);
+    }
+    if keys.just_pressed(KeyCode::F6) {
+        effects.apply(MinetestEffect::Regeneration, 1, 15.0);
+    }
+    if keys.just_pressed(KeyCode::F7) {
+        effects.apply(MinetestEffect::Poison, 1, 8.0);
+    }
+    if keys.just_pressed(KeyCode::F8) {
+        effects.apply(MinetestEffect::JumpBoost, 2, 20.0);
     }
 }
 
