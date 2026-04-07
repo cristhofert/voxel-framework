@@ -248,13 +248,14 @@ fn main() {
         .insert_resource(world_config)
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
-        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures, spawn_inventory_ui))
+        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures, spawn_inventory_ui, spawn_effects_hud))
         .add_systems(Update, (
             update_block_info,
             assemble_texture_array,
             toggle_inventory_ui,
             update_inventory_ui,
         ).run_if(in_state(PauseMenuState::Playing)))
+        .add_systems(Update, update_effects_hud)
         .run();
 }
 
@@ -499,6 +500,110 @@ fn normalise_to_rgba32(img: &Image) -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+// ─── Status effects HUD ───────────────────────────────────────────────────────
+
+/// Marker for the status-effects HUD root node (top-right panel).
+#[derive(Component)]
+struct EffectsHudRoot;
+
+/// Marker for a single effect row; the index refers to `ActiveEffects::effects`.
+#[derive(Component)]
+struct EffectHudRow(usize);
+
+/// Spawns the effects HUD root node — initially hidden.
+fn spawn_effects_hud(mut commands: Commands) {
+    commands.spawn((
+        EffectsHudRoot,
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            right: Val::Px(12.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(4.0),
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+/// Rebuilds the effects HUD every frame from `ActiveEffects<MinetestEffect>`.
+fn update_effects_hud(
+    effects: Res<ActiveEffects<MinetestEffect>>,
+    mut root_q: Query<(Entity, &mut Visibility), With<EffectsHudRoot>>,
+    row_q: Query<Entity, With<EffectHudRow>>,
+    mut commands: Commands,
+) {
+    // 1. Despawn all existing rows.
+    for entity in &row_q {
+        commands.entity(entity).despawn();
+    }
+
+    let Ok((root_entity, mut root_vis)) = root_q.single_mut() else { return };
+
+    // 2. Hide when no active effects.
+    if effects.effects.is_empty() {
+        *root_vis = Visibility::Hidden;
+        return;
+    }
+
+    // 3. Show panel.
+    *root_vis = Visibility::Visible;
+
+    // 4. Spawn one row per active effect.
+    for (i, active) in effects.effects.iter().enumerate() {
+        let c = active.effect.color();
+        let first_char = active.effect.name().chars().next().unwrap_or('?').to_string();
+        let secs_text = format!("{:.0}s", active.remaining_secs);
+
+        // Icon square (28×28) with first letter centred inside.
+        let icon = commands.spawn((
+            Node {
+                width: Val::Px(28.0),
+                height: Val::Px(28.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(c[0], c[1], c[2], c[3])),
+        ))
+        .with_children(|icon_root| {
+            icon_root.spawn((
+                Text::new(first_char),
+                TextFont { font_size: 16.0, ..default() },
+                TextColor(Color::WHITE),
+            ));
+        })
+        .id();
+
+        // Duration label.
+        let label = commands.spawn((
+            Text::new(secs_text),
+            TextFont { font_size: 14.0, ..default() },
+            TextColor(Color::WHITE),
+            Node {
+                margin: UiRect::left(Val::Px(6.0)),
+                align_self: AlignSelf::Center,
+                ..default()
+            },
+        ))
+        .id();
+
+        // Row (horizontal flex).
+        let row = commands.spawn((
+            EffectHudRow(i),
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        ))
+        .add_children(&[icon, label])
+        .id();
+
+        commands.entity(root_entity).add_child(row);
+    }
 }
 
 // ─── Inventory UI ─────────────────────────────────────────────────────────────
