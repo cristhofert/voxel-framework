@@ -112,6 +112,7 @@ pub use crate::player::{
     PlayerHealth, PlayerDamaged, PlayerDied,
     PlayerCrouching,
     spawn_player, player_look, player_move, player_resolve_collision, player_cursor_system,
+    health_system, respawn_system,
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT, SPRINT_MULTIPLIER,
 };
 pub use crate::player::persistence::{save_spawn_position, load_spawn_position};
