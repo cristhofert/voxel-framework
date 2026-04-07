@@ -11,6 +11,7 @@
 //! Debug effects (for demo/testing):
 //!   F5 — Speed effect  |  F6 — Regeneration effect
 //!   F7 — Poison effect  |  F8 — Jump Boost effect
+//!   P — Haste effect
 
 use std::sync::Arc;
 use bevy::prelude::*;
@@ -627,6 +628,9 @@ fn debug_apply_effects(
     }
     if keys.just_pressed(KeyCode::F8) {
         effects.apply(MinetestEffect::JumpBoost, 2, 20.0);
+    }
+    if keys.just_pressed(KeyCode::KeyP) {
+        effects.apply(MinetestEffect::Haste, 1, 30.0);
     }
 }
 
