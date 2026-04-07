@@ -938,6 +938,56 @@ pub fn player_fall_damage(
     }
 }
 
+/// Processes incoming damage messages and runs the death / respawn check.
+///
+/// Regen and poison are handled exclusively by
+/// [`apply_health_effects`](crate::player::effects::apply_health_effects)
+/// inside [`StatusEffectsPlugin`](crate::player::effects::StatusEffectsPlugin).
+/// This system only reads [`AppliedEffectModifiers`] to apply damage resistance
+/// to incoming [`PlayerDamaged`] events. `AppliedEffectModifiers` is optional —
+/// the system degrades gracefully when no `StatusEffectsPlugin` is registered.
+///
+/// Run this system **every frame**, regardless of pause state.
+pub fn health_system(
+    applied: Option<Res<effects::AppliedEffectModifiers>>,
+    mut health: ResMut<PlayerHealth>,
+    mut damaged_reader: bevy::ecs::message::MessageReader<PlayerDamaged>,
+    mut died_writer: MessageWriter<PlayerDied>,
+) {
+    // Process every pending damage event, reduced by damage resistance.
+    for event in damaged_reader.read() {
+        let resistance = applied.as_ref().map(|a| a.0.damage_resistance).unwrap_or(0.0);
+        let actual = event.amount * (1.0 - resistance.clamp(0.0, 1.0));
+        health.health = (health.health - actual).max(0.0);
+    }
+
+    // Death check — instant respawn (position is handled by respawn_system).
+    if health.health <= 0.0 {
+        health.health = health.max_health;
+        died_writer.write(PlayerDied);
+    }
+}
+
+/// Teleports the streaming origin to the spawn position on player death.
+///
+/// Listens for [`PlayerDied`] messages and updates [`ViewerPosition`] so the
+/// chunk streaming system starts loading terrain around the respawn location
+/// immediately. Physical entity teleportation is handled by
+/// [`player_fall_damage`].
+///
+/// If no [`PlayerConfig`] resource is present, the player is teleported to
+/// [`Vec3::ZERO`].
+pub fn respawn_system(
+    mut died_reader: bevy::ecs::message::MessageReader<PlayerDied>,
+    mut viewer: ResMut<ViewerPosition>,
+    config: Option<Res<PlayerConfig>>,
+) {
+    for _ in died_reader.read() {
+        let spawn = config.as_ref().map(|c| c.spawn_position).unwrap_or(Vec3::ZERO);
+        viewer.position = spawn;
+    }
+}
+
 // ─── Push helper ─────────────────────────────────────────────────────────────
 
 /// Returns the corrected capsule-center position after pushing out of a solid voxel.
@@ -1196,6 +1246,9 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
                 .chain()
                 .run_if(gameplay_active),
         );
+        // health_system and respawn_system run unconditionally (not gated by pause).
+        app.add_systems(Update, health_system);
+        app.add_systems(Update, respawn_system);
         app.add_systems(Update, player_cursor_system);
         app.add_systems(PostUpdate, save_spawn_on_exit);
     }
