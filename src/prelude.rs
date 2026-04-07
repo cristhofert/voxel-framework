@@ -115,6 +115,10 @@ pub use crate::player::{
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT, SPRINT_MULTIPLIER,
 };
 pub use crate::player::persistence::{save_spawn_position, load_spawn_position};
+pub use crate::player::effects::{
+    ActiveEffects, ActiveEffect, AppliedEffectModifiers,
+    EffectModifiers, StatusEffect, StatusEffectsPlugin,
+};
 
 // Mobs
 pub use crate::mobs::{

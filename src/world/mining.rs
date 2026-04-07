@@ -50,6 +50,7 @@ use bevy::prelude::*;
 use crate::chunk::Chunk;
 use crate::items::{HotbarState, ItemType};
 use crate::items::inventory::{ContainerComponent, PrimaryContainer};
+use crate::player::effects::AppliedEffectModifiers;
 use crate::voxel::VoxelType;
 
 use super::{ChunkManager, ChunkModified};
@@ -534,6 +535,7 @@ pub fn hotbar_to_tool_system<I: ItemType>(
     hotbar: Res<HotbarState>,
     container_query: Query<&ContainerComponent<I>, With<PrimaryContainer>>,
     mut tool_stats: ResMut<ToolStats>,
+    applied: Option<Res<AppliedEffectModifiers>>,
 ) {
     let Ok(container) = container_query.single() else {
         tool_stats.reset();
@@ -542,7 +544,8 @@ pub fn hotbar_to_tool_system<I: ItemType>(
     let active_slot = hotbar.selected;
     if let Some(slot) = container.0.slots.get(active_slot).and_then(|s| s.as_ref()) {
         tool_stats.tool_level = slot.item.tool_level();
-        tool_stats.tool_speed = slot.item.tool_speed();
+        tool_stats.tool_speed = slot.item.tool_speed()
+            * applied.as_deref().map(|a| a.0.mining_speed_mult).unwrap_or(1.0);
     } else {
         tool_stats.reset();
     }
