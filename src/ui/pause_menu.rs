@@ -523,7 +523,7 @@ fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsM
 ///   ±2 chunks (clamped `4`–`32`) and updates [`RenderDistLabel`] text and
 ///   [`ChunkManager`] distances.
 /// - `SensitivityInc` / `SensitivityDec`: changes [`PlayerConfig::sensitivity`] by
-///   ±10% (clamped `10`–`200`) and updates [`SensitivityLabel`] text.
+///   ±1% (clamped `10`–`200`) and updates [`SensitivityLabel`] text.
 /// - `Back`: emits [`SaveSettingsRequest`] and transitions to [`PauseMenuState::Paused`].
 #[allow(clippy::too_many_arguments)]
 fn handle_settings_buttons(
@@ -591,7 +591,7 @@ fn handle_settings_buttons(
             SettingsButton::SensitivityInc | SettingsButton::SensitivityDec => {
                 if let Some(ref mut pc) = player_config {
                     let current_pct = (pc.sensitivity * 100.0).round() as i32;
-                    let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) { 10 } else { -10 };
+                    let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) { 1 } else { -1 };
                     let new_pct = (current_pct + delta).clamp(10, 200);
                     pc.sensitivity = new_pct as f32 / 100.0;
                     if let Ok(mut t) = sens_label.single_mut() {
