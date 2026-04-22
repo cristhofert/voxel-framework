@@ -284,7 +284,7 @@ fn rebuild_crafting_menu<I: ItemType>(
                 padding: UiRect::bottom(Val::Px(6.0)),
                 ..default()
             },
-            Text::new("── Crafting (C to close) ──"),
+            Text::new("-- Crafting (C to close) --"),
             TextFont { font_size: 15.0, ..default() },
             TextColor(Color::WHITE),
         ))
@@ -319,7 +319,7 @@ fn rebuild_crafting_menu<I: ItemType>(
             .collect::<Vec<_>>()
             .join(", ");
 
-        let label = format!("[{}]  {} → {}", recipe.name, ing_str, out_str);
+        let label = format!("[{}]  {} > {}", recipe.name, ing_str, out_str);
 
         let row = commands
             .spawn((
