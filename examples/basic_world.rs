@@ -18,7 +18,6 @@ use bevy::asset::RenderAssetUsages;
 use voxel_framework::prelude::*;
 use voxel_framework::audio::{SfxConfig, SfxEvent, SfxRequest};
 use voxel_framework::player::PlayerPlugin;
-use voxel_framework::ui::SaveSettingsRequest;
 
 /// Handles to the voxel textures pending assembly into a texture array.
 #[derive(Resource)]
