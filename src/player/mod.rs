@@ -257,7 +257,7 @@ const DECEL: f32 = 7.0;
 /// rad/px rate comparable to Minecraft, so that `sensitivity = 1.0` feels
 /// "normal". Users scale around this via the Settings slider (10% → very slow,
 /// 100% → default, above 100% would be faster but the slider caps there).
-const MOUSE_SCALE: f32 = 0.0015;
+const MOUSE_SCALE: f32 = 0.003;
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
