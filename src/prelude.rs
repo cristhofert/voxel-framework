@@ -130,5 +130,8 @@ pub use crate::mobs::{
 // World manifest
 pub use crate::world::manifest::{WorldManifest, WorldManifestPlugin, VoxelPaletteEntry};
 
+// Settings persistence
+pub use crate::settings::PersistedSettings;
+
 // Top-level plugins
 pub use crate::{VoxelCorePlugin, VoxelPlugin};

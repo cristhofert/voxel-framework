@@ -815,7 +815,7 @@ impl<I: ItemType> Plugin for PickupNotificationPlugin<I> {
 }
 
 mod pause_menu;
-pub use pause_menu::{PauseMenuConfig, PauseMenuPlugin, PauseMenuState};
+pub use pause_menu::{PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSettingsRequest};
 
 // ─── Debug Overlay ────────────────────────────────────────────────────────────
 

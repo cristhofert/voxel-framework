@@ -127,6 +127,7 @@ pub mod noise;
 pub mod player;
 pub mod prelude;
 pub mod render;
+pub mod settings;
 pub mod skybox;
 pub mod ui;
 pub mod voxel;
