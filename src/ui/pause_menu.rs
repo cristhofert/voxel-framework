@@ -48,9 +48,12 @@
 //!     );
 //! ```
 
+use bevy::ecs::message::MessageReader;
 use bevy::prelude::*;
 
 use crate::audio::{SfxConfig, SfxEvent, SfxRequest};
+use crate::player::PlayerConfig;
+use crate::world::{ChunkManager, WorldConfig};
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -107,12 +110,32 @@ const OVERLAY:     Color = Color::srgba(0.0, 0.0, 0.0, 0.78);
 #[derive(Component)] struct SettingsMenuRoot;
 #[derive(Component)] struct FovLabel;
 #[derive(Component)] struct VolumeLabel;
+#[derive(Component)] struct RenderDistLabel;
+#[derive(Component)] struct SensitivityLabel;
 
 #[derive(Component)]
 enum PauseButton { Resume, Settings, Quit }
 
 #[derive(Component)]
-enum SettingsButton { FovInc, FovDec, VolumeInc, VolumeDec, Back }
+enum SettingsButton {
+    FovInc, FovDec,
+    VolumeInc, VolumeDec,
+    RenderDistInc, RenderDistDec,
+    SensitivityInc, SensitivityDec,
+    Back,
+}
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+// ─── Messages ─────────────────────────────────────────────────────────────────
+
+/// Emitted when the player clicks Back in the Settings submenu.
+///
+/// The host game should listen for this message and persist the current
+/// settings (FOV, volume, render distance, sensitivity) to disk using
+/// [`crate::settings::PersistedSettings`].
+#[derive(Clone)]
+pub struct SaveSettingsRequest;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -201,6 +224,7 @@ impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseMenuConfig>();
         app.init_state::<PauseMenuState>();
+        app.add_message::<SaveSettingsRequest>();
 
         // Playing — toggle on Escape
         app.add_systems(Update, toggle_pause.run_if(in_state(PauseMenuState::Playing)));
@@ -389,12 +413,15 @@ fn handle_pause_buttons(
 
 /// Spawns the settings overlay when entering [`PauseMenuState::Settings`].
 ///
-/// Reads the current FOV from the [`Camera3d`] projection and the current SFX
-/// volume from [`SfxConfig`] to initialize the slider labels. Runs via
-/// `OnEnter(Settings)`.
+/// Reads the current FOV from the [`Camera3d`] projection, the current SFX
+/// volume from [`SfxConfig`], the render distance from [`WorldConfig`], and the
+/// mouse sensitivity from [`PlayerConfig`] to initialise the slider labels.
+/// Runs via `OnEnter(Settings)`.
 fn spawn_settings_menu(
     mut commands: Commands,
     sfx_config: Res<SfxConfig>,
+    world_config: Option<Res<WorldConfig>>,
+    player_config: Option<Res<PlayerConfig>>,
     camera_q: Query<&Projection, With<Camera3d>>,
     config: Res<PauseMenuConfig>,
 ) {
@@ -404,6 +431,16 @@ fn spawn_settings_menu(
         .and_then(|p| if let Projection::Perspective(pp) = p { Some(pp.fov.to_degrees()) } else { None })
         .unwrap_or(90.0);
     let volume_pct = sfx_config.volume * 100.0;
+    let render_dist_chunks = world_config
+        .as_ref()
+        .map(|wc| ((wc.load_distance / 16.0).round() as i32).clamp(4, 32) as i32)
+        .unwrap_or(10);
+    // Round to nearest even
+    let render_dist_chunks = if render_dist_chunks % 2 == 0 { render_dist_chunks } else { render_dist_chunks + 1 };
+    let sensitivity_pct = player_config
+        .as_ref()
+        .map(|pc| (pc.sensitivity * 100.0).round() as i32)
+        .unwrap_or(100);
 
     let (node, bg) = overlay_node();
     commands.spawn((SettingsMenuRoot, node, bg)).with_children(|p| {
@@ -419,6 +456,12 @@ fn spawn_settings_menu(
 
         spawn_slider_row(p, "SFX Volume", format!("{volume_pct:.0}%"), VolumeLabel,
             SettingsButton::VolumeDec, SettingsButton::VolumeInc, config.font.clone());
+
+        spawn_slider_row(p, "Render Distance", format!("{render_dist_chunks} chunks"), RenderDistLabel,
+            SettingsButton::RenderDistDec, SettingsButton::RenderDistInc, config.font.clone());
+
+        spawn_slider_row(p, "Sensitivity", format!("{sensitivity_pct:.0}%"), SensitivityLabel,
+            SettingsButton::SensitivityDec, SettingsButton::SensitivityInc, config.font.clone());
 
         p.spawn(Node { margin: UiRect::top(Val::Px(20.0)), ..default() })
             .with_children(|row| {
@@ -477,15 +520,27 @@ fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsM
 ///   [`FovLabel`] text and the [`Camera3d`] perspective projection.
 /// - `VolumeInc` / `VolumeDec`: changes [`SfxConfig::volume`] by ±0.1 (clamped
 ///   `0.0`–`1.0`) and updates [`VolumeLabel`] text.
-/// - `Back`: transitions to [`PauseMenuState::Paused`].
+/// - `RenderDistInc` / `RenderDistDec`: changes [`WorldConfig::load_distance`] by
+///   ±2 chunks (clamped `4`–`32`) and updates [`RenderDistLabel`] text and
+///   [`ChunkManager`] distances.
+/// - `SensitivityInc` / `SensitivityDec`: changes [`PlayerConfig::sensitivity`] by
+///   ±10% (clamped `10`–`200`) and updates [`SensitivityLabel`] text.
+/// - `Back`: emits [`SaveSettingsRequest`] and transitions to [`PauseMenuState::Paused`].
+#[allow(clippy::too_many_arguments)]
 fn handle_settings_buttons(
     mut q: Query<(&Interaction, &mut BackgroundColor, &SettingsButton),
                  (Changed<Interaction>, With<Button>)>,
     mut sfx_config: ResMut<SfxConfig>,
+    mut world_config: Option<ResMut<WorldConfig>>,
+    mut chunk_manager: Option<ResMut<ChunkManager>>,
+    mut player_config: Option<ResMut<PlayerConfig>>,
     mut next: ResMut<NextState<PauseMenuState>>,
-    mut fov_label: Query<&mut Text, (With<FovLabel>, Without<VolumeLabel>)>,
-    mut vol_label: Query<&mut Text, (With<VolumeLabel>, Without<FovLabel>)>,
+    mut fov_label: Query<&mut Text, (With<FovLabel>, Without<VolumeLabel>, Without<RenderDistLabel>, Without<SensitivityLabel>)>,
+    mut vol_label: Query<&mut Text, (With<VolumeLabel>, Without<FovLabel>, Without<RenderDistLabel>, Without<SensitivityLabel>)>,
+    mut rdist_label: Query<&mut Text, (With<RenderDistLabel>, Without<FovLabel>, Without<VolumeLabel>, Without<SensitivityLabel>)>,
+    mut sens_label: Query<&mut Text, (With<SensitivityLabel>, Without<FovLabel>, Without<VolumeLabel>, Without<RenderDistLabel>)>,
     mut camera_q: Query<&mut Projection, With<Camera3d>>,
+    mut save_writer: MessageWriter<SaveSettingsRequest>,
 ) {
     for (interaction, mut bg, action) in &mut q {
         *bg = BackgroundColor(match interaction {
@@ -516,7 +571,39 @@ fn handle_settings_buttons(
                     **t = format!("{pct:.0}%");
                 }
             }
-            SettingsButton::Back => next.set(PauseMenuState::Paused),
+            SettingsButton::RenderDistInc | SettingsButton::RenderDistDec => {
+                if let Some(ref mut wc) = world_config {
+                    // Current value in chunks (rounded to nearest even)
+                    let current = ((wc.load_distance / 16.0).round() as i32).clamp(4, 32);
+                    let current = if current % 2 == 0 { current } else { current + 1 };
+                    let delta: i32 = if matches!(action, SettingsButton::RenderDistInc) { 2 } else { -2 };
+                    let new_chunks = (current + delta).clamp(4, 32);
+                    wc.load_distance = new_chunks as f32 * 16.0;
+                    wc.unload_distance = wc.load_distance + 32.0;
+                    if let Some(ref mut cm) = chunk_manager {
+                        cm.load_distance = wc.load_distance;
+                        cm.unload_distance = wc.unload_distance;
+                    }
+                    if let Ok(mut t) = rdist_label.single_mut() {
+                        **t = format!("{new_chunks} chunks");
+                    }
+                }
+            }
+            SettingsButton::SensitivityInc | SettingsButton::SensitivityDec => {
+                if let Some(ref mut pc) = player_config {
+                    let current_pct = (pc.sensitivity * 100.0).round() as i32;
+                    let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) { 10 } else { -10 };
+                    let new_pct = (current_pct + delta).clamp(10, 200);
+                    pc.sensitivity = new_pct as f32 / 100.0;
+                    if let Ok(mut t) = sens_label.single_mut() {
+                        **t = format!("{new_pct:.0}%");
+                    }
+                }
+            }
+            SettingsButton::Back => {
+                save_writer.write(SaveSettingsRequest);
+                next.set(PauseMenuState::Paused);
+            }
         }
     }
 }
