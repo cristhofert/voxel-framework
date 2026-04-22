@@ -101,7 +101,7 @@ pub use crate::ui::{
     HotbarUiConfig, HotbarUiPlugin,
     LoadingScreenConfig, LoadingScreenPlugin,
     PickupNotificationConfig, PickupNotificationPlugin,
-    PauseMenuConfig, PauseMenuPlugin, PauseMenuState,
+    PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSettingsRequest,
     DebugOverlayPlugin, DebugOverlayState,
     UiPlugin,
 };

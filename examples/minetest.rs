@@ -22,7 +22,6 @@ use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
 use voxel_framework::items::{DefaultItem, ItemCollector};
 use voxel_framework::items::inventory::{ContainerComponent, PrimaryContainer};
 use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
-use voxel_framework::ui::SaveSettingsRequest;
 
 // ─── Status effects ──────────────────────────────────────────────────────────
 
