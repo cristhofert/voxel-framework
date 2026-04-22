@@ -48,7 +48,6 @@
 //!     );
 //! ```
 
-use bevy::ecs::message::MessageReader;
 use bevy::prelude::*;
 
 use crate::audio::{SfxConfig, SfxEvent, SfxRequest};
@@ -134,7 +133,7 @@ enum SettingsButton {
 /// The host game should listen for this message and persist the current
 /// settings (FOV, volume, render distance, sensitivity) to disk using
 /// [`crate::settings::PersistedSettings`].
-#[derive(Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct SaveSettingsRequest;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
