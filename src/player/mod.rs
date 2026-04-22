@@ -1249,7 +1249,7 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
         // health_system and respawn_system run unconditionally (not gated by pause).
         app.add_systems(Update, health_system);
         app.add_systems(Update, respawn_system);
-        app.add_systems(Update, player_cursor_system);
+        app.add_systems(Update, player_cursor_system.run_if(gameplay_active));
         app.add_systems(PostUpdate, save_spawn_on_exit);
     }
 }
