@@ -65,6 +65,15 @@ use crate::world::{ChunkManager, WorldConfig};
 pub const EMBEDDED_NOTO_SANS_PATH: &str =
     "embedded://voxel_framework/ui/NotoSans-Regular.ttf";
 
+/// Asset path of the NotoSansSymbols2 font embedded into the framework binary.
+///
+/// Used exclusively to render symbol glyphs (e.g. `◀`, `▶`) that are absent
+/// from the subset of NotoSans shipped at [`EMBEDDED_NOTO_SANS_PATH`]. The
+/// `embedded://` scheme is registered by the Bevy `EmbeddedAssetPlugin` (part
+/// of `AssetPlugin` / `DefaultPlugins`).
+pub const EMBEDDED_NOTO_SYMBOLS_PATH: &str =
+    "embedded://voxel_framework/ui/NotoSansSymbols2-Regular.ttf";
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 /// Bevy state enum that drives the pause menu lifecycle.
@@ -181,11 +190,24 @@ pub struct PauseMenuConfig {
     /// insert [`PauseMenuConfig`] with a custom `font` handle before the menu is
     /// first spawned.
     pub font: Handle<Font>,
+    /// Font handle used for symbol-only glyphs that are absent from the main
+    /// [`font`](Self::font) subset — specifically the `◀` and `▶` triangle
+    /// glyphs used on the settings slider inc/dec buttons.
+    ///
+    /// Defaults to [`Handle::default()`] at construction time. [`PauseMenuPlugin`]
+    /// replaces the default handle with the embedded NotoSansSymbols2 font
+    /// during `Startup` (see [`EMBEDDED_NOTO_SYMBOLS_PATH`]). To override,
+    /// insert [`PauseMenuConfig`] with a custom `symbol_font` handle before the
+    /// menu is first spawned.
+    pub symbol_font: Handle<Font>,
 }
 
 impl Default for PauseMenuConfig {
     fn default() -> Self {
-        Self { font: Handle::default() }
+        Self {
+            font: Handle::default(),
+            symbol_font: Handle::default(),
+        }
     }
 }
 
@@ -244,6 +266,7 @@ impl Plugin for PauseMenuPlugin {
         // is reachable from any `AssetServer::load(...)` call via the
         // `embedded://` scheme — see [`EMBEDDED_NOTO_SANS_PATH`].
         embedded_asset!(app, "NotoSans-Regular.ttf");
+        embedded_asset!(app, "NotoSansSymbols2-Regular.ttf");
 
         app.init_resource::<PauseMenuConfig>();
         app.init_state::<PauseMenuState>();
@@ -284,6 +307,9 @@ impl Plugin for PauseMenuPlugin {
 fn load_default_font(mut cfg: ResMut<PauseMenuConfig>, asset_server: Res<AssetServer>) {
     if cfg.font == Handle::default() {
         cfg.font = asset_server.load(EMBEDDED_NOTO_SANS_PATH);
+    }
+    if cfg.symbol_font == Handle::default() {
+        cfg.symbol_font = asset_server.load(EMBEDDED_NOTO_SYMBOLS_PATH);
     }
 }
 
@@ -497,16 +523,20 @@ fn spawn_settings_menu(
         ));
 
         spawn_slider_row(p, "Field of View", format!("{fov_deg:.0}°"), FovLabel,
-            SettingsButton::FovDec, SettingsButton::FovInc, config.font.clone());
+            SettingsButton::FovDec, SettingsButton::FovInc,
+            config.font.clone(), config.symbol_font.clone());
 
         spawn_slider_row(p, "SFX Volume", format!("{volume_pct:.0}%"), VolumeLabel,
-            SettingsButton::VolumeDec, SettingsButton::VolumeInc, config.font.clone());
+            SettingsButton::VolumeDec, SettingsButton::VolumeInc,
+            config.font.clone(), config.symbol_font.clone());
 
         spawn_slider_row(p, "Render Distance", format!("{render_dist_chunks} chunks"), RenderDistLabel,
-            SettingsButton::RenderDistDec, SettingsButton::RenderDistInc, config.font.clone());
+            SettingsButton::RenderDistDec, SettingsButton::RenderDistInc,
+            config.font.clone(), config.symbol_font.clone());
 
         spawn_slider_row(p, "Sensitivity", format!("{sensitivity_pct:.0}%"), SensitivityLabel,
-            SettingsButton::SensitivityDec, SettingsButton::SensitivityInc, config.font.clone());
+            SettingsButton::SensitivityDec, SettingsButton::SensitivityInc,
+            config.font.clone(), config.symbol_font.clone());
 
         p.spawn(Node { margin: UiRect::top(Val::Px(20.0)), ..default() })
             .with_children(|row| {
@@ -523,6 +553,7 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
     dec: D,
     inc: I,
     font: Handle<Font>,
+    symbol_font: Handle<Font>,
 ) {
     parent
         .spawn(Node {
@@ -538,7 +569,7 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
                 Node { width: Val::Px(200.0), ..default() },
             ));
-            spawn_btn(row, "-", dec, 44.0, 44.0, font.clone());
+            spawn_btn(row, "\u{25C0}", dec, 44.0, 44.0, symbol_font.clone());
             row.spawn((
                 value_marker,
                 Text::new(value),
@@ -546,7 +577,7 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
                 TextColor(Color::WHITE),
                 Node { width: Val::Px(80.0), justify_content: JustifyContent::Center, ..default() },
             ));
-            spawn_btn(row, "+", inc, 44.0, 44.0, font);
+            spawn_btn(row, "\u{25B6}", inc, 44.0, 44.0, symbol_font);
         });
 }
 
