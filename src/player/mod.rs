@@ -249,6 +249,16 @@ const ACCEL: f32 = 12.0;
 /// Lerp factor applied when the player is decelerating (no input).
 const DECEL: f32 = 7.0;
 
+/// Internal mouse scale factor applied before the user-facing
+/// [`Player::sensitivity`] multiplier.
+///
+/// Mouse deltas arrive in pixels (often `10+` per frame) so a raw multiplier of
+/// `1.0` would spin the camera wildly. This constant converts pixels to a base
+/// rad/px rate comparable to Minecraft, so that `sensitivity = 1.0` feels
+/// "normal". Users scale around this via the Settings slider (10% → very slow,
+/// 100% → default, above 100% would be faster but the slider caps there).
+const MOUSE_SCALE: f32 = 0.0015;
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 /// State component that marks the player camera entity.
@@ -266,7 +276,7 @@ const DECEL: f32 = 7.0;
 /// | Field         | Default  |
 /// |---------------|----------|
 /// | `speed`       | `4.0`    |
-/// | `sensitivity` | `0.0015` |
+/// | `sensitivity` | `1.0`    |
 /// | `roll_speed`  | `1.5`    |
 /// | `velocity`    | `ZERO`   |
 #[derive(Component, Debug, Clone)]
@@ -275,9 +285,10 @@ pub struct Player {
     /// the lerp target: actual speed never exceeds this value regardless of
     /// frame rate.
     pub speed: f32,
-    /// Mouse sensitivity in radians per pixel of cursor movement. Lower values
-    /// feel slower and more precise; values above `0.003` feel very fast for
-    /// most players.
+    /// Mouse sensitivity multiplier (dimensionless). `1.0` matches the default
+    /// "Minecraft-like" feel via the internal [`MOUSE_SCALE`] constant; lower
+    /// values are slower, higher values are faster. The Settings slider exposes
+    /// the range `0.10`–`1.00` (10%–100%) to the user.
     pub sensitivity: f32,
     /// Roll angular speed in radians per second applied while Q (roll left) or
     /// E (roll right) is held.
@@ -348,7 +359,7 @@ impl Default for Player {
     fn default() -> Self {
         Self {
             speed: 4.0,
-            sensitivity: 0.0015,
+            sensitivity: 1.0,
             roll_speed: 1.5,
             velocity: Vec3::ZERO,
             mode: PlayerMode::FreeFlight,
@@ -393,7 +404,7 @@ impl Default for Player {
 /// |-----------------|---------------------------|
 /// | `spawn_position`| `(0.0, 0.0, 30.0)`        |
 /// | `speed`         | `4.0` wu/s                |
-/// | `sensitivity`   | `0.0015` rad/px           |
+/// | `sensitivity`   | `1.0` (unitless multiplier) |
 /// | `roll_speed`    | `1.5` rad/s               |
 /// | `look_at`       | `Vec3::ZERO`              |
 /// | `fov_degrees`   | `90.0`                    |
@@ -404,8 +415,9 @@ pub struct PlayerConfig {
     /// Maximum flight speed in world units per second. Copied into
     /// [`Player::speed`] on spawn.
     pub speed: f32,
-    /// Mouse sensitivity in radians per pixel. Copied into
-    /// [`Player::sensitivity`] on spawn.
+    /// Mouse sensitivity multiplier (dimensionless). Copied into
+    /// [`Player::sensitivity`] on spawn. `1.0` = default "Minecraft-like" feel;
+    /// see [`MOUSE_SCALE`] for the underlying rad/px rate.
     pub sensitivity: f32,
     /// Roll angular speed in radians per second. Copied into
     /// [`Player::roll_speed`] on spawn.
@@ -431,7 +443,7 @@ impl Default for PlayerConfig {
         Self {
             spawn_position: Vec3::new(0.0, 0.0, 30.0),
             speed: 4.0,
-            sensitivity: 0.0015,
+            sensitivity: 1.0,
             roll_speed: 1.5,
             look_at: Vec3::ZERO,
             fov_degrees: 90.0,
@@ -538,8 +550,8 @@ pub fn player_look(
     match &player.mode {
         PlayerMode::FreeFlight => {
             if delta != Vec2::ZERO {
-                let yaw_d   = -delta.x * player.sensitivity;
-                let pitch_d = -delta.y * player.sensitivity;
+                let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
+                let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
                 // Rotate around LOCAL axes — preserves 6DOF orientation.
                 transform.rotate_local_y(yaw_d);
                 transform.rotate_local_x(pitch_d);
@@ -555,8 +567,8 @@ pub fn player_look(
         }
         PlayerMode::Grounded { .. } => {
             if delta != Vec2::ZERO {
-                let yaw_d   = -delta.x * player.sensitivity;
-                let pitch_d = -delta.y * player.sensitivity;
+                let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
+                let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
 
                 // Yaw: rotate around WORLD Y so the player stays upright.
                 transform.rotate_y(yaw_d);
@@ -1264,7 +1276,7 @@ mod tests {
     fn player_default_values() {
         let p = Player::default();
         assert_eq!(p.speed, 4.0);
-        assert_eq!(p.sensitivity, 0.0015);
+        assert_eq!(p.sensitivity, 1.0);
         assert_eq!(p.roll_speed, 1.5);
         assert_eq!(p.velocity, Vec3::ZERO);
     }

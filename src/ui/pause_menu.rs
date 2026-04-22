@@ -484,7 +484,7 @@ fn spawn_settings_menu(
     let render_dist_chunks = if render_dist_chunks % 2 == 0 { render_dist_chunks } else { render_dist_chunks + 1 };
     let sensitivity_pct = player_config
         .as_ref()
-        .map(|pc| (pc.sensitivity * 100.0).round() as i32)
+        .map(|pc| ((pc.sensitivity * 100.0).round() as i32).clamp(10, 100))
         .unwrap_or(100);
 
     let (node, bg) = overlay_node();
@@ -569,7 +569,7 @@ fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsM
 ///   ±2 chunks (clamped `4`–`32`) and updates [`RenderDistLabel`] text and
 ///   [`ChunkManager`] distances.
 /// - `SensitivityInc` / `SensitivityDec`: changes [`PlayerConfig::sensitivity`] by
-///   ±1% (clamped `10`–`200`) and updates [`SensitivityLabel`] text.
+///   ±1% (clamped `10`–`100`) and updates [`SensitivityLabel`] text.
 /// - `Back`: emits [`SaveSettingsRequest`] and transitions to [`PauseMenuState::Paused`].
 #[allow(clippy::too_many_arguments)]
 fn handle_settings_buttons(
@@ -638,7 +638,7 @@ fn handle_settings_buttons(
                 if let Some(ref mut pc) = player_config {
                     let current_pct = (pc.sensitivity * 100.0).round() as i32;
                     let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) { 1 } else { -1 };
-                    let new_pct = (current_pct + delta).clamp(10, 200);
+                    let new_pct = (current_pct + delta).clamp(10, 100);
                     pc.sensitivity = new_pct as f32 / 100.0;
                     if let Ok(mut t) = sens_label.single_mut() {
                         **t = format!("{new_pct:.0}%");

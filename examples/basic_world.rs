@@ -88,7 +88,7 @@ fn main() {
     // Apply persisted settings if available
     if let Some(saved) = PersistedSettings::load(&world_config.world_name) {
         player_config.fov_degrees = saved.fov_degrees;
-        player_config.sensitivity = (saved.sensitivity_pct as f32) / 100.0;
+        player_config.sensitivity = (saved.sensitivity_pct.clamp(10, 100) as f32) / 100.0;
         world_config.load_distance = (saved.render_distance_chunks as f32) * 16.0;
         world_config.unload_distance = world_config.load_distance + 32.0;
         sfx_config.volume = saved.sfx_volume;
