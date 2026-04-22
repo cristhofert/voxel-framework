@@ -167,10 +167,6 @@ fn setup(
         Transform::from_xyz(100.0, 200.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    commands.insert_resource(PauseMenuConfig {
-        font: asset_server.load("basic_world/fonts/NotoSans-Regular.ttf"),
-    });
-
     // Layer 0: Air placeholder — a 32×32 mid-grey tile (not rendered in practice
     // because Air voxels produce no geometry, but the array slot must exist).
     let grey_pixel: Vec<u8> = (0..32 * 32)
