@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 /// | `fov_degrees` | Field of View | 50–120 |
 /// | `sfx_volume` | SFX Volume | 0.0–1.0 |
 /// | `render_distance_chunks` | Render Distance | 4–32 (even) |
-/// | `sensitivity_pct` | Mouse Sensitivity | 10–200 |
+/// | `sensitivity_pct` | Mouse Sensitivity | 10–100 |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedSettings {
     /// Vertical field-of-view in degrees. Valid range: `50.0`–`120.0`.
@@ -47,8 +47,12 @@ pub struct PersistedSettings {
     pub sfx_volume: f32,
     /// Render distance in chunks (even values only). Valid range: `4`–`32`.
     pub render_distance_chunks: u32,
-    /// Mouse sensitivity as a percentage of the default (`0.0015` rad/px).
-    /// `100` = default, `200` = twice as fast, `10` = slowest.
+    /// Mouse sensitivity as a percentage of the default.
+    /// `100` = default ("Minecraft-like" feel), `10` = slowest.
+    /// The underlying [`crate::player::Player::sensitivity`] multiplier is
+    /// `sensitivity_pct / 100`, combined internally with the hidden
+    /// `MOUSE_SCALE` constant (rad/px) to produce camera rotation per mouse
+    /// pixel.
     pub sensitivity_pct: u32,
 }
 
