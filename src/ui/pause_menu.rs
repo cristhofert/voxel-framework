@@ -464,7 +464,7 @@ fn spawn_settings_menu(
 
         p.spawn(Node { margin: UiRect::top(Val::Px(20.0)), ..default() })
             .with_children(|row| {
-                spawn_btn(row, "← Back", SettingsButton::Back, 200.0, 50.0, config.font.clone());
+                spawn_btn(row, "< Back", SettingsButton::Back, 200.0, 50.0, config.font.clone());
             });
     });
 }
@@ -492,7 +492,7 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
                 Node { width: Val::Px(200.0), ..default() },
             ));
-            spawn_btn(row, "◀", dec, 44.0, 44.0, font.clone());
+            spawn_btn(row, "-", dec, 44.0, 44.0, font.clone());
             row.spawn((
                 value_marker,
                 Text::new(value),
@@ -500,7 +500,7 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
                 TextColor(Color::WHITE),
                 Node { width: Val::Px(80.0), justify_content: JustifyContent::Center, ..default() },
             ));
-            spawn_btn(row, "▶", inc, 44.0, 44.0, font);
+            spawn_btn(row, "+", inc, 44.0, 44.0, font);
         });
 }
 
