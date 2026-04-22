@@ -48,11 +48,22 @@
 //!     );
 //! ```
 
+use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 
 use crate::audio::{SfxConfig, SfxEvent, SfxRequest};
 use crate::player::PlayerConfig;
 use crate::world::{ChunkManager, WorldConfig};
+
+/// Asset path of the NotoSans font embedded into the framework binary.
+///
+/// The `embedded://` scheme is registered by the Bevy `EmbeddedAssetPlugin`
+/// (part of `AssetPlugin` / `DefaultPlugins`). The path format is
+/// `embedded://{crate_name}/{path relative to the crate's `src/` dir}`, where
+/// the crate name uses underscores. See [`PauseMenuPlugin`] for how this font
+/// becomes the default value of [`PauseMenuConfig::font`].
+pub const EMBEDDED_NOTO_SANS_PATH: &str =
+    "embedded://voxel_framework/ui/NotoSans-Regular.ttf";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -141,8 +152,10 @@ pub struct SaveSettingsRequest;
 /// Visual configuration for [`PauseMenuPlugin`].
 ///
 /// Insert this resource before adding [`PauseMenuPlugin`] to supply a custom
-/// font. If omitted, the plugin initializes with [`Handle::default()`], which
-/// resolves to Bevy's built-in monospace font.
+/// font. If omitted, [`PauseMenuPlugin`] populates `font` with the framework's
+/// embedded [NotoSans](https://fonts.google.com/noto/specimen/Noto+Sans)
+/// regular TTF — a unicode-capable font that renders the settings submenu's
+/// arrow glyphs (`←`, `◀`, `▶`) without tofu.
 ///
 /// # Example
 ///
@@ -159,8 +172,14 @@ pub struct SaveSettingsRequest;
 #[derive(Resource, Clone)]
 pub struct PauseMenuConfig {
     /// Font handle used for every text element in both the pause menu and the
-    /// settings submenu (title, button labels, slider values). Defaults to
-    /// [`Handle::default()`], which Bevy resolves to its built-in font.
+    /// settings submenu (title, button labels, slider values).
+    ///
+    /// Defaults to [`Handle::default()`] at construction time. [`PauseMenuPlugin`]
+    /// replaces the default handle with the embedded NotoSans font during
+    /// `Startup` (see [`EMBEDDED_NOTO_SANS_PATH`]) so games inherit a legible
+    /// unicode-capable font without loading any asset themselves. To override,
+    /// insert [`PauseMenuConfig`] with a custom `font` handle before the menu is
+    /// first spawned.
     pub font: Handle<Font>,
 }
 
@@ -221,9 +240,20 @@ pub struct PauseMenuPlugin;
 
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
+        // Embed the NotoSans TTF into the framework binary. The resulting asset
+        // is reachable from any `AssetServer::load(...)` call via the
+        // `embedded://` scheme — see [`EMBEDDED_NOTO_SANS_PATH`].
+        embedded_asset!(app, "NotoSans-Regular.ttf");
+
         app.init_resource::<PauseMenuConfig>();
         app.init_state::<PauseMenuState>();
         app.add_message::<SaveSettingsRequest>();
+
+        // Populate `PauseMenuConfig::font` with the embedded NotoSans handle
+        // when the user hasn't supplied their own font. Runs once on `Startup`,
+        // which fires before any `OnEnter(Paused)` transition can spawn the
+        // menu, so the handle is always ready by the time the menu is built.
+        app.add_systems(Startup, load_default_font);
 
         // Playing — toggle on Escape
         app.add_systems(Update, toggle_pause.run_if(in_state(PauseMenuState::Playing)));
@@ -238,6 +268,22 @@ impl Plugin for PauseMenuPlugin {
         app.add_systems(OnEnter(PauseMenuState::Settings), spawn_settings_menu);
         app.add_systems(OnExit(PauseMenuState::Settings),  despawn_settings_menu);
         app.add_systems(Update, handle_settings_buttons.run_if(in_state(PauseMenuState::Settings)));
+    }
+}
+
+// ─── Default font loader ──────────────────────────────────────────────────────
+
+/// Populates [`PauseMenuConfig::font`] with the embedded NotoSans font on
+/// startup if the game has not supplied a custom font.
+///
+/// `Default` can't access the [`AssetServer`], so we use a startup sentinel:
+/// when `font == Handle::default()` (the weak, uninitialised handle produced
+/// by [`PauseMenuConfig::default()`]), we load the embedded font and overwrite
+/// the field. Games that insert their own [`PauseMenuConfig`] before this
+/// plugin — or before `Startup` runs — keep their custom handle untouched.
+fn load_default_font(mut cfg: ResMut<PauseMenuConfig>, asset_server: Res<AssetServer>) {
+    if cfg.font == Handle::default() {
+        cfg.font = asset_server.load(EMBEDDED_NOTO_SANS_PATH);
     }
 }
 

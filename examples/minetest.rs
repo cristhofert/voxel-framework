@@ -426,11 +426,9 @@ fn setup_textures(
     asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // Load a unicode-capable font so the pause menu's settings submenu
-    // (arrows "←", "◀", "▶") renders without tofu.
-    commands.insert_resource(PauseMenuConfig {
-        font: asset_server.load("minetest/fonts/NotoSans-Regular.ttf"),
-    });
+    // Pause menu font: the framework embeds NotoSans via `embedded_asset!`
+    // and wires it up automatically in `PauseMenuPlugin`, so no explicit
+    // `PauseMenuConfig` insert is needed here.
 
     // Layer 0: Air placeholder — mid-grey 16×16 tile.
     let grey_pixel: Vec<u8> = (0..16 * 16)
