@@ -18,6 +18,7 @@ use bevy::asset::RenderAssetUsages;
 use voxel_framework::prelude::*;
 use voxel_framework::audio::{SfxConfig, SfxEvent, SfxRequest};
 use voxel_framework::player::PlayerPlugin;
+use voxel_framework::ui::SaveSettingsRequest;
 
 /// Handles to the voxel textures pending assembly into a texture array.
 #[derive(Resource)]
@@ -54,9 +55,45 @@ fn load_world_config(default_name: &str) -> WorldConfig {
 }
 
 fn main() {
-    let world_config = load_world_config("basic_world");
-    let generator    = world_config.build_asteroid_generator();
-    let spawn_pos    = Vec3::from_array(world_config.spawn_position);
+    let mut world_config = load_world_config("basic_world");
+    let generator        = world_config.build_asteroid_generator();
+    let spawn_pos        = Vec3::from_array(world_config.spawn_position);
+
+    let mut player_config = PlayerConfig {
+        spawn_position: spawn_pos,
+        speed: 16.0,
+        ..default()
+    };
+
+    let mut sfx_config = SfxConfig::new();
+    sfx_config.register(SfxEvent::Mining, vec![
+        "basic_world/audio/impactMining_000.ogg",
+        "basic_world/audio/impactMining_001.ogg",
+        "basic_world/audio/impactMining_002.ogg",
+        "basic_world/audio/impactMining_003.ogg",
+        "basic_world/audio/impactMining_004.ogg",
+    ]);
+    sfx_config.register(SfxEvent::MiningComplete, vec![
+        "basic_world/audio/impactGeneric_light_000.ogg",
+        "basic_world/audio/impactGeneric_light_001.ogg",
+        "basic_world/audio/impactGeneric_light_002.ogg",
+    ]);
+    sfx_config.register(SfxEvent::BlockPlace, vec![
+        "basic_world/audio/impactTin_medium_002.ogg",
+    ]);
+    sfx_config.register(SfxEvent::ItemPickup,    vec!["basic_world/audio/rollover1.ogg"]);
+    sfx_config.register(SfxEvent::HotbarScroll,  vec!["basic_world/audio/rollover1.ogg"]);
+    sfx_config.register(SfxEvent::PauseOpen,     vec!["basic_world/audio/click1.ogg"]);
+    sfx_config.register(SfxEvent::PauseClose,    vec!["basic_world/audio/click1.ogg"]);
+
+    // Apply persisted settings if available
+    if let Some(saved) = PersistedSettings::load(&world_config.world_name) {
+        player_config.fov_degrees = saved.fov_degrees;
+        player_config.sensitivity = (saved.sensitivity_pct as f32) / 100.0;
+        world_config.load_distance = (saved.render_distance_chunks as f32) * 16.0;
+        world_config.unload_distance = world_config.load_distance + 32.0;
+        sfx_config.volume = saved.sfx_volume;
+    }
 
     App::new()
         .add_plugins(DefaultPlugins)
@@ -66,41 +103,35 @@ fn main() {
         .add_plugins(PauseMenuPlugin)
         .add_plugins(PlayerPlugin::<DefaultVoxel>::with_world(&world_config.world_name))
         .add_plugins(WorldManifestPlugin::<DefaultVoxel, DefaultItem>::new("DefaultVoxel"))
-        .insert_resource({
-            let mut sfx = SfxConfig::new();
-            sfx.register(SfxEvent::Mining, vec![
-                "basic_world/audio/impactMining_000.ogg",
-                "basic_world/audio/impactMining_001.ogg",
-                "basic_world/audio/impactMining_002.ogg",
-                "basic_world/audio/impactMining_003.ogg",
-                "basic_world/audio/impactMining_004.ogg",
-            ]);
-            sfx.register(SfxEvent::MiningComplete, vec![
-                "basic_world/audio/impactGeneric_light_000.ogg",
-                "basic_world/audio/impactGeneric_light_001.ogg",
-                "basic_world/audio/impactGeneric_light_002.ogg",
-            ]);
-            sfx.register(SfxEvent::BlockPlace, vec![
-                "basic_world/audio/impactTin_medium_002.ogg",
-            ]);
-            sfx.register(SfxEvent::ItemPickup,    vec!["basic_world/audio/rollover1.ogg"]);
-            sfx.register(SfxEvent::HotbarScroll,  vec!["basic_world/audio/rollover1.ogg"]);
-            sfx.register(SfxEvent::PauseOpen,     vec!["basic_world/audio/click1.ogg"]);
-            sfx.register(SfxEvent::PauseClose,    vec!["basic_world/audio/click1.ogg"]);
-            sfx
-        })
+        .insert_resource(sfx_config)
         .insert_resource(GeneratorResource::<DefaultVoxel> {
             generator: Arc::new(generator),
         })
         .insert_resource(world_config)
-        .insert_resource(PlayerConfig {
-            spawn_position: spawn_pos,
-            speed: 16.0,
-            ..default()
-        })
+        .insert_resource(player_config)
         .add_systems(Startup, setup)
-        .add_systems(Update, (play_sfx, assemble_texture_array))
+        .add_systems(Update, (play_sfx, assemble_texture_array, handle_save_settings))
         .run();
+}
+
+/// Persists current in-memory settings (FOV, volume, render distance, sensitivity)
+/// to `worlds/{world_name}/settings.json` whenever the pause-menu Settings submenu
+/// is closed via the Back button.
+fn handle_save_settings(
+    mut reader: MessageReader<SaveSettingsRequest>,
+    player_config: Res<PlayerConfig>,
+    sfx_config: Res<SfxConfig>,
+    world_config: Res<WorldConfig>,
+) {
+    for _ in reader.read() {
+        let settings = PersistedSettings {
+            fov_degrees: player_config.fov_degrees,
+            sfx_volume: sfx_config.volume,
+            render_distance_chunks: (world_config.load_distance / 16.0).round() as u32,
+            sensitivity_pct: (player_config.sensitivity * 100.0).round() as u32,
+        };
+        settings.save(&world_config.world_name);
+    }
 }
 
 fn play_sfx(
