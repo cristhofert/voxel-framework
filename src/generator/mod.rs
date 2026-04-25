@@ -40,7 +40,7 @@
 //!
 //! App::new()
 //!     .add_plugins(DefaultPlugins)
-//!     .add_plugins(VoxelPlugin)
+//!     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 //!     .insert_resource(GeneratorResource::<DefaultVoxel> {
 //!         generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
 //!     })

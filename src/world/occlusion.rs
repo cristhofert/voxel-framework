@@ -31,7 +31,7 @@
 //! # use voxel_framework::{VoxelPlugin, world::occlusion::OcclusionPlugin, voxel::DefaultVoxel};
 //! App::new()
 //!     .add_plugins(DefaultPlugins)
-//!     .add_plugins(VoxelPlugin)
+//!     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 //!     .add_plugins(OcclusionPlugin::<DefaultVoxel>::new())
 //!     .run();
 //! ```
@@ -165,7 +165,7 @@ pub fn occlusion_update_system<V: VoxelType>(
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
-///     .add_plugins(VoxelPlugin)
+///     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ///     .add_plugins(OcclusionPlugin::<DefaultVoxel>::new())
 ///     .run();
 /// ```

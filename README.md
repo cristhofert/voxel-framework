@@ -38,25 +38,35 @@ The framework offers two top-level plugins so games can include only what they n
 // Minimal — pure voxel engine, no game-specific systems
 App::new()
     .add_plugins(DefaultPlugins)
-    .add_plugins(VoxelCorePlugin)
+    .add_plugins(VoxelCorePlugin::<DefaultVoxel>::new())
     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
 
 // Batteries-included — everything
 App::new()
     .add_plugins(DefaultPlugins)
-    .add_plugins(VoxelPlugin)
+    .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
 ```
 
 ## Quick Start
 
-Add the dependency to your `Cargo.toml`:
+Add the dependency to your `Cargo.toml`. The crate is distributed via this repository — choose the form that fits your workflow:
 
 ```toml
 [dependencies]
+# Option A — local clone side-by-side (development):
 voxel-framework = { path = "../voxel-framework" }
+
+# Option B — from git, pinned to a stable tag (recommended for consumers):
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.2.0" }
+
+# Option C — follow the dev branch (bleeding-edge):
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
+
 bevy = "0.18"
 ```
+
+> To run the bundled examples, clone the repository — the demo `assets/` live in the repo and are not pulled in automatically when depending via git.
 
 Minimal `main.rs` that spawns an asteroid world with config and persistence:
 
@@ -69,7 +79,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         // Registers WorldPlugin, RenderPlugin, MeshPlugin, and WorldConfigPlugin.
-        .add_plugins(VoxelPlugin)
+        .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
         // Registers the async generation system.
         .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
         // Enables auto-save on chunk modification.
@@ -268,7 +278,7 @@ use voxel_framework::prelude::*;
 
 App::new()
     .add_plugins(DefaultPlugins)
-    .add_plugins(VoxelPlugin)
+    .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
     .add_plugins(OcclusionPlugin::<DefaultVoxel>::new())
     .run();
 ```
@@ -364,7 +374,7 @@ app.insert_resource(PlacementConfig { cooldown: 0.5 });
 
 ```rust
 App::new()
-    .add_plugins(VoxelPlugin)
+    .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
     .add_plugins(LoadingPlugin);
 ```
 
@@ -406,7 +416,7 @@ fn check_ready(state: Res<WorldLoadingState>) {
 use voxel_framework::player::PlayerPlugin;
 
 App::new()
-    .add_plugins(VoxelPlugin)
+    .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
     .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
     .insert_resource(PlayerConfig {
         spawn_position: Vec3::new(0.0, 50.0, 150.0),
@@ -448,7 +458,7 @@ App::new()
 use voxel_framework::prelude::{PauseMenuPlugin, PauseMenuState};
 
 App::new()
-    .add_plugins(VoxelPlugin)
+    .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
     .add_plugins(PauseMenuPlugin)
     .add_systems(Startup, spawn_player)
     .add_systems(Update,
