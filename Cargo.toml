@@ -1,8 +1,13 @@
 [package]
 name = "voxel-framework"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.85"
 description = "A reusable voxel engine framework built on Bevy"
+authors = ["Cristhofer <cristraviesodeleon@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/cristhofert/voxel-framework"
+readme = "README.md"
 
 [dependencies]
 bevy = { version = "0.18", default-features = false, features = [

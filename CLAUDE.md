@@ -40,11 +40,11 @@ Los juegos eligen qué necesitan:
 
 ```rust
 // Motor voxel puro
-.add_plugins(VoxelCorePlugin)
+.add_plugins(VoxelCorePlugin::<DefaultVoxel>::new())
 .add_plugins(GeneratorPlugin::<MyVoxel>::new())
 
 // Todo batteries-included
-.add_plugins(VoxelPlugin)
+.add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ```
 
 `GeneratorPlugin<V>` y `PersistencePlugin<V>` son siempre opt-in — requieren que el usuario provea `GeneratorResource<V>`.
@@ -80,7 +80,7 @@ The core data structures (`Chunk<V>`, `GeneratorPlugin<V>`, `MeshPlugin<V>`, etc
 - **Generators run on background threads** — `ChunkGenerator::generate` must not access the Bevy `World`.
 - **Mining/Placement are pure functions** — `tick_mining`, `stop_mining`, `try_place_voxel`, `tick_placement` are called from the game's own systems; the plugins only initialize resources and message types.
 - **TOML config** is loaded from `world.toml` in the working directory at startup. Missing file falls back to defaults.
-- **`examples/` is in `.gitignore`** — example files are not committed.
+- **`examples/` and `assets/` are tracked** — example sources and their demo assets live in the repo so `cargo run --example basic_world` works after a clean clone. The `assets/` entry in `.gitignore` only prevents new additions; existing files remain tracked.
 
 ### Bevy features used
 

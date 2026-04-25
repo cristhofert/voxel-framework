@@ -97,7 +97,7 @@ use crate::voxel::VoxelType;
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
-///     .add_plugins(VoxelPlugin)
+///     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ///     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
 ///     .add_plugins(MeshPlugin::<DefaultVoxel>::new())
 ///     .run();

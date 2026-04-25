@@ -41,7 +41,7 @@
 //! fn main() {
 //!     App::new()
 //!         // Core framework (includes HotbarPlugin automatically).
-//!         .add_plugins(VoxelPlugin)
+//!         .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 //!         // Drop system — must be added by game code because it is generic.
 //!         .add_plugins(DropsPlugin::<DefaultItem>::new())
 //!         .add_systems(Startup, setup)

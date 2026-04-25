@@ -38,7 +38,7 @@
 //!
 //! App::new()
 //!     .add_plugins(DefaultPlugins)
-//!     .add_plugins(VoxelPlugin)
+//!     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 //!     .add_plugins(PauseMenuPlugin)
 //!     .add_systems(Startup, spawn_player)
 //!     .add_systems(Update,
@@ -233,7 +233,7 @@ impl Default for PauseMenuConfig {
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
-///     .add_plugins(VoxelPlugin)
+///     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ///     .add_plugins(PauseMenuPlugin)
 ///     .run();
 /// ```
@@ -249,7 +249,7 @@ impl Default for PauseMenuConfig {
 ///
 /// App::new()
 ///     .add_plugins(DefaultPlugins)
-///     .add_plugins(VoxelPlugin)
+///     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ///     .add_plugins(PauseMenuPlugin)
 ///     .add_systems(Startup, spawn_player)
 ///     .add_systems(Update,
