@@ -48,8 +48,11 @@
 use bevy::prelude::*;
 
 use crate::chunk::Chunk;
+#[cfg(feature = "items")]
 use crate::items::{HotbarState, ItemType};
+#[cfg(feature = "items")]
 use crate::items::inventory::{ContainerComponent, PrimaryContainer};
+#[cfg(feature = "items")]
 use crate::player::effects::AppliedEffectModifiers;
 use crate::voxel::VoxelType;
 
@@ -461,6 +464,11 @@ impl Plugin for MiningPlugin {
 }
 
 // ─── MiningInputPlugin ────────────────────────────────────────────────────────
+//
+// `MiningInputPlugin` and its companion `hotbar_to_tool_system` are gated on the
+// `items` feature because they require `ItemType`, `HotbarState`,
+// `ContainerComponent`, and `PrimaryContainer` — all of which live in
+// `crate::items`. Disabling the feature compiles them out cleanly.
 
 /// Convenience plugin that wires mouse input to the mining API automatically.
 ///
@@ -500,10 +508,12 @@ impl Plugin for MiningPlugin {
 ///     .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
 ///     .run();
 /// ```
+#[cfg(feature = "items")]
 pub struct MiningInputPlugin<V: VoxelType, I: ItemType> {
     _m: std::marker::PhantomData<(V, I)>,
 }
 
+#[cfg(feature = "items")]
 impl<V: VoxelType, I: ItemType> MiningInputPlugin<V, I> {
     /// Creates a new [`MiningInputPlugin`] for voxel type `V` and item type `I`.
     pub fn new() -> Self {
@@ -511,10 +521,12 @@ impl<V: VoxelType, I: ItemType> MiningInputPlugin<V, I> {
     }
 }
 
+#[cfg(feature = "items")]
 impl<V: VoxelType, I: ItemType> Default for MiningInputPlugin<V, I> {
     fn default() -> Self { Self::new() }
 }
 
+#[cfg(feature = "items")]
 impl<V: VoxelType, I: ItemType> Plugin for MiningInputPlugin<V, I> {
     fn build(&self, app: &mut App) {
         app.init_resource::<ToolStats>();
@@ -531,6 +543,7 @@ impl<V: VoxelType, I: ItemType> Plugin for MiningInputPlugin<V, I> {
 /// If no such entity exists, resets to bare-hands stats silently.
 ///
 /// Added automatically by [`MiningInputPlugin`] — do not add manually.
+#[cfg(feature = "items")]
 pub fn hotbar_to_tool_system<I: ItemType>(
     hotbar: Res<HotbarState>,
     container_query: Query<&ContainerComponent<I>, With<PrimaryContainer>>,
