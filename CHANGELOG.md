@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-27
+
+### Added
+- `RegionGenerator<V>` trait + `MultiGenerator<V>` + `MultiGeneratorPlugin<V>` —
+  composite worlds dispatch chunks to regional generators in insertion order
+  with a configurable fallback. A blanket impl for any `ChunkGenerator<V>`
+  keeps existing single-generator setups working unchanged.
+- Optional `tracing` Cargo feature wraps hot paths (greedy & neighbor meshing,
+  world streaming, chunk unload, generator dispatch/poll, occlusion, capsule
+  collision, raycast) in `tracing` spans. Zero overhead when disabled.
+- Optional `tracy` Cargo feature routes those spans to a Tracy profiler client
+  via `tracing-tracy`. Init helper `voxel_framework::profile::init_tracy()`
+  for consumers to call before constructing the Bevy `App`.
+- `docs/multiplayer-readiness.md` — audit and invariants for any future
+  networking work; documents that the framework's simulation path is
+  deterministic by construction (no `thread_rng`, no wall-clock reads).
+
+### Changed
+- **BREAKING**: `MobConfig::gravity` is now `Option<f32>` instead of `f32`.
+  `Some(g)` keeps the previous grounded integration; `None` skips
+  vertical-velocity application and `on_ground` snapping for zero-g games.
+  `MobConfig::default()` returns `Some(20.0)`, so callers that build via
+  `..MobConfig::default()` are unaffected. Explicit `gravity: 20.0` field
+  literals must become `gravity: Some(20.0)`.
+- `items`, `crafting`, and `mobs` modules are now gated behind same-named
+  Cargo features. All three are in `default = ["items", "crafting", "mobs"]`,
+  so existing consumers get them without configuration. Games that want only
+  the engine layer can set `default-features = false`. Examples declare
+  `required-features`: `basic_world` needs `items`; `minetest` needs all three.
+- README adds a "Profiling" section documenting the new feature flags.
+
+### Fixed
+- Removed unused imports in `src/world/raycast.rs` test module surfaced by
+  `cargo check --no-default-features`.
+
 ## [0.2.0] - 2026-04-22
 
 ### Added
