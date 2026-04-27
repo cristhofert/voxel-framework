@@ -112,6 +112,7 @@ pub fn streaming_system(
     mut load_writer: MessageWriter<ChunkLoadRequest>,
     mut unload_writer: MessageWriter<ChunkUnloadRequest>,
 ) {
+    crate::profile_span!("voxel::world::streaming");
     let chunk_size_f = CHUNK_SIZE as f32;
 
     // Viewer position expressed in chunk-grid units (fractional).

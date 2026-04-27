@@ -193,6 +193,7 @@ pub(crate) fn super_voxel<V: VoxelType>(
 /// let mesh_lod1 = generate_chunk_mesh(&chunk, 2); // half detail
 /// ```
 pub fn generate_chunk_mesh<V: VoxelType>(chunk: &Chunk<V>, step: usize) -> Mesh {
+    crate::profile_span!("voxel::mesh::greedy");
     build_mesh(chunk, step, &default_face_visible::<V>)
 }
 
