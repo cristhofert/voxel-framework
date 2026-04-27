@@ -53,9 +53,11 @@
 //! [`Task`]: bevy::tasks::Task
 
 pub mod asteroid;
+pub mod region;
 pub mod systems;
 pub mod terrain;
 
+pub use region::{MultiGenerator, MultiGeneratorPlugin, RegionGenerator};
 pub use systems::{ChunkTask, chunk_request_system, chunk_task_poll_system};
 
 use std::sync::Arc;
