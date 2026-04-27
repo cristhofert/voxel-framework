@@ -71,6 +71,7 @@ pub fn generate_chunk_mesh_with_neighbors<V: VoxelType>(
     neighbors: &ChunkNeighbors<V>,
     step: usize,
 ) -> Mesh {
+    crate::profile_span!("voxel::mesh::neighbor");
     let face_visible =
         |chunk: &Chunk<V>, x: usize, y: usize, z: usize, face: &FaceDir, step: usize| -> bool {
             is_face_visible(chunk, neighbors, x, y, z, face, step)

@@ -251,6 +251,7 @@ pub fn resolve_capsule_collision<V: VoxelType, F: QueryFilter>(
     manager: &ChunkManager,
     chunks: &Query<&Chunk<V>, F>,
 ) -> Vec3 {
+    crate::profile_span!("voxel::world::collision::resolve_capsule");
     let cap_min = bottom.min(top) - Vec3::splat(radius);
     let cap_max = bottom.max(top) + Vec3::splat(radius);
 

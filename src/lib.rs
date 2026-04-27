@@ -126,6 +126,7 @@ pub mod mobs;
 pub mod noise;
 pub mod player;
 pub mod prelude;
+pub mod profile;
 pub mod render;
 pub mod settings;
 pub mod skybox;

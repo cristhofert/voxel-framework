@@ -114,6 +114,7 @@ pub fn occlusion_update_system<V: VoxelType>(
     chunks: Query<&Chunk<V>>,
     mut visibility: Query<&mut Visibility>,
 ) {
+    crate::profile_span!("voxel::world::occlusion");
     // Collect all coords that need re-evaluation (the modified coord + its 6
     // neighbors). Use a small stack-allocated buffer to avoid heap allocation
     // for the common case.

@@ -413,6 +413,7 @@ pub fn chunk_despawn_system<V: VoxelType>(
     config: Option<Res<PersistenceConfig>>,
     chunks: Query<&Chunk<V>>,
 ) {
+    crate::profile_span!("voxel::world::chunk_unload");
     for &ChunkUnloadRequest(coord) in unload_reader.read() {
         // Save before unregistering so the entity is still valid.
         if config.as_ref().map(|c| c.auto_save).unwrap_or(false) {

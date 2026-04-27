@@ -82,6 +82,7 @@ pub fn chunk_request_system<V: VoxelType>(
     mut manager: ResMut<ChunkManager>,
     mut modified_writer: MessageWriter<ChunkModified>,
 ) {
+    crate::profile_span!("voxel::generator::dispatch");
     let pool = AsyncComputeTaskPool::get();
 
     for &ChunkLoadRequest(coord) in load_reader.read() {
@@ -133,6 +134,7 @@ pub fn chunk_task_poll_system<V: VoxelType>(
     mut manager: ResMut<ChunkManager>,
     mut modified_writer: MessageWriter<ChunkModified>,
 ) {
+    crate::profile_span!("voxel::generator::poll");
     for (entity, mut chunk_task) in tasks.iter_mut() {
         // Poll the task exactly once — non-blocking.
         if let Some((coord, chunk)) = block_on(poll_once(&mut chunk_task.task)) {

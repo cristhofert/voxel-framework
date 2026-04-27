@@ -618,6 +618,27 @@ app.add_plugins(GeneratorPlugin::<MyVoxel>::new())
 | `SiliconCrystal` | 3 | `(0.40, 0.50, 0.80, 1.0)` — blue-violet |
 | `RareMineral` | 4 | `(0.20, 0.85, 0.60, 1.0)` — vivid teal-green |
 
+## Profiling
+
+Compile with `--features tracing` to enable internal spans for hot paths
+(mesh generation, chunk load/unload, async generation dispatch, occlusion,
+collision, raycast). With the feature off the spans expand to nothing —
+zero runtime overhead in default builds.
+
+Add `--features tracy` to route spans to a [Tracy](https://github.com/wolfpld/tracy)
+profiler client. Call `voxel_framework::profile::init_tracy()` from your `main()`
+**before** constructing the Bevy `App` so the subscriber is installed first
+(only one global tracing subscriber may be active at a time):
+
+```rust,no_run
+fn main() {
+    #[cfg(feature = "tracy")]
+    voxel_framework::profile::init_tracy();
+
+    bevy::prelude::App::new()/* ... */.run();
+}
+```
+
 ## License
 
 MIT

@@ -138,6 +138,7 @@ pub fn raycast<V: VoxelType>(
     manager: &ChunkManager,
     chunks: &Query<&Chunk<V>>,
 ) -> Option<RaycastHit> {
+    crate::profile_span!("voxel::world::raycast");
     let dir = direction.normalize();
 
     // Current voxel position (integer grid)
@@ -257,8 +258,7 @@ pub fn raycast<V: VoxelType>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
-    use crate::chunk::{Chunk, CHUNK_SIZE};
+    use crate::chunk::Chunk;
     use crate::voxel::DefaultVoxel;
     use crate::world::ChunkManager;
 
