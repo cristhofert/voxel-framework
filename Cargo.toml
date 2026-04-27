@@ -10,7 +10,13 @@ repository = "https://github.com/cristhofert/voxel-framework"
 readme = "README.md"
 
 [features]
-default = []
+default = ["items", "crafting", "mobs"]
+# Items, inventory, drops, hotbar, and item-pickup UI.
+items = []
+# Crafting recipes and registry. Recipes consume items, so this implies `items`.
+crafting = ["items"]
+# Hostile/passive mob entities (AI, pathing, damage). Independent of `items`.
+mobs = []
 # Internal profiling spans for hot paths (mesh gen, chunk load, occlusion, collision, raycast).
 # `tracing` is already a transitive dep of Bevy, but we still declare it as an
 # optional direct dep so we can name it from our code under a feature gate.
@@ -39,10 +45,12 @@ bevy = { version = "0.18", features = ["bevy_winit", "wayland", "bevy_mesh", "be
 [[example]]
 name = "basic_world"
 path = "examples/basic_world.rs"
+required-features = ["items"]
 
 [[example]]
 name = "minetest"
 path = "examples/minetest.rs"
+required-features = ["items", "crafting", "mobs"]
 
 # Optimize dependencies in debug builds for acceptable performance during development.
 # Your own code stays unoptimized (fast recompile), Bevy and others run at near-release speed.

@@ -352,10 +352,12 @@ impl Plugin for PlacementPlugin {
 ///     .add_plugins(PlacementInputPlugin::<DefaultTerrainVoxel>::new())
 ///     .run();
 /// ```
+#[cfg(feature = "items")]
 pub struct PlacementInputPlugin<V: VoxelType> {
     _m: std::marker::PhantomData<V>,
 }
 
+#[cfg(feature = "items")]
 impl<V: VoxelType> PlacementInputPlugin<V> {
     /// Creates a new [`PlacementInputPlugin`] for voxel type `V`.
     pub fn new() -> Self {
@@ -363,10 +365,12 @@ impl<V: VoxelType> PlacementInputPlugin<V> {
     }
 }
 
+#[cfg(feature = "items")]
 impl<V: VoxelType> Default for PlacementInputPlugin<V> {
     fn default() -> Self { Self::new() }
 }
 
+#[cfg(feature = "items")]
 impl<V: VoxelType> Plugin for PlacementInputPlugin<V> {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, placement_input_system::<V>);
@@ -378,6 +382,7 @@ impl<V: VoxelType> Plugin for PlacementInputPlugin<V> {
 /// Ticks the cooldown every frame, then raycasts and places on right-click.
 /// Added automatically — do not add this system manually when using
 /// [`PlacementInputPlugin`].
+#[cfg(feature = "items")]
 pub fn placement_input_system<V: VoxelType>(
     buttons: Res<ButtonInput<MouseButton>>,
     camera_q: Query<&GlobalTransform, With<Camera3d>>,

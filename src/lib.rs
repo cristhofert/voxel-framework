@@ -117,11 +117,14 @@
 
 pub mod audio;
 pub mod chunk;
+#[cfg(feature = "crafting")]
 pub mod crafting;
 pub mod fragments;
 pub mod generator;
+#[cfg(feature = "items")]
 pub mod items;
 pub mod mesh;
+#[cfg(feature = "mobs")]
 pub mod mobs;
 pub mod noise;
 pub mod player;
@@ -139,6 +142,7 @@ use bevy::prelude::*;
 use voxel::VoxelType;
 use audio::SfxPlugin;
 use fragments::FragmentPlugin;
+#[cfg(feature = "items")]
 use items::hotbar::HotbarPlugin;
 use mesh::MeshPlugin;
 use render::RenderPlugin;
@@ -303,6 +307,7 @@ impl<V: VoxelType> Plugin for VoxelPlugin<V> {
         app.add_plugins(FragmentPlugin);
         app.add_plugins(SkyboxPlugin);
         app.add_plugins(SfxPlugin);
+        #[cfg(feature = "items")]
         app.add_plugins(HotbarPlugin);
         app.add_plugins(UiPlugin);
     }

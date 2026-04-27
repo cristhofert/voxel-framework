@@ -34,6 +34,7 @@ use bevy::prelude::*;
 use crate::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
 use crate::skybox::{SkyboxConfig, SkyboxMode, StarfieldConfig};
 use crate::world::ChunkManager;
+#[cfg(feature = "crafting")]
 use crate::world::manifest::WorldManifest;
 
 // ─── Config structs ───────────────────────────────────────────────────────────
@@ -348,6 +349,7 @@ impl WorldConfig {
     /// let config = WorldConfig::from_world_dir("survival");
     /// println!("seed = {}", config.seed);
     /// ```
+    #[cfg(feature = "crafting")]
     pub fn from_world_dir(world_name: &str) -> Self {
         let world_dir = std::path::Path::new("worlds").join(world_name);
         match WorldManifest::read(&world_dir) {

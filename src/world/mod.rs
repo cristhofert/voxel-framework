@@ -86,6 +86,7 @@
 pub mod collision;
 pub mod config;
 pub mod loading;
+#[cfg(feature = "crafting")]
 pub mod manifest;
 pub mod mining;
 pub mod occlusion;
@@ -108,12 +109,16 @@ pub use persistence::{PersistenceConfig, PersistencePlugin, WorldDataDir, chunk_
 pub use raycast::{RaycastHit, raycast};
 pub use mining::{
     tick_mining, stop_mining, mining_input_system,
-    MiningConfig, MiningInputPlugin, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
+    MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
 };
+#[cfg(feature = "items")]
+pub use mining::MiningInputPlugin;
 pub use placement::{
-    try_place_voxel, tick_placement, placement_input_system,
-    PlacementConfig, PlacementInputPlugin, PlacementPlugin, PlacementState, VoxelPlaced,
+    try_place_voxel, tick_placement,
+    PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced,
 };
+#[cfg(feature = "items")]
+pub use placement::{placement_input_system, PlacementInputPlugin};
 pub use systems::ViewerPosition;
 pub use voxel_ops::{get_voxel_at, set_voxel_at, get_state_at, set_state_at};
 

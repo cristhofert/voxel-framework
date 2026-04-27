@@ -53,8 +53,11 @@
 
 use bevy::prelude::*;
 
+#[cfg(feature = "items")]
 use crate::items::hotbar::{HotbarSelectionChanged, HotbarState};
+#[cfg(feature = "items")]
 use crate::items::inventory::ItemPickedUp;
+#[cfg(feature = "items")]
 use crate::items::inventory::ItemType;
 use crate::world::loading::{LoadingProgress, WorldLoadingState};
 
@@ -432,6 +435,9 @@ impl Plugin for LoadingScreenPlugin {
 }
 
 // ─── Hotbar UI ────────────────────────────────────────────────────────────────
+//
+// Gated on the `items` feature: the hotbar UI reads `HotbarState` and listens
+// for `HotbarSelectionChanged` messages, both defined in `crate::items`.
 
 /// Visual configuration for the [`HotbarUiPlugin`] slot row.
 ///
@@ -448,6 +454,7 @@ impl Plugin for LoadingScreenPlugin {
 /// | `slot_gap`       | `4.0` px                            |
 /// | `slot_color`     | `[0.15, 0.15, 0.15, 0.85]` (dark)  |
 /// | `selected_color` | `[0.45, 0.45, 0.45, 0.95]` (light) |
+#[cfg(feature = "items")]
 #[derive(Resource, Debug, Clone)]
 pub struct HotbarUiConfig {
     /// When `false`, the hotbar is not spawned. Use this to disable the hotbar
@@ -464,6 +471,7 @@ pub struct HotbarUiConfig {
     pub selected_color: [f32; 4],
 }
 
+#[cfg(feature = "items")]
 impl Default for HotbarUiConfig {
     fn default() -> Self {
         Self {
@@ -477,13 +485,16 @@ impl Default for HotbarUiConfig {
 }
 
 /// Marker for the hotbar root container.
+#[cfg(feature = "items")]
 #[derive(Component)]
 struct HotbarUiRoot;
 
 /// Marker for individual hotbar slot nodes. Holds the slot index.
+#[cfg(feature = "items")]
 #[derive(Component)]
 struct HotbarSlot(usize);
 
+#[cfg(feature = "items")]
 fn spawn_hotbar_ui(
     mut commands: Commands,
     config: Res<HotbarUiConfig>,
@@ -543,6 +554,7 @@ fn spawn_hotbar_ui(
         });
 }
 
+#[cfg(feature = "items")]
 fn update_hotbar_selection(
     mut selection_reader: bevy::ecs::message::MessageReader<HotbarSelectionChanged>,
     config: Res<HotbarUiConfig>,
@@ -601,8 +613,10 @@ fn update_hotbar_selection(
 ///     })
 ///     .add_plugins(HotbarUiPlugin);
 /// ```
+#[cfg(feature = "items")]
 pub struct HotbarUiPlugin;
 
+#[cfg(feature = "items")]
 impl Plugin for HotbarUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HotbarUiConfig>();
@@ -612,6 +626,9 @@ impl Plugin for HotbarUiPlugin {
 }
 
 // ─── Pickup Notification ──────────────────────────────────────────────────────
+//
+// Gated on the `items` feature: the pickup notification system listens for
+// `ItemPickedUp<I>` messages and is meaningless without an item palette.
 
 /// Visual configuration for the [`PickupNotificationPlugin`] pop-up system.
 ///
@@ -626,6 +643,7 @@ impl Plugin for HotbarUiPlugin {
 /// | `duration_secs`     | `3.0` s              |
 /// | `text_color`        | `[1, 1, 1, 1]` (white) |
 /// | `max_notifications` | `5`                  |
+#[cfg(feature = "items")]
 #[derive(Resource, Debug, Clone)]
 pub struct PickupNotificationConfig {
     /// When `false`, no notification entities are spawned even when
@@ -643,6 +661,7 @@ pub struct PickupNotificationConfig {
     pub max_notifications: usize,
 }
 
+#[cfg(feature = "items")]
 impl Default for PickupNotificationConfig {
     fn default() -> Self {
         Self {
@@ -655,13 +674,16 @@ impl Default for PickupNotificationConfig {
 }
 
 /// Timer component on each notification entity.
+#[cfg(feature = "items")]
 #[derive(Component)]
 struct NotificationTimer(Timer);
 
 /// Marker for the notification container.
+#[cfg(feature = "items")]
 #[derive(Component)]
 struct NotificationContainer;
 
+#[cfg(feature = "items")]
 fn spawn_notification_container(mut commands: Commands) {
     commands.spawn((
         NotificationContainer,
@@ -678,6 +700,7 @@ fn spawn_notification_container(mut commands: Commands) {
     ));
 }
 
+#[cfg(feature = "items")]
 fn on_item_picked_up<I: ItemType>(
     mut commands: Commands,
     mut pickup_reader: bevy::ecs::message::MessageReader<ItemPickedUp<I>>,
@@ -745,6 +768,7 @@ fn on_item_picked_up<I: ItemType>(
     }
 }
 
+#[cfg(feature = "items")]
 fn tick_notifications(
     mut commands: Commands,
     time: Res<Time>,
@@ -783,10 +807,12 @@ fn tick_notifications(
 ///
 /// App::new().add_plugins(PickupNotificationPlugin::<MyItem>::new());
 /// ```
+#[cfg(feature = "items")]
 pub struct PickupNotificationPlugin<I: ItemType> {
     _marker: std::marker::PhantomData<I>,
 }
 
+#[cfg(feature = "items")]
 impl<I: ItemType> PickupNotificationPlugin<I> {
     pub fn new() -> Self {
         Self {
@@ -795,12 +821,14 @@ impl<I: ItemType> PickupNotificationPlugin<I> {
     }
 }
 
+#[cfg(feature = "items")]
 impl<I: ItemType> Default for PickupNotificationPlugin<I> {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "items")]
 impl<I: ItemType> Plugin for PickupNotificationPlugin<I> {
     fn build(&self, app: &mut App) {
         app.init_resource::<PickupNotificationConfig>();
@@ -954,6 +982,7 @@ impl Plugin for DebugOverlayPlugin {
 
 // ─── UiPlugin (umbrella) ──────────────────────────────────────────────────────
 
+#[cfg(feature = "items")]
 use crate::items::inventory::DefaultItem;
 
 /// Umbrella plugin that adds all four HUD sub-plugins with [`DefaultItem`].
@@ -983,7 +1012,9 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(CrosshairPlugin);
         app.add_plugins(LoadingScreenPlugin);
+        #[cfg(feature = "items")]
         app.add_plugins(HotbarUiPlugin);
+        #[cfg(feature = "items")]
         app.add_plugins(PickupNotificationPlugin::<DefaultItem>::new());
     }
 }

@@ -7,6 +7,7 @@
 pub use crate::voxel::{DefaultVoxel, DefaultTerrainVoxel, MovementModifier, VoxelPalette, VoxelType};
 
 // Crafting
+#[cfg(feature = "crafting")]
 pub use crate::crafting::{
     CraftingIngredient, CraftingPlugin, CraftingUiPlugin, CraftingRecipe, CraftingRegistry,
     CraftingMenuState, CraftingError, can_craft, try_craft,
@@ -62,14 +63,18 @@ pub use crate::chunk::face_to_state;
 // Mining API
 pub use crate::world::{
     tick_mining, stop_mining, mining_input_system,
-    MiningConfig, MiningInputPlugin, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
+    MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
 };
+#[cfg(feature = "items")]
+pub use crate::world::MiningInputPlugin;
 
 // Placement API
 pub use crate::world::{
-    try_place_voxel, tick_placement, placement_input_system,
-    PlacementConfig, PlacementInputPlugin, PlacementPlugin, PlacementState, VoxelPlaced,
+    try_place_voxel, tick_placement,
+    PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced,
 };
+#[cfg(feature = "items")]
+pub use crate::world::{placement_input_system, PlacementInputPlugin};
 
 // Loading API
 pub use crate::world::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldReady};
@@ -91,22 +96,27 @@ pub use crate::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent, SfxPlugin, SfxRe
 pub use crate::skybox::{SkyboxConfig, SkyboxMode, SkyboxPlugin, StarfieldConfig};
 
 // Items system
+#[cfg(feature = "items")]
 pub use crate::items::{
     DefaultItem, DroppedItem, DropsPlugin, DropTable, HotbarPlugin, HotbarSelectionChanged,
     HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp, ItemType, MagnetConfig,
     load_inventory, save_inventory,
 };
+#[cfg(feature = "items")]
 pub use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
 
 // UI system
 pub use crate::ui::{
     CrosshairConfig, CrosshairPlugin,
-    HotbarUiConfig, HotbarUiPlugin,
     LoadingScreenConfig, LoadingScreenPlugin,
-    PickupNotificationConfig, PickupNotificationPlugin,
     PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSettingsRequest,
     DebugOverlayPlugin, DebugOverlayState,
     UiPlugin,
+};
+#[cfg(feature = "items")]
+pub use crate::ui::{
+    HotbarUiConfig, HotbarUiPlugin,
+    PickupNotificationConfig, PickupNotificationPlugin,
 };
 
 // Player (6DOF jetpack / grounded)
@@ -125,12 +135,14 @@ pub use crate::player::effects::{
 };
 
 // Mobs
+#[cfg(feature = "mobs")]
 pub use crate::mobs::{
     Mob, MobAiState, MobConfig, MobDied, MobPlugin,
     spawn_mob, MOB_HALF_HEIGHT, MOB_RADIUS,
 };
 
-// World manifest
+// World manifest (requires crafting because the manifest writer reads the recipe registry)
+#[cfg(feature = "crafting")]
 pub use crate::world::manifest::{WorldManifest, WorldManifestPlugin, VoxelPaletteEntry};
 
 // Settings persistence
