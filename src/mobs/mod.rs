@@ -109,7 +109,16 @@ pub struct MobConfig {
     /// Distance from the player at which the mob despawns (unloads).
     pub despawn_distance: f32,
     /// Gravity acceleration (m/s²). Positive = downward.
-    pub gravity: f32,
+    ///
+    /// `Some(g)` enables grounded behaviour: the mob accelerates downward each
+    /// frame and snaps to the ground via capsule collision (Minecraft-style).
+    /// `None` disables gravity and ground-snapping entirely so the mob floats
+    /// freely in 3D — useful for zero-g / space games where mobs should drift
+    /// alongside a [`crate::player::PlayerMode::FreeFlight`] player.
+    ///
+    /// In zero-g mode the mob's `vertical_velocity` field stays at `0.0`;
+    /// only horizontal AI velocity drives motion.
+    pub gravity: Option<f32>,
     /// RGB color used for the default box mesh.
     pub color: Color,
 }
@@ -126,7 +135,7 @@ impl Default for MobConfig {
             attack_cooldown: 1.2,
             patrol_radius: 6.0,
             despawn_distance: 64.0,
-            gravity: 20.0,
+            gravity: Some(20.0),
             color: Color::srgb(0.6, 0.1, 0.1),
         }
     }
@@ -284,27 +293,52 @@ fn mob_physics_system<V: VoxelType>(
 ) {
     let dt = time.delta_secs();
     for (mut tf, mut mob, cfg) in mob_q.iter_mut() {
-        // Gravity.
-        if !mob.on_ground {
-            mob.vertical_velocity -= cfg.0.gravity * dt;
-        }
+        match cfg.0.gravity {
+            // ── Grounded mode (Minecraft-style) ───────────────────────────
+            Some(g) => {
+                // Gravity.
+                if !mob.on_ground {
+                    mob.vertical_velocity -= g * dt;
+                }
 
-        let move_delta = (mob.velocity + Vec3::Y * mob.vertical_velocity) * dt;
-        tf.translation += move_delta;
+                let move_delta = (mob.velocity + Vec3::Y * mob.vertical_velocity) * dt;
+                tf.translation += move_delta;
 
-        // Capsule collision.
-        let half = MOB_HALF_HEIGHT;
-        let bottom = tf.translation - Vec3::Y * half;
-        let top    = tf.translation + Vec3::Y * half;
-        let push = resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
-        tf.translation += push;
+                // Capsule collision.
+                let half = MOB_HALF_HEIGHT;
+                let bottom = tf.translation - Vec3::Y * half;
+                let top    = tf.translation + Vec3::Y * half;
+                let push = resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
+                tf.translation += push;
 
-        // Ground detection.
-        if push.y > 0.01 {
-            mob.on_ground = true;
-            mob.vertical_velocity = 0.0;
-        } else {
-            mob.on_ground = false;
+                // Ground detection.
+                if push.y > 0.01 {
+                    mob.on_ground = true;
+                    mob.vertical_velocity = 0.0;
+                } else {
+                    mob.on_ground = false;
+                }
+            }
+            // ── Zero-gravity mode (space / FreeFlight) ────────────────────
+            None => {
+                // No gravity, no ground-snap. The AI's horizontal velocity
+                // drives motion in full 3D. `vertical_velocity` stays at 0
+                // and `on_ground` is meaningless here.
+                mob.vertical_velocity = 0.0;
+                mob.on_ground = false;
+
+                let move_delta = mob.velocity * dt;
+                tf.translation += move_delta;
+
+                // Still resolve capsule collision so mobs can't tunnel
+                // through chunks, but apply the push directly without
+                // ground inference.
+                let half = MOB_HALF_HEIGHT;
+                let bottom = tf.translation - Vec3::Y * half;
+                let top    = tf.translation + Vec3::Y * half;
+                let push = resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
+                tf.translation += push;
+            }
         }
     }
 }
@@ -386,5 +420,102 @@ impl<V: VoxelType> Plugin for MobPlugin<V> {
                 mob_despawn_system,
             ),
         );
+    }
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pure-Rust mirror of the per-mob branch in [`mob_physics_system`] with
+    /// no chunk collision (push = 0). This lets us unit-test the gravity
+    /// branching logic without spinning up a full Bevy app, matching the
+    /// `src/fragments/mod.rs` test convention of simulating the loop manually.
+    fn step(mob: &mut Mob, tf: &mut Transform, gravity: Option<f32>, dt: f32) {
+        match gravity {
+            Some(g) => {
+                if !mob.on_ground {
+                    mob.vertical_velocity -= g * dt;
+                }
+                let move_delta = (mob.velocity + Vec3::Y * mob.vertical_velocity) * dt;
+                tf.translation += move_delta;
+                // No chunks → push is zero → never grounded in this test.
+                mob.on_ground = false;
+            }
+            None => {
+                mob.vertical_velocity = 0.0;
+                mob.on_ground = false;
+                tf.translation += mob.velocity * dt;
+            }
+        }
+    }
+
+    fn make_mob(velocity: Vec3) -> Mob {
+        Mob {
+            health: 20.0,
+            ai_state: MobAiState::Patrol,
+            velocity,
+            vertical_velocity: 0.0,
+            on_ground: false,
+            attack_cooldown: 0.0,
+            patrol_timer: 0.0,
+            patrol_dir: Vec3::ZERO,
+            home_position: Vec3::ZERO,
+        }
+    }
+
+    #[test]
+    fn mob_default_has_gravity_enabled() {
+        // Grounded behaviour is preserved as the default — existing games
+        // built against MobConfig::default() keep falling under gravity.
+        assert_eq!(MobConfig::default().gravity, Some(20.0));
+    }
+
+    #[test]
+    fn mob_zero_gravity_does_not_fall() {
+        // A mob with `gravity: None` and zero velocity must stay put across
+        // many ticks — vertical_velocity is forced to 0 every step.
+        let mut mob = make_mob(Vec3::ZERO);
+        let mut tf = Transform::from_translation(Vec3::new(0.0, 100.0, 0.0));
+
+        for _ in 0..100 {
+            step(&mut mob, &mut tf, None, 0.1);
+        }
+
+        assert_eq!(tf.translation.y, 100.0, "zero-g mob must not fall");
+        assert_eq!(mob.vertical_velocity, 0.0);
+        assert!(!mob.on_ground);
+    }
+
+    #[test]
+    fn mob_zero_gravity_drifts_with_velocity() {
+        // Horizontal velocity carries through; Y is untouched.
+        let mut mob = make_mob(Vec3::new(2.0, 0.0, 0.0));
+        let mut tf = Transform::from_translation(Vec3::new(0.0, 100.0, 0.0));
+
+        // 10 ticks × 0.1 s × 2 m/s = 2.0 m drift.
+        for _ in 0..10 {
+            step(&mut mob, &mut tf, None, 0.1);
+        }
+
+        assert!((tf.translation.x - 2.0).abs() < 1e-4, "x drift = {}", tf.translation.x);
+        assert_eq!(tf.translation.y, 100.0, "y must not change in zero-g");
+    }
+
+    #[test]
+    fn mob_with_gravity_falls() {
+        // Sanity check the Some(g) branch: gravity accumulates and the mob
+        // falls when no ground push is applied.
+        let mut mob = make_mob(Vec3::ZERO);
+        let mut tf = Transform::from_translation(Vec3::new(0.0, 100.0, 0.0));
+
+        for _ in 0..10 {
+            step(&mut mob, &mut tf, Some(20.0), 0.1);
+        }
+
+        assert!(tf.translation.y < 100.0, "grounded mob must fall (got y={})", tf.translation.y);
+        assert!(mob.vertical_velocity < 0.0, "vertical velocity must accumulate downward");
     }
 }
