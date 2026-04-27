@@ -29,7 +29,10 @@ pub use crate::mesh::{
 };
 
 // Generator
-pub use crate::generator::{ChunkGenerator, ChunkTask, GeneratorPlugin, GeneratorResource};
+pub use crate::generator::{
+    ChunkGenerator, ChunkTask, GeneratorPlugin, GeneratorResource,
+    MultiGenerator, MultiGeneratorPlugin, RegionGenerator,
+};
 pub use crate::generator::asteroid::{AsteroidConfig, AsteroidGenerator, MineralFrequencies};
 pub use crate::generator::terrain::{TerrainConfig, TerrainGenerator};
 
