@@ -5,7 +5,7 @@
 > preserve as the codebase evolves, so future multiplayer work (in a downstream
 > game, or via a layer added on top) is not blocked by avoidable design choices.
 >
-> Audited on: 2026-04-27. Commit: 1a4254e.
+> Audited on: 2026-05-08. Commit: current working tree / local HEAD.
 
 ## Why this matters
 

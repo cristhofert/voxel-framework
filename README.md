@@ -30,7 +30,7 @@ The framework offers two top-level plugins so games can include only what they n
 | Plugin | What it includes |
 |---|---|
 | `VoxelCorePlugin` | World streaming, render, mesh, occlusion, mining, placement, loading |
-| `VoxelPlugin` | Everything in `VoxelCorePlugin` plus fragments, skybox, audio, hotbar, UI |
+| `VoxelPlugin` | Everything in `VoxelCorePlugin` plus fragments, skybox, audio, UI, and hotbar when the `items` feature is enabled |
 
 `GeneratorPlugin<V>` and `PersistencePlugin<V>` are always opt-in regardless of which top-level plugin you use.
 
@@ -58,7 +58,7 @@ Add the dependency to your `Cargo.toml`. The crate is distributed via this repos
 voxel-framework = { path = "../voxel-framework" }
 
 # Option B — from git, pinned to a stable tag (recommended for consumers):
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.2.0" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.3.0" }
 
 # Option C — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
@@ -82,8 +82,8 @@ fn main() {
         .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
         // Registers the async generation system.
         .add_plugins(GeneratorPlugin::<DefaultVoxel>::new())
-        // Enables auto-save on chunk modification.
-        .add_plugins(PersistencePlugin::<DefaultVoxel>::new())
+        // Enables auto-save on chunk modification under ./worlds/{world_name}/chunks.
+        .add_plugins(PersistencePlugin::<DefaultVoxel>::with_world("world"))
         // Supply the generator implementation.
         .insert_resource(GeneratorResource::<DefaultVoxel> {
             generator: Arc::new(AsteroidGenerator::new(AsteroidConfig::default())),
@@ -151,6 +151,8 @@ cargo run --example basic_world
 ## World Configuration
 
 The framework reads `world.toml` from the working directory at startup via `WorldConfigPlugin` (included in `VoxelPlugin`). If the file is absent or malformed, all values fall back to their defaults.
+
+The bundled examples also support loading persisted world metadata from `worlds/<name>/world.json` when re-opening an existing saved world.
 
 ### world.toml format
 
@@ -240,20 +242,19 @@ App::new()
 
 | Field | Default | Description |
 |---|---|---|
-| `save_dir` | `"./chunks"` | Directory for chunk binary files (created automatically) |
+| `save_dir` | `"./worlds/world/chunks"` | Directory for chunk binary files (created automatically) |
 | `auto_save` | `true` | Write to disk on every `ChunkModified` event |
 
 On load, the generator pipeline calls `try_load_chunk` before spawning an async generation task. If a saved file exists for a given coordinate, it is loaded directly — generation is skipped.
 
 ## LOD System
 
-Chunks have three discrete detail levels driven by distance from the viewer. The `ChunkLod` component on each chunk entity tracks the current level and is updated every frame by `lod_update_system`.
+Chunks have two discrete detail levels driven by distance from the viewer. The `ChunkLod` component on each chunk entity tracks the current level and is updated every frame by `lod_update_system`.
 
 | LOD level | Distance from viewer | Greedy-mesh step | Detail |
 |---|---|---|---|
-| `0` | < 50 units | 1 | Full |
-| `1` | 50–100 units | 2 | Half |
-| `2` | > 100 units | 4 | Coarse |
+| `0` | < 200 units | 1 | Full |
+| `1` | >= 200 units | 2 | Half |
 
 When the level changes, a `ChunkModified` event is emitted so the mesh system regenerates the geometry at the new step size.
 
