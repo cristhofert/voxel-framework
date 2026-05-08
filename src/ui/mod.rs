@@ -800,9 +800,13 @@ fn tick_notifications(
 /// use bevy::prelude::*;
 /// use voxel_framework::ui::PickupNotificationPlugin;
 /// # use voxel_framework::items::inventory::ItemType;
-/// # #[derive(Clone)] struct MyItem;
+/// # #[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
+/// # struct MyItem;
 /// # impl ItemType for MyItem {
-/// #     fn name(&self) -> &str { "item" }
+/// #     fn name(&self) -> &'static str { "item" }
+/// #     fn color(&self) -> [f32; 4] { [1.0, 1.0, 1.0, 1.0] }
+/// #     fn to_byte(&self) -> u8 { 0 }
+/// #     fn from_byte(_: u8) -> Self { Self }
 /// # }
 ///
 /// App::new().add_plugins(PickupNotificationPlugin::<MyItem>::new());

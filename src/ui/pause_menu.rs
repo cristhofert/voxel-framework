@@ -42,7 +42,7 @@
 //!     .add_plugins(PauseMenuPlugin)
 //!     .add_systems(Startup, spawn_player)
 //!     .add_systems(Update,
-//!         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+//!         (player_look, player_move::<DefaultVoxel>, player_resolve_collision::<DefaultVoxel>)
 //!             .chain()
 //!             .run_if(in_state(PauseMenuState::Playing)),
 //!     );
@@ -175,6 +175,7 @@ pub struct SaveSettingsRequest;
 /// fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 ///     commands.insert_resource(PauseMenuConfig {
 ///         font: asset_server.load("fonts/MyFont.ttf"),
+///         symbol_font: asset_server.load("fonts/MyFont.ttf"),
 ///     });
 /// }
 /// ```
@@ -253,7 +254,7 @@ impl Default for PauseMenuConfig {
 ///     .add_plugins(PauseMenuPlugin)
 ///     .add_systems(Startup, spawn_player)
 ///     .add_systems(Update,
-///         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
+///         (player_look, player_move::<DefaultVoxel>, player_resolve_collision::<DefaultVoxel>)
 ///             .chain()
 ///             .run_if(in_state(PauseMenuState::Playing)),
 ///     );

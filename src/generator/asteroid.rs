@@ -184,8 +184,8 @@ struct Asteroid {
 ///
 /// ```rust,no_run
 /// use std::sync::Arc;
-/// use voxel_framework::generator::{AsteroidGenerator, GeneratorResource};
-/// use voxel_framework::generator::asteroid::AsteroidConfig;
+/// use voxel_framework::generator::GeneratorResource;
+/// use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
 /// use voxel_framework::voxel::DefaultVoxel;
 ///
 /// let config = AsteroidConfig { seed: 99, asteroid_count: 5, ..AsteroidConfig::default() };

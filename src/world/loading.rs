@@ -40,13 +40,15 @@
 //! use bevy::prelude::*;
 //! use voxel_framework::world::{WorldPlugin, LoadingPlugin, LoadingProgress, WorldReady};
 //!
-//! fn on_world_ready(_trigger: Trigger<WorldReady>) {
-//!     println!("world is ready!");
+//! fn on_world_ready(mut reader: MessageReader<WorldReady>) {
+//!     for _ in reader.read() {
+//!         println!("world is ready!");
+//!     }
 //! }
 //!
 //! App::new()
 //!     .add_plugins((WorldPlugin, LoadingPlugin))
-//!     .add_observer(on_world_ready)
+//!     .add_systems(Update, on_world_ready)
 //!     .run();
 //! ```
 
@@ -76,7 +78,7 @@ use super::ChunkManager;
 /// use bevy::prelude::*;
 /// use voxel_framework::world::LoadingProgress;
 ///
-/// fn show_progress(mut reader: EventReader<LoadingProgress>) {
+/// fn show_progress(mut reader: MessageReader<LoadingProgress>) {
 ///     for msg in reader.read() {
 ///         println!("loading: {:.0}%", msg.progress * 100.0);
 ///     }
@@ -106,13 +108,16 @@ pub struct LoadingProgress {
 /// use bevy::prelude::*;
 /// use voxel_framework::world::WorldReady;
 ///
-/// fn on_world_ready(_trigger: Trigger<WorldReady>) {
-///     println!("all chunks generated — entering gameplay");
+/// fn on_world_ready(mut reader: MessageReader<WorldReady>) {
+///     for _ in reader.read() {
+///         println!("all chunks generated — entering gameplay");
+///     }
 /// }
 ///
 /// # fn main() {
 /// App::new()
-///     .add_observer(on_world_ready)
+///     .add_message::<WorldReady>()
+///     .add_systems(Update, on_world_ready)
 ///     .run();
 /// # }
 /// ```
@@ -239,13 +244,15 @@ pub fn loading_progress_system(
 /// use bevy::prelude::*;
 /// use voxel_framework::world::{WorldPlugin, LoadingPlugin, WorldReady};
 ///
-/// fn on_ready(_trigger: Trigger<WorldReady>) {
-///     println!("world ready — starting gameplay");
+/// fn on_ready(mut reader: MessageReader<WorldReady>) {
+///     for _ in reader.read() {
+///         println!("world ready — starting gameplay");
+///     }
 /// }
 ///
 /// App::new()
 ///     .add_plugins((WorldPlugin, LoadingPlugin))
-///     .add_observer(on_ready)
+///     .add_systems(Update, on_ready)
 ///     .run();
 /// ```
 pub struct LoadingPlugin;
