@@ -5,3 +5,6 @@ worlds/
 .DS_Store
 assets/
 .atl/
+
+# Claude Code local state
+.claude/
