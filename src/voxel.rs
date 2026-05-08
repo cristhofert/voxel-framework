@@ -747,3 +747,68 @@ impl<V: VoxelType> Default for VoxelPalette<V> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_voxel_hardness_overrides() {
+        assert_eq!(DefaultVoxel::Air.hardness(), 0.0);
+        assert_eq!(DefaultVoxel::Rock.hardness(), 3.0);
+        assert_eq!(DefaultVoxel::IronOre.hardness(), 4.0);
+        assert_eq!(DefaultVoxel::SiliconCrystal.hardness(), 2.5);
+        assert_eq!(DefaultVoxel::RareMineral.hardness(), 5.0);
+    }
+
+    #[test]
+    fn default_voxel_mining_level_overrides() {
+        assert_eq!(DefaultVoxel::Air.mining_level(), 0);
+        assert_eq!(DefaultVoxel::Rock.mining_level(), 1);
+        assert_eq!(DefaultVoxel::IronOre.mining_level(), 2);
+        assert_eq!(DefaultVoxel::SiliconCrystal.mining_level(), 1);
+        assert_eq!(DefaultVoxel::RareMineral.mining_level(), 2);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    enum MinimalVoxel {
+        #[default]
+        Air,
+        Solid,
+    }
+
+    impl VoxelType for MinimalVoxel {
+        fn name(&self) -> &'static str {
+            match self {
+                MinimalVoxel::Air => "Air",
+                MinimalVoxel::Solid => "Solid",
+            }
+        }
+        fn is_solid(&self) -> bool {
+            matches!(self, MinimalVoxel::Solid)
+        }
+        fn color(&self) -> [f32; 4] {
+            [0.0, 0.0, 0.0, 1.0]
+        }
+        fn to_byte(&self) -> u8 {
+            match self {
+                MinimalVoxel::Air => 0,
+                MinimalVoxel::Solid => 1,
+            }
+        }
+        fn from_byte(byte: u8) -> Self {
+            match byte {
+                1 => MinimalVoxel::Solid,
+                _ => MinimalVoxel::Air,
+            }
+        }
+    }
+
+    #[test]
+    fn voxel_type_trait_defaults() {
+        assert_eq!(MinimalVoxel::Solid.hardness(), 1.0);
+        assert_eq!(MinimalVoxel::Solid.mining_level(), 0);
+        assert_eq!(MinimalVoxel::Air.hardness(), 1.0);
+        assert_eq!(MinimalVoxel::Air.mining_level(), 0);
+    }
+}
