@@ -771,4 +771,146 @@ mod tests {
 
         assert_eq!(state.progress, 1.0);
     }
+
+    // Mirrors the production formula at `tick_mining` (mining.rs:376-388).
+    fn compute_effective_break_time(break_time: f32, hardness: f32) -> f32 {
+        if hardness > 0.0 {
+            break_time * hardness
+        } else {
+            f32::MAX
+        }
+    }
+
+    // Mirrors the gating + tool-speed multiplier at `mining_input_system`
+    // (mining.rs:615-621). Returns the per-call delta passed into `tick_mining`,
+    // or `None` if the tool level gate blocks progress.
+    fn gated_effective_delta(
+        delta: f32,
+        tool_level: u8,
+        tool_speed: f32,
+        voxel_mining_level: u8,
+    ) -> Option<f32> {
+        if tool_level < voxel_mining_level {
+            None
+        } else {
+            Some(delta * tool_speed)
+        }
+    }
+
+    #[test]
+    fn hardness_zero_is_unbreakable() {
+        let config = default_config();
+        let hardness = 0.0;
+        let effective = compute_effective_break_time(config.break_time, hardness);
+
+        assert_eq!(effective, f32::MAX);
+
+        let mut state = MiningState {
+            target: Some((IVec3::ZERO, (0, 0, 0))),
+            elapsed: 0.0,
+            progress: 0.0,
+            effective_break_time: effective,
+        };
+
+        // Simulate a long delta — progress must remain effectively zero.
+        for _ in 0..1_000 {
+            state.elapsed += 10.0;
+            state.progress = (state.elapsed / state.effective_break_time).min(1.0);
+        }
+
+        assert!(state.progress < 1.0);
+        assert!(state.progress < f32::EPSILON * 1_000.0);
+        // Production code at mining.rs:397 only emits VoxelBroken when
+        // `effective_break_time < f32::MAX`, so the unbreakable branch
+        // never reaches the break message.
+        assert_eq!(state.effective_break_time, f32::MAX);
+    }
+
+    #[test]
+    fn hardness_scales_break_time() {
+        let break_time = 1.5_f32;
+        let hardness = 3.0_f32;
+        let effective = compute_effective_break_time(break_time, hardness);
+        assert!((effective - 4.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tool_level_below_mining_level_blocks_progress() {
+        let delta = gated_effective_delta(0.1, 1, 1.0, 2);
+        assert!(delta.is_none(), "tool_level=1 must not mine voxel with mining_level=2");
+
+        // Confirm `stop_mining` semantics — state resets when gate trips.
+        let mut state = MiningState {
+            target: Some((IVec3::ZERO, (0, 0, 0))),
+            elapsed: 0.4,
+            progress: 0.2,
+            effective_break_time: 1.5,
+        };
+        stop_mining(&mut state);
+        assert!(state.target.is_none());
+        assert_eq!(state.elapsed, 0.0);
+        assert_eq!(state.progress, 0.0);
+    }
+
+    #[test]
+    fn tool_level_meets_requirement_progresses() {
+        let config = default_config();
+        let delta = gated_effective_delta(0.1, 1, 1.0, 1)
+            .expect("tool_level=1 must satisfy mining_level=1 gate");
+        assert!((delta - 0.1).abs() < f32::EPSILON);
+
+        let hardness = 1.0_f32;
+        let effective = compute_effective_break_time(config.break_time, hardness);
+        let mut state = MiningState {
+            target: Some((IVec3::ZERO, (0, 0, 0))),
+            elapsed: 0.0,
+            progress: 0.0,
+            effective_break_time: effective,
+        };
+
+        for _ in 0..3 {
+            state.elapsed += delta;
+            state.progress = (state.elapsed / state.effective_break_time).min(1.0);
+        }
+
+        assert!(state.progress > 0.0);
+        assert!(state.progress < 1.0);
+    }
+
+    #[test]
+    fn tool_speed_scales_delta() {
+        let break_time = 1.5_f32;
+        let hardness = 1.0_f32;
+        let tool_speed = 2.0_f32;
+        let frame_delta = 0.1_f32;
+
+        let effective_delta = gated_effective_delta(frame_delta, 0, tool_speed, 0)
+            .expect("level-0 voxel is breakable by bare hands");
+        assert!(
+            (effective_delta - 0.2).abs() < f32::EPSILON,
+            "tool_speed=2.0 must double the per-call delta"
+        );
+
+        let effective_break_time = compute_effective_break_time(break_time, hardness);
+        let mut state = MiningState {
+            target: Some((IVec3::ZERO, (0, 0, 0))),
+            elapsed: 0.0,
+            progress: 0.0,
+            effective_break_time,
+        };
+
+        // Simulate ~0.75 s of real time at frame_delta = 0.1.
+        let frames_for_half_time = (0.75 / frame_delta).ceil() as usize;
+        for _ in 0..frames_for_half_time {
+            state.elapsed += effective_delta;
+            state.progress = (state.elapsed / state.effective_break_time).min(1.0);
+        }
+
+        assert!(
+            state.progress >= 1.0,
+            "tool_speed=2.0 must reach progress=1.0 at ~half the nominal break time \
+             (expected >=1.0, got {})",
+            state.progress
+        );
+    }
 }

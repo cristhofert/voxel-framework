@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `DefaultVoxel` now overrides `VoxelType::hardness()` and `mining_level()`
+  per variant (`Air = 0.0/0`, `Rock = 3.0/1`, `IronOre = 4.0/2`,
+  `SiliconCrystal = 2.5/1`, `RareMineral = 5.0/2`) instead of inheriting the
+  trait defaults (`1.0/0`). Behavior change for any consumer that mined
+  `DefaultVoxel` blocks at the previous uniform `1.5 s` break time. No API
+  break, no persistence migration. The tool/material contract is now locked
+  by the versioned spec under `openspec/changes/tool-material-system/specs/items/spec.md`.
+
 ## [0.3.0] - 2026-04-27
 
 ### Added
