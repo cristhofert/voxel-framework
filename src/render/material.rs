@@ -112,6 +112,13 @@ impl Material for ChunkMaterial {
 /// # Example
 ///
 /// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::render::ChunkTextureArray;
+///
+/// let mut app = App::new();
+/// app.add_plugins(MinimalPlugins).init_asset::<Image>();
+/// let my_texture_array_handle: Handle<Image> = Handle::default();
+///
 /// // In your Bevy app setup, before adding VoxelCorePlugin / VoxelPlugin:
 /// app.insert_resource(ChunkTextureArray {
 ///     handle: my_texture_array_handle,

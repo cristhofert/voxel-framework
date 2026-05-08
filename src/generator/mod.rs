@@ -31,12 +31,12 @@
 //! use std::sync::Arc;
 //! use bevy::prelude::*;
 //! use voxel_framework::{
-//!     generator::{AsteroidGenerator, GeneratorPlugin, GeneratorResource},
+//!     generator::{GeneratorPlugin, GeneratorResource},
 //!     mesh::MeshPlugin,
 //!     voxel::DefaultVoxel,
 //!     VoxelPlugin,
 //! };
-//! use voxel_framework::generator::asteroid::AsteroidConfig;
+//! use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
 //!
 //! App::new()
 //!     .add_plugins(DefaultPlugins)
@@ -149,10 +149,10 @@ pub trait ChunkGenerator<V: VoxelType>: Send + Sync + 'static {
 /// use std::sync::Arc;
 /// use bevy::prelude::*;
 /// use voxel_framework::{
-///     generator::{AsteroidGenerator, GeneratorResource},
+///     generator::GeneratorResource,
 ///     voxel::DefaultVoxel,
 /// };
-/// use voxel_framework::generator::asteroid::AsteroidConfig;
+/// use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
 ///
 /// fn main() {
 ///     App::new()

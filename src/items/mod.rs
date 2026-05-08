@@ -57,7 +57,9 @@
 //!     drop_table.register(2, DefaultItem::IronOre, 1, 2);
 //!
 //!     // Mark the player entity so the magnet system knows where to attract items.
-//!     commands.spawn((Player, ItemCollector));
+//!     // (In practice the player entity is spawned by `voxel_framework::player::spawn_player`
+//!     // and `ItemCollector` is attached to it via a separate startup system.)
+//!     commands.spawn(ItemCollector);
 //! }
 //! ```
 

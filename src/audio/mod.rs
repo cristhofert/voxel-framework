@@ -48,7 +48,7 @@
 //!     mut commands: Commands,
 //! ) {
 //!     for (i, request) in reader.read().enumerate() {
-//!         if let Some(path) = config.pick_path(&request.event, i as u64) {
+//!         if let Some(path) = config.pick_path(&request.event, i as u64).map(|p| p.to_owned()) {
 //!             let source: Handle<AudioSource> = asset_server.load(path);
 //!             commands.spawn((AudioPlayer(source), PlaybackSettings::ONCE));
 //!         }
