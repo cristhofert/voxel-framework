@@ -426,4 +426,13 @@ mod tests {
         let (_, count) = table.get_drop(2, 12345).unwrap();
         assert_eq!(count, 5);
     }
+
+    #[test]
+    fn test_drop_table_identity_fallback_with_other_entries() {
+        let mut table = DropTable::<DefaultItem>::new();
+        table.register(2, DefaultItem::Dirt, 1, 1);
+        let (item, count) = table.get_drop(11, 0).unwrap();
+        assert_eq!(item, DefaultItem::IronOre);
+        assert_eq!(count, 1);
+    }
 }
