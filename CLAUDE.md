@@ -75,7 +75,7 @@ The core data structures (`Chunk<V>`, `GeneratorPlugin<V>`, `MeshPlugin<V>`, etc
 ### Key design decisions
 
 - **Chunks are 16×16×16** (`CHUNK_SIZE = 16`), stored as a flat `Vec<V>` with index `x*256 + y*16 + z`.
-- **Greedy meshing** merges coplanar faces of the same voxel type. LOD reduces detail by sampling at step size 2 (LOD 1) or 4 (LOD 2). LOD thresholds: <50 units → LOD 0, 50–100 → LOD 1, >100 → LOD 2.
+- **Greedy meshing** merges coplanar faces of the same voxel type. LOD reduces detail by sampling at a larger step size. There are **2 LOD levels** (`src/mesh/lod.rs`): LOD 0 (step 1) for distance < 200 units, LOD 1 (step 2) for distance ≥ 200 units (`LOD0_MAX_DISTANCE = 200.0`).
 - **World streaming** uses `ViewerPosition` (must be updated every frame by the game) to load/unload chunks via `ChunkLoadRequest` / `ChunkUnloadRequest` events.
 - **Generators run on background threads** — `ChunkGenerator::generate` must not access the Bevy `World`.
 - **Mining/Placement are pure functions** — `tick_mining`, `stop_mining`, `try_place_voxel`, `tick_placement` are called from the game's own systems; the plugins only initialize resources and message types.
@@ -84,4 +84,28 @@ The core data structures (`Chunk<V>`, `GeneratorPlugin<V>`, `MeshPlugin<V>`, etc
 
 ### Bevy features used
 
-The library depends on bevy with `default-features = false` and only enables: `bevy_asset`, `bevy_render`, `bevy_pbr`, `bevy_core_pipeline`, `multi_threaded`, `bevy_ui`, `bevy_text`, `bevy_sprite`. Games add `bevy_winit` and platform features themselves.
+The library depends on bevy with `default-features = false` and only enables: `bevy_asset`, `bevy_render`, `bevy_pbr`, `bevy_core_pipeline`, `multi_threaded`, `bevy_ui`, `bevy_text`, `bevy_sprite`, `bevy_state`, `bevy_audio`, `vorbis`. Games add `bevy_winit` and platform features themselves.
+
+### Cargo features
+
+| Feature | Default | Implies | Purpose |
+|---|---|---|---|
+| `items` | yes | — | Inventory, hotbar, drops, pickup UI |
+| `crafting` | yes | `items` | Recipe registry, crafting consumption |
+| `mobs` | yes | — | Hostile/passive mob AI |
+| `tracing` | no | — | Internal profiling spans on hot paths |
+| `tracy` | no | `tracing` | Routes spans to a Tracy profiler client |
+
+Examples gate on features: `basic_world` requires `items`; `minetest` requires `items,crafting,mobs`.
+
+## Spec-Driven Development (SDD)
+
+This repo uses **hybrid SDD** for substantial changes. Files in `openspec/`, observations in engram. See [`docs/sdd/workflow.md`](docs/sdd/workflow.md) for the full workflow and [`docs/sdd/conventions.md`](docs/sdd/conventions.md) for what counts as substantial.
+
+**Quick reference**:
+- Substantial change → run `/sdd-new <change-name>` then `/sdd-ff` (proposal → spec → design → tasks) → `/sdd-apply` → `/sdd-verify` → `/sdd-archive`.
+- Trivial change (typo, internal refactor, doc tweak that tracks an accepted spec) → straight to PR, no SDD.
+- Engram topic keys: `sdd-init/voxel-framework` for project context; `sdd/<change>/<artifact>` for change artifacts.
+- On `/sdd-archive`, public-API changes propagate to `README.md` / `CHANGELOG.md` so docs don't drift from the spec.
+
+When uncertain, default to substantial and start with `/sdd-explore <topic>` — exploration is cheap.

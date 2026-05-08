@@ -1,0 +1,42 @@
+schema: spec-driven
+
+context: |
+  Stack: Rust 2024 (rust-version 1.85), Bevy 0.18 plugin-based engine.
+  Architecture: reusable library crate (no main.rs); plugins generic over `V: VoxelType`;
+    chunks 16³ flat-array; greedy meshing with 2 LOD levels (threshold 200u);
+    pure-function APIs for mining/placement; persistence via serde/toml/binary chunk format.
+  Cargo features: items (default), crafting (implies items), mobs, tracing, tracy.
+  Testing: cargo test (no external test framework). Use `cargo check` — never `cargo build`.
+  Distribution: git repo (path/tag/branch); explicitly NOT crates.io.
+  Style: rustfmt defaults; conventional commits; no AI co-author lines.
+  AI workflow: hybrid SDD (openspec files in repo + engram persistence).
+
+rules:
+  proposal:
+    - State the consumer impact — voxel-framework is a library, every public-API change ripples to Starframe and other downstreams.
+    - Identify affected modules from src/ (chunk, mesh, generator, world, render, items, etc.).
+    - Include rollback plan for changes touching persistence formats or public traits.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Specs are organized by capability (mesh, generator, world, items, crafting, mobs, persistence, etc.).
+  design:
+    - Document plugin/system order changes explicitly (Bevy schedule order is load-bearing).
+    - Note generic-type implications for new traits (default type params, `PhantomData`, `::new()` vs `::default()`).
+    - Document architecture decisions with rationale.
+  tasks:
+    - Group by phase (scaffolding, core impl, plugin wiring, examples, docs).
+    - Use hierarchical numbering (1.1, 1.2, etc.).
+    - Keep tasks completable in one session.
+  apply:
+    - Follow existing patterns: plugins generic over `V: VoxelType`, pure-function APIs where possible.
+    - Run `cargo check` (and `cargo check --example basic_world` for example-relevant changes) — NEVER `cargo build`.
+    tdd: false
+    test_command: "cargo test"
+  verify:
+    test_command: "cargo test"
+    build_command: "cargo check"
+    coverage_threshold: 0
+  archive:
+    - When archiving a change with public-API impact, sync README.md and CHANGELOG.md from the accepted spec.
+    - Warn before merging destructive deltas (large removals or breaking signature changes).
