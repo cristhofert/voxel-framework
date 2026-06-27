@@ -46,14 +46,14 @@ rotations — only `just_pressed` events count.
 
 - GIVEN `PlayerConfig { roll_mode: RollMode::Snap, ..default() }` and a spawned `Player` in `PlayerMode::FreeFlight`
 - WHEN `KeyCode::KeyQ` `just_pressed` fires on a frame
-- THEN `Player::snap_anim` MUST be `Some(SnapRollAnim { sign: +1, .. })` with `target_delta == PI/2`
+- THEN `Player::snap_anim` MUST be `Some(SnapRollAnim { sign: +1, .. })` with `target_angle == PI/2`
 
 #### Scenario: Held key does not stack rotations
 
 - GIVEN a snap-mode `Player` with an in-progress `snap_anim` toward `+PI/2`
 - WHEN `KeyCode::KeyQ` is reported by `keys.pressed` (held) but NOT `just_pressed`
 - THEN no new animation SHALL start
-- AND `target_delta` SHALL remain `PI/2`
+- AND `target_angle` SHALL remain `PI/2`
 
 ### Requirement: Cancel-and-Restart Is Lattice-Aware
 
@@ -69,7 +69,7 @@ snaps, local Z roll MUST land on a `PI/2` multiple once `finished == true`.
 
 - GIVEN `snap_anim` in progress at `applied = 0.40 rad` toward `target = PI/2` with `sign = +1`
 - WHEN `KeyCode::KeyQ` `just_pressed` fires again
-- THEN the new `target_delta` MUST equal `PI` (two quadrants from anchor)
+- THEN the new `target_angle` MUST equal `PI` (two quadrants from anchor)
 - AND the animation MUST resume from `applied = 0.40 rad`, not from `0.0`
 
 #### Scenario: Opposite-direction press snaps to nearest lattice below

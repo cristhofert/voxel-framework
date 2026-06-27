@@ -1481,6 +1481,9 @@ mod tests {
         let c = PlayerConfig::default();
         assert_eq!(c.speed, 4.0);
         assert_eq!(c.fov_degrees, 90.0);
+        assert_eq!(c.roll_mode, RollMode::Continuous);
+        assert!((c.snap_roll_duration_secs - 0.18).abs() < f32::EPSILON);
+        assert_eq!(c.snap_roll_easing, SnapRollEasing::EaseOutCubic);
     }
 
     #[test]
@@ -1542,6 +1545,33 @@ mod tests {
         let player = Player::default();
         assert_eq!(player.roll_mode, RollMode::Continuous);
         assert!(player.snap_anim.is_none());
+    }
+
+    #[test]
+    fn snap_roll_config_copies_to_player() {
+        let config = PlayerConfig {
+            roll_mode: RollMode::Snap,
+            snap_roll_duration_secs: 0.25,
+            snap_roll_easing: SnapRollEasing::Smoothstep,
+            ..default()
+        };
+        let player = Player {
+            roll_mode: config.roll_mode,
+            snap_roll_duration: config.snap_roll_duration_secs,
+            snap_roll_easing: config.snap_roll_easing,
+            ..default()
+        };
+        assert_eq!(player.roll_mode, RollMode::Snap);
+        assert!((player.snap_roll_duration - 0.25).abs() < f32::EPSILON);
+        assert_eq!(player.snap_roll_easing, SnapRollEasing::Smoothstep);
+    }
+
+    #[test]
+    fn snap_roll_start_from_none_is_independent() {
+        let anim1 = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let anim2 = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        assert!((anim1.target_angle - anim2.target_angle).abs() < f32::EPSILON);
+        assert!((anim1.start_angle - anim2.start_angle).abs() < f32::EPSILON);
     }
 
     #[test]
