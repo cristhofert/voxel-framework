@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Project license changed from MIT to LGPL-3.0-or-later.
 - `DefaultVoxel` now overrides `VoxelType::hardness()` and `mining_level()`
   per variant (`Air = 0.0/0`, `Rock = 3.0/1`, `IronOre = 4.0/2`,
   `SiliconCrystal = 2.5/1`, `RareMineral = 5.0/2`) instead of inheriting the

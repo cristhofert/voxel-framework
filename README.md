@@ -642,4 +642,4 @@ fn main() {
 
 ## License
 
-MIT
+LGPL-3.0-or-later. See [`LICENSE`](LICENSE).
