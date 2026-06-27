@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "A reusable voxel engine framework built on Bevy"
 authors = ["Cristhofer <cristraviesodeleon@gmail.com>"]
-license = "MIT"
+license = "LGPL-3.0-or-later"
 repository = "https://github.com/cristhofert/voxel-framework"
 readme = "README.md"
 
