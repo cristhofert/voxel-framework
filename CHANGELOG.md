@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `RollMode::Snap` for animated 90° Q/E roll, configurable duration and easing
+  via `PlayerConfig`. Default remains `RollMode::Continuous` (no behavior change
+  for existing consumers).
+
 ### Changed
 - Project license changed from MIT to LGPL-3.0-or-later.
 - `DefaultVoxel` now overrides `VoxelType::hardness()` and `mining_level()`
