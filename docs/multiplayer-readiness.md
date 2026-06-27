@@ -76,6 +76,14 @@ or replicated state (chunks, voxels, mob positions, inventory):
   `VoxelBroken` / `VoxelPlaced`. Direct `Chunk::set` from input handlers is
   acceptable for single-player; replicators wrap the messages.
 
+## Player snap-roll animation
+
+`Player::snap_anim` is local-only animation state; it MUST NOT be replicated.
+Replicate the resulting `Transform` rotation only. The `SnapRollAnim` struct
+drives a visual easing curve toward the next 90-degree lattice point — clients
+should animate independently from the authoritative `Transform`. Only the final
+rotation (written to `Transform` on animation completion) is authoritative state.
+
 ## Known violations / non-issues
 
 | Hit | Location | Status | Rationale |

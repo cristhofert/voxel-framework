@@ -1,6 +1,6 @@
 //! Basic world example — minimal voxel-framework demo with texture array.
 //!
-//! Controls: WASD / Space / Shift / Q+E roll / mouse look.
+//! Controls: WASD / Space / Shift / Q+E roll (continuous; opt-in snap mode via `PlayerConfig::roll_mode`) / mouse look.
 //! Escape — pause menu  |  Left click — lock cursor.
 //!
 //! Textures (32×32 PNGs from assets/basic_world/textures/):

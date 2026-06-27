@@ -429,7 +429,7 @@ App::new()
 | Input | Action |
 |---|---|
 | Mouse | Yaw + pitch (6DOF, no clamp) |
-| Q / E | Roll left / right |
+| Q / E | Roll left / right (continuous by default; set `PlayerConfig::roll_mode = RollMode::Snap` for animated 90° increments) |
 | W / S | Forward / backward |
 | A / D | Strafe left / right |
 | Space | Move along local up |
