@@ -124,6 +124,7 @@ pub use crate::player::{
     Player, PlayerConfig, PlayerMode, PlayerPlugin,
     PlayerHealth, PlayerDamaged, PlayerDied,
     PlayerCrouching,
+    RollMode, SnapRollEasing,
     spawn_player, player_look, player_move, player_resolve_collision, player_cursor_system,
     health_system, respawn_system,
     PLAYER_RADIUS, PLAYER_HALF_HEIGHT, SPRINT_MULTIPLIER,

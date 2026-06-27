@@ -259,6 +259,55 @@ const DECEL: f32 = 7.0;
 /// 100% → default, above 100% would be faster but the slider caps there).
 const MOUSE_SCALE: f32 = 0.003;
 
+// ─── Snap roll types ─────────────────────────────────────────────────────────
+
+/// Selects how Q/E roll input is applied in [`PlayerMode::FreeFlight`].
+///
+/// - [`RollMode::Continuous`] — roll while the key is held (original behavior).
+/// - [`RollMode::Snap`] — each key press animates a 90° snap rotation.
+///
+/// Set via [`PlayerConfig::roll_mode`]; defaults to [`RollMode::Continuous`].
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RollMode {
+    /// Roll continuously while Q/E is held (default, original behavior).
+    #[default]
+    Continuous,
+    /// Snap-rotate 90° per key press with easing animation.
+    Snap,
+}
+
+/// Easing curve used by [`RollMode::Snap`] animations.
+///
+/// Each variant maps to a simple `f(t) -> f32` curve where `t ∈ [0, 1]`.
+/// The default ([`EaseOutCubic`](SnapRollEasing::EaseOutCubic)) gives a snappy
+/// start that decelerates smoothly.
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SnapRollEasing {
+    /// `1 − (1 − t)³` — fast start, smooth deceleration (default).
+    #[default]
+    EaseOutCubic,
+    /// `1 − (1 − t)⁴` — slightly slower deceleration than cubic.
+    EaseOutQuart,
+    /// `t² (3 − 2t)` — symmetric S-curve.
+    Smoothstep,
+    /// `t` — constant angular velocity.
+    Linear,
+}
+
+/// Runtime state for an in-progress snap-roll animation.
+///
+/// Stored in [`Player::snap_anim`]. Created by [`start_or_retarget_snap`],
+/// advanced each frame by [`advance_snap`], and cleared when `finished`.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct SnapRollAnim {
+    pub(crate) start_angle: f32,
+    pub(crate) target_angle: f32,
+    pub(crate) elapsed: f32,
+    pub(crate) duration: f32,
+    pub(crate) easing: SnapRollEasing,
+    pub(crate) current_applied: f32,
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 /// State component that marks the player camera entity.
@@ -353,6 +402,16 @@ pub struct Player {
     /// and movement speed to 40% of base speed.
     /// Always `false` in [`PlayerMode::FreeFlight`].
     pub crouching: bool,
+    /// Roll input mode. See [`RollMode`] for details.
+    pub roll_mode: RollMode,
+    /// Duration in seconds for a single 90° snap-roll animation.
+    /// Only used when `roll_mode == RollMode::Snap`. **Default: `0.18`.**
+    pub snap_roll_duration: f32,
+    /// Easing curve for snap-roll animations.
+    /// Only used when `roll_mode == RollMode::Snap`.
+    pub snap_roll_easing: SnapRollEasing,
+    /// Active snap-roll animation state (runtime-only, not persisted).
+    pub(crate) snap_anim: Option<SnapRollAnim>,
 }
 
 impl Default for Player {
@@ -371,6 +430,10 @@ impl Default for Player {
             spawn_immune: true,
             sprinting: false,
             crouching: false,
+            roll_mode: RollMode::Continuous,
+            snap_roll_duration: 0.18,
+            snap_roll_easing: SnapRollEasing::EaseOutCubic,
+            snap_anim: None,
         }
     }
 }
@@ -436,6 +499,15 @@ pub struct PlayerConfig {
     /// Defaults to [`PlayerMode::FreeFlight`] for backwards compatibility.
     /// Set to [`PlayerMode::Grounded`] for gravity-based gameplay.
     pub mode: PlayerMode,
+    /// Roll input mode. Copied into [`Player::roll_mode`] on spawn.
+    /// Defaults to [`RollMode::Continuous`].
+    pub roll_mode: RollMode,
+    /// Duration in seconds for a single 90° snap-roll animation.
+    /// Copied into [`Player::snap_roll_duration`] on spawn. **Default: `0.18`.**
+    pub snap_roll_duration_secs: f32,
+    /// Easing curve for snap-roll animations.
+    /// Copied into [`Player::snap_roll_easing`] on spawn.
+    pub snap_roll_easing: SnapRollEasing,
 }
 
 impl Default for PlayerConfig {
@@ -448,6 +520,9 @@ impl Default for PlayerConfig {
             look_at: Vec3::ZERO,
             fov_degrees: 90.0,
             mode: PlayerMode::FreeFlight,
+            roll_mode: RollMode::Continuous,
+            snap_roll_duration_secs: 0.18,
+            snap_roll_easing: SnapRollEasing::EaseOutCubic,
         }
     }
 }
@@ -505,6 +580,10 @@ pub fn spawn_player(
             spawn_immune: true,
             sprinting: false,
             crouching: false,
+            roll_mode: config.roll_mode,
+            snap_roll_duration: config.snap_roll_duration_secs,
+            snap_roll_easing: config.snap_roll_easing,
+            snap_anim: None,
         },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -513,6 +592,93 @@ pub fn spawn_player(
         }),
         Transform::from_translation(spawn).looking_at(look_at, Vec3::Y),
     ));
+}
+
+// ─── Snap roll helpers ──────────────────────────────────────────────────────
+
+pub(crate) fn apply_easing(t: f32, easing: SnapRollEasing) -> f32 {
+    match easing {
+        SnapRollEasing::EaseOutCubic => 1.0 - (1.0 - t).powi(3),
+        SnapRollEasing::EaseOutQuart => 1.0 - (1.0 - t).powi(4),
+        SnapRollEasing::Smoothstep => t * t * (3.0 - 2.0 * t),
+        SnapRollEasing::Linear => t,
+    }
+}
+
+pub(crate) fn start_or_retarget_snap(
+    existing: Option<SnapRollAnim>,
+    dir: i32,
+    duration: f32,
+    easing: SnapRollEasing,
+) -> SnapRollAnim {
+    let sign = dir as f32;
+    let quarter = std::f32::consts::FRAC_PI_2;
+
+    match existing {
+        None => SnapRollAnim {
+            start_angle: 0.0,
+            target_angle: sign * quarter,
+            elapsed: 0.0,
+            duration,
+            easing,
+            current_applied: 0.0,
+        },
+        Some(anim) => {
+            let same_dir = (dir > 0 && anim.target_angle > anim.start_angle)
+                || (dir < 0 && anim.target_angle < anim.start_angle);
+
+            if same_dir {
+                // Extend target by another 90° from the ORIGINAL anchor direction
+                SnapRollAnim {
+                    start_angle: anim.current_applied,
+                    target_angle: anim.target_angle + sign * quarter,
+                    elapsed: 0.0,
+                    duration,
+                    easing,
+                    current_applied: anim.current_applied,
+                }
+            } else {
+                // Opposite direction: snap to nearest lattice point in new direction
+                let current = anim.current_applied;
+                let lattice = if dir > 0 {
+                    (current / quarter).ceil() * quarter
+                } else {
+                    (current / quarter).floor() * quarter
+                };
+                // If already ON a lattice point, go one step further
+                let target = if (current - lattice).abs() < 1e-6 {
+                    lattice + sign * quarter
+                } else {
+                    lattice
+                };
+                SnapRollAnim {
+                    start_angle: current,
+                    target_angle: target,
+                    elapsed: 0.0,
+                    duration,
+                    easing,
+                    current_applied: current,
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn advance_snap(anim: &mut SnapRollAnim, dt: f32) -> (f32, bool) {
+    anim.elapsed += dt;
+    let t = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
+    let eased = apply_easing(t, anim.easing);
+    let total = anim.start_angle + (anim.target_angle - anim.start_angle) * eased;
+    let delta = total - anim.current_applied;
+    anim.current_applied = total;
+    let finished = anim.elapsed >= anim.duration;
+    if finished {
+        // Snap exactly to target to avoid FP residue
+        let correction = anim.target_angle - anim.current_applied;
+        anim.current_applied = anim.target_angle;
+        return (delta + correction, true);
+    }
+    (delta, false)
 }
 
 /// Updates the player orientation from mouse movement and Q/E roll keys.
@@ -532,12 +698,12 @@ pub fn spawn_player(
 /// delta before applying rotation, preventing inter-frame jitter at high
 /// polling rates.
 pub fn player_look(
-    mut query: Query<(&Player, &mut Transform)>,
+    mut query: Query<(&mut Player, &mut Transform)>,
     mut mouse_motion: MessageReader<MouseMotion>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
 ) {
-    let Ok((player, mut transform)) = query.single_mut() else {
+    let Ok((mut player, mut transform)) = query.single_mut() else {
         return;
     };
 
@@ -558,11 +724,40 @@ pub fn player_look(
             }
 
             // Q / E roll.
-            let mut roll = 0.0_f32;
-            if keys.pressed(KeyCode::KeyQ) { roll += 1.0; }
-            if keys.pressed(KeyCode::KeyE) { roll -= 1.0; }
-            if roll != 0.0 {
-                transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
+            match player.roll_mode {
+                RollMode::Continuous => {
+                    let mut roll = 0.0_f32;
+                    if keys.pressed(KeyCode::KeyQ) { roll += 1.0; }
+                    if keys.pressed(KeyCode::KeyE) { roll -= 1.0; }
+                    if roll != 0.0 {
+                        transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
+                    }
+                }
+                RollMode::Snap => {
+                    if keys.just_pressed(KeyCode::KeyQ) {
+                        player.snap_anim = Some(start_or_retarget_snap(
+                            player.snap_anim,
+                            1,
+                            player.snap_roll_duration,
+                            player.snap_roll_easing,
+                        ));
+                    }
+                    if keys.just_pressed(KeyCode::KeyE) {
+                        player.snap_anim = Some(start_or_retarget_snap(
+                            player.snap_anim,
+                            -1,
+                            player.snap_roll_duration,
+                            player.snap_roll_easing,
+                        ));
+                    }
+                    if let Some(ref mut anim) = player.snap_anim {
+                        let (delta, finished) = advance_snap(anim, time.delta_secs());
+                        transform.rotate_local_z(delta);
+                        if finished {
+                            player.snap_anim = None;
+                        }
+                    }
+                }
             }
         }
         PlayerMode::Grounded { .. } => {
@@ -1286,6 +1481,67 @@ mod tests {
         let c = PlayerConfig::default();
         assert_eq!(c.speed, 4.0);
         assert_eq!(c.fov_degrees, 90.0);
+    }
+
+    #[test]
+    fn snap_roll_completes_to_90deg() {
+        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let (delta, finished) = advance_snap(&mut anim, 0.18);
+        assert!(finished);
+        assert!((delta - std::f32::consts::FRAC_PI_2).abs() < 1e-4,
+            "Expected ~PI/2, got {delta}");
+    }
+
+    #[test]
+    fn snap_roll_easing_monotonic() {
+        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let step = 0.045;
+        let mut deltas = Vec::new();
+        for _ in 0..4 {
+            let (d, _) = advance_snap(&mut anim, step);
+            assert!(d > 0.0, "Delta should be positive, got {d}");
+            deltas.push(d);
+        }
+        let total: f32 = deltas.iter().sum();
+        assert!((total - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+            "Sum should be ~PI/2, got {total}");
+        // Ease-out: deltas should be non-increasing (each <= previous)
+        for i in 1..deltas.len() {
+            assert!(deltas[i] <= deltas[i - 1] + 1e-6,
+                "Easing not monotonically decreasing: {:?}", deltas);
+        }
+    }
+
+    #[test]
+    fn snap_roll_same_direction_extends_target() {
+        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        // Advance ~30%
+        advance_snap(&mut anim, 0.054);
+        let prev_applied = anim.current_applied;
+        let new_anim = start_or_retarget_snap(Some(anim), 1, 0.18, SnapRollEasing::EaseOutCubic);
+        assert!((new_anim.start_angle - prev_applied).abs() < 1e-6);
+        assert!((new_anim.target_angle - std::f32::consts::PI).abs() < 1e-4,
+            "Expected target ~PI (2x90°), got {}", new_anim.target_angle);
+    }
+
+    #[test]
+    fn snap_roll_opposite_direction_reverses_to_lattice() {
+        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        // Advance ~30% (current ≈ 0.47 rad, heading to PI/2 ≈ 1.571)
+        advance_snap(&mut anim, 0.054);
+        let current = anim.current_applied;
+        assert!(current > 0.0 && current < std::f32::consts::FRAC_PI_2);
+        let new_anim = start_or_retarget_snap(Some(anim), -1, 0.18, SnapRollEasing::EaseOutCubic);
+        // Should target 0.0 (nearest lattice below current in negative direction)
+        assert!(new_anim.target_angle.abs() < 1e-6,
+            "Expected target ~0, got {}", new_anim.target_angle);
+    }
+
+    #[test]
+    fn continuous_mode_unchanged() {
+        let player = Player::default();
+        assert_eq!(player.roll_mode, RollMode::Continuous);
+        assert!(player.snap_anim.is_none());
     }
 
     #[test]
