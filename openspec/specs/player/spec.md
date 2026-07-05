@@ -81,26 +81,26 @@ snaps, local Z roll MUST land on a `PI/2` multiple once `finished == true`.
 
 ### Requirement: Easing and Duration Are Configurable
 
-`PlayerConfig::snap_roll_duration_secs` (`f32`, default `0.18`) SHALL control the
+`PlayerConfig::snap_roll_duration_secs` (`f32`, default `0.5`) SHALL control the
 animation duration in seconds. `PlayerConfig::snap_roll_easing` (`SnapRollEasing`:
 `EaseOutCubic`, `EaseOutQuart`, `Smoothstep`, `Linear`; default `EaseOutCubic`)
 SHALL control the curve. Both SHALL be copied from `PlayerConfig` to `Player`
 during `spawn_player` and SHALL be readable from `player_look` without an
-additional `Res<PlayerConfig>`. The default `0.18s` SHOULD feel snappy yet smooth;
+additional `Res<PlayerConfig>`. The default `0.5s` SHOULD feel snappy yet smooth;
 values outside `(0.0, 1.0)` MAY be supported but stability is unspecified.
 
 #### Scenario: Defaults are documented values
 
 - GIVEN `let cfg = PlayerConfig::default();`
 - WHEN `cfg.snap_roll_duration_secs` and `cfg.snap_roll_easing` are read
-- THEN they MUST equal `0.18` and `SnapRollEasing::EaseOutCubic` respectively
+- THEN they MUST equal `0.5` and `SnapRollEasing::EaseOutCubic` respectively
 
 #### Scenario: Spawn copies easing config onto Player
 
-- GIVEN `PlayerConfig { snap_roll_easing: SnapRollEasing::Smoothstep, snap_roll_duration_secs: 0.25, ..default() }`
+- GIVEN `PlayerConfig { snap_roll_easing: SnapRollEasing::Smoothstep, snap_roll_duration_secs: 0.3, ..default() }`
 - WHEN `spawn_player` produces a `Player` component
 - THEN `Player::snap_roll_easing == SnapRollEasing::Smoothstep`
-- AND `Player::snap_roll_duration_secs == 0.25`
+- AND `Player::snap_roll_duration == 0.3`
 
 ### Requirement: Roll Is Disabled in Grounded Mode
 
