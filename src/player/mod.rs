@@ -405,7 +405,7 @@ pub struct Player {
     /// Roll input mode. See [`RollMode`] for details.
     pub roll_mode: RollMode,
     /// Duration in seconds for a single 90° snap-roll animation.
-    /// Only used when `roll_mode == RollMode::Snap`. **Default: `0.18`.**
+    /// Only used when `roll_mode == RollMode::Snap`. **Default: `0.5`.**
     pub snap_roll_duration: f32,
     /// Easing curve for snap-roll animations.
     /// Only used when `roll_mode == RollMode::Snap`.
@@ -431,7 +431,7 @@ impl Default for Player {
             sprinting: false,
             crouching: false,
             roll_mode: RollMode::Continuous,
-            snap_roll_duration: 0.18,
+            snap_roll_duration: 0.5,
             snap_roll_easing: SnapRollEasing::EaseOutCubic,
             snap_anim: None,
         }
@@ -503,7 +503,7 @@ pub struct PlayerConfig {
     /// Defaults to [`RollMode::Continuous`].
     pub roll_mode: RollMode,
     /// Duration in seconds for a single 90° snap-roll animation.
-    /// Copied into [`Player::snap_roll_duration`] on spawn. **Default: `0.18`.**
+    /// Copied into [`Player::snap_roll_duration`] on spawn. **Default: `0.5`.**
     pub snap_roll_duration_secs: f32,
     /// Easing curve for snap-roll animations.
     /// Copied into [`Player::snap_roll_easing`] on spawn.
@@ -521,7 +521,7 @@ impl Default for PlayerConfig {
             fov_degrees: 90.0,
             mode: PlayerMode::FreeFlight,
             roll_mode: RollMode::Continuous,
-            snap_roll_duration_secs: 0.18,
+            snap_roll_duration_secs: 0.5,
             snap_roll_easing: SnapRollEasing::EaseOutCubic,
         }
     }
@@ -1482,7 +1482,7 @@ mod tests {
         assert_eq!(c.speed, 4.0);
         assert_eq!(c.fov_degrees, 90.0);
         assert_eq!(c.roll_mode, RollMode::Continuous);
-        assert!((c.snap_roll_duration_secs - 0.18).abs() < f32::EPSILON);
+        assert!((c.snap_roll_duration_secs - 0.5).abs() < f32::EPSILON);
         assert_eq!(c.snap_roll_easing, SnapRollEasing::EaseOutCubic);
     }
 
@@ -1551,7 +1551,7 @@ mod tests {
     fn snap_roll_config_copies_to_player() {
         let config = PlayerConfig {
             roll_mode: RollMode::Snap,
-            snap_roll_duration_secs: 0.25,
+            snap_roll_duration_secs: 0.3,
             snap_roll_easing: SnapRollEasing::Smoothstep,
             ..default()
         };
@@ -1562,7 +1562,7 @@ mod tests {
             ..default()
         };
         assert_eq!(player.roll_mode, RollMode::Snap);
-        assert!((player.snap_roll_duration - 0.25).abs() < f32::EPSILON);
+        assert!((player.snap_roll_duration - 0.3).abs() < f32::EPSILON);
         assert_eq!(player.snap_roll_easing, SnapRollEasing::Smoothstep);
     }
 
