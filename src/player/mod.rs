@@ -264,7 +264,9 @@ const MOUSE_SCALE: f32 = 0.003;
 /// Selects how Q/E roll input is applied in [`PlayerMode::FreeFlight`].
 ///
 /// - [`RollMode::Continuous`] — roll while the key is held (original behavior).
-/// - [`RollMode::Snap`] — each key press animates a 90° snap rotation.
+/// - [`RollMode::Snap`] — each key press animates a snap rotation to the
+///   next world-aligned up candidate (a signed world axis projected onto the
+///   roll plane).
 ///
 /// Set via [`PlayerConfig::roll_mode`]; defaults to [`RollMode::Continuous`].
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
@@ -272,7 +274,8 @@ pub enum RollMode {
     /// Roll continuously while Q/E is held (default, original behavior).
     #[default]
     Continuous,
-    /// Snap-rotate 90° per key press with easing animation.
+    /// Snap-rotate to the next world-aligned up candidate per key press with
+    /// easing animation (90° steps when forward is on a world axis).
     Snap,
 }
 
@@ -298,6 +301,12 @@ pub enum SnapRollEasing {
 ///
 /// Stored in [`Player::snap_anim`]. Created by [`start_or_retarget_snap`],
 /// advanced each frame by [`advance_snap`], and cleared when `finished`.
+///
+/// Angles are *relative* to the orientation captured at press time: the
+/// world-aligned candidate is resolved once by [`start_or_retarget_snap`]
+/// (via [`world_lattice_angles`] / [`next_lattice_step`]) and baked into
+/// `target_angle`; the animation then only applies angle differences through
+/// `rotate_local_z`.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct SnapRollAnim {
     pub(crate) start_angle: f32,
@@ -307,6 +316,22 @@ pub(crate) struct SnapRollAnim {
     pub(crate) easing: SnapRollEasing,
     pub(crate) current_applied: f32,
 }
+
+/// Minimum squared projection length a world axis needs on the roll plane to
+/// count as a lattice candidate in [`world_lattice_angles`]. Keeps an axis
+/// only when it lies ~45° or more away from local Z, so the axis pair the
+/// player is (roughly) looking along never yields near-degenerate up stops —
+/// a mostly-axis-aligned view gives 4 candidates, while a diagonal view (all
+/// axes at ~54.7°) keeps all 6. The constant is `0.49` rather than the exact
+/// `sin²(45°) = 0.5`: on a perfect 45° edge-on view both axis families sit at
+/// projection² ≈ 0.5 and float rounding could otherwise exclude BOTH,
+/// breaking the ≥4-candidate invariant.
+pub(crate) const SNAP_MIN_PROJ_SQ: f32 = 0.49;
+
+/// Angular tolerance in radians within which the reference up already lies ON
+/// a candidate; [`next_lattice_step`] skips that candidate so a press always
+/// produces visible motion (EPS_ON rule).
+pub(crate) const SNAP_EPS_ON: f32 = 1e-3;
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -404,7 +429,8 @@ pub struct Player {
     pub crouching: bool,
     /// Roll input mode. See [`RollMode`] for details.
     pub roll_mode: RollMode,
-    /// Duration in seconds for a single 90° snap-roll animation.
+    /// Duration in seconds for a single snap-roll step animation (one hop to
+    /// the next world-aligned up candidate).
     /// Only used when `roll_mode == RollMode::Snap`. **Default: `0.5`.**
     pub snap_roll_duration: f32,
     /// Easing curve for snap-roll animations.
@@ -502,7 +528,8 @@ pub struct PlayerConfig {
     /// Roll input mode. Copied into [`Player::roll_mode`] on spawn.
     /// Defaults to [`RollMode::Continuous`].
     pub roll_mode: RollMode,
-    /// Duration in seconds for a single 90° snap-roll animation.
+    /// Duration in seconds for a single snap-roll step animation (one hop to
+    /// the next world-aligned up candidate).
     /// Copied into [`Player::snap_roll_duration`] on spawn. **Default: `0.5`.**
     pub snap_roll_duration_secs: f32,
     /// Easing curve for snap-roll animations.
@@ -605,59 +632,124 @@ pub(crate) fn apply_easing(t: f32, easing: SnapRollEasing) -> f32 {
     }
 }
 
+/// Signed roll angles δ ∈ (−π, π] from `up` to each surviving world-axis
+/// candidate around the roll axis `local_z` (Bevy's BACK vector).
+///
+/// The candidate set is the 6 signed world axes (±X, ±Y, ±Z) projected onto
+/// the plane perpendicular to `local_z` and normalized. Axes whose projection
+/// has length² < [`SNAP_MIN_PROJ_SQ`] are excluded — an axis within 45° of
+/// the roll axis is "the one you are looking along" and would yield a
+/// perceptually arbitrary up stop (at least 4 candidates always survive).
+/// Each angle is `δ = atan2(cross(up, c) · local_z, up · c)` — the
+/// [`Transform::rotate_local_z`] convention, so δ feeds it unmodified.
+pub(crate) fn world_lattice_angles(local_z: Vec3, up: Vec3) -> Vec<f32> {
+    const AXES: [Vec3; 6] = [
+        Vec3::X, Vec3::NEG_X,
+        Vec3::Y, Vec3::NEG_Y,
+        Vec3::Z, Vec3::NEG_Z,
+    ];
+    let mut angles = Vec::with_capacity(6);
+    for axis in AXES {
+        let proj = axis - axis.dot(local_z) * local_z;
+        if proj.length_squared() < SNAP_MIN_PROJ_SQ {
+            continue;
+        }
+        let c = proj.normalize();
+        angles.push(up.cross(c).dot(local_z).atan2(up.dot(c)));
+    }
+    angles
+}
+
+/// Next lattice step in press direction `dir` (+1 = Q / CCW, −1 = E / CW).
+///
+/// dir > 0 → min over `{δ > SNAP_EPS_ON ? δ : δ + TAU}`;
+/// dir < 0 → max over `{δ < −SNAP_EPS_ON ? δ : δ − TAU}`.
+/// Candidates within [`SNAP_EPS_ON`] of the reference up wrap a full turn
+/// (EPS_ON rule), so the result is always a nonzero signed angle.
+pub(crate) fn next_lattice_step(angles: &[f32], dir: i32) -> f32 {
+    use std::f32::consts::TAU;
+    if dir > 0 {
+        angles
+            .iter()
+            .map(|&d| if d > SNAP_EPS_ON { d } else { d + TAU })
+            .fold(f32::INFINITY, f32::min)
+    } else {
+        angles
+            .iter()
+            .map(|&d| if d < -SNAP_EPS_ON { d } else { d - TAU })
+            .fold(f32::NEG_INFINITY, f32::max)
+    }
+}
+
+/// Builds (or retargets) a snap-roll animation toward the next world-aligned
+/// up candidate in press direction `dir`.
+///
+/// `local_z` / `up` are `*transform.local_z()` / `*transform.up()` at press
+/// time. Every press resolves through one primitive — "next candidate in
+/// direction `dir` from a reference up" ([`world_lattice_angles`] +
+/// [`next_lattice_step`]):
+///
+/// - **Fresh press** — reference = `up`; the animation starts at `0.0`
+///   toward the first step.
+/// - **Same direction mid-animation** — reference = the in-flight target up
+///   (`up` advanced by the not-yet-applied residual; exact because
+///   `up ⊥ local_z`); retargets one candidate further, resuming from the
+///   currently applied angle.
+/// - **Opposite direction mid-animation** — reference = `up`; reverses to
+///   the nearest candidate behind, resuming from the currently applied angle.
+///
+/// The target is fixed here at press time and never re-resolved mid-flight.
+/// Angles stay relative: [`advance_snap`] applies only differences via
+/// `rotate_local_z`, so the animation lands exactly on the world candidate
+/// computed from `local_z` / `up`.
 pub(crate) fn start_or_retarget_snap(
     existing: Option<SnapRollAnim>,
+    local_z: Vec3,
+    up: Vec3,
     dir: i32,
     duration: f32,
     easing: SnapRollEasing,
 ) -> SnapRollAnim {
-    let sign = dir as f32;
-    let quarter = std::f32::consts::FRAC_PI_2;
-
     match existing {
-        None => SnapRollAnim {
-            start_angle: 0.0,
-            target_angle: sign * quarter,
-            elapsed: 0.0,
-            duration,
-            easing,
-            current_applied: 0.0,
-        },
+        None => {
+            let step = next_lattice_step(&world_lattice_angles(local_z, up), dir);
+            SnapRollAnim {
+                start_angle: 0.0,
+                target_angle: step,
+                elapsed: 0.0,
+                duration,
+                easing,
+                current_applied: 0.0,
+            }
+        }
         Some(anim) => {
             let same_dir = (dir > 0 && anim.target_angle > anim.start_angle)
                 || (dir < 0 && anim.target_angle < anim.start_angle);
 
             if same_dir {
-                // Extend target by another 90° from the ORIGINAL anchor direction
+                // Reference = in-flight target up: advance `up` by the
+                // not-yet-applied residual, then extend one candidate further.
+                let residual = anim.target_angle - anim.current_applied;
+                let ref_up = Quat::from_axis_angle(local_z, residual) * up;
+                let step = next_lattice_step(&world_lattice_angles(local_z, ref_up), dir);
                 SnapRollAnim {
                     start_angle: anim.current_applied,
-                    target_angle: anim.target_angle + sign * quarter,
+                    target_angle: anim.target_angle + step,
                     elapsed: 0.0,
                     duration,
                     easing,
                     current_applied: anim.current_applied,
                 }
             } else {
-                // Opposite direction: snap to nearest lattice point in new direction
-                let current = anim.current_applied;
-                let lattice = if dir > 0 {
-                    (current / quarter).ceil() * quarter
-                } else {
-                    (current / quarter).floor() * quarter
-                };
-                // If already ON a lattice point, go one step further
-                let target = if (current - lattice).abs() < 1e-6 {
-                    lattice + sign * quarter
-                } else {
-                    lattice
-                };
+                // Opposite direction: nearest candidate behind current up.
+                let step = next_lattice_step(&world_lattice_angles(local_z, up), dir);
                 SnapRollAnim {
-                    start_angle: current,
-                    target_angle: target,
+                    start_angle: anim.current_applied,
+                    target_angle: anim.current_applied + step,
                     elapsed: 0.0,
                     duration,
                     easing,
-                    current_applied: current,
+                    current_applied: anim.current_applied,
                 }
             }
         }
@@ -737,6 +829,8 @@ pub fn player_look(
                     if keys.just_pressed(KeyCode::KeyQ) {
                         player.snap_anim = Some(start_or_retarget_snap(
                             player.snap_anim,
+                            *transform.local_z(),
+                            *transform.up(),
                             1,
                             player.snap_roll_duration,
                             player.snap_roll_easing,
@@ -745,6 +839,8 @@ pub fn player_look(
                     if keys.just_pressed(KeyCode::KeyE) {
                         player.snap_anim = Some(start_or_retarget_snap(
                             player.snap_anim,
+                            *transform.local_z(),
+                            *transform.up(),
                             -1,
                             player.snap_roll_duration,
                             player.snap_roll_easing,
@@ -1488,7 +1584,8 @@ mod tests {
 
     #[test]
     fn snap_roll_completes_to_90deg() {
-        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim =
+            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
         let (delta, finished) = advance_snap(&mut anim, 0.18);
         assert!(finished);
         assert!((delta - std::f32::consts::FRAC_PI_2).abs() < 1e-4,
@@ -1497,7 +1594,8 @@ mod tests {
 
     #[test]
     fn snap_roll_easing_monotonic() {
-        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim =
+            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
         let step = 0.045;
         let mut deltas = Vec::new();
         for _ in 0..4 {
@@ -1517,11 +1615,16 @@ mod tests {
 
     #[test]
     fn snap_roll_same_direction_extends_target() {
-        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim =
+            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
         // Advance ~30%
         advance_snap(&mut anim, 0.054);
         let prev_applied = anim.current_applied;
-        let new_anim = start_or_retarget_snap(Some(anim), 1, 0.18, SnapRollEasing::EaseOutCubic);
+        // The transform has rotated with the animation: up at press time
+        // reflects the applied angle (world-aligned start).
+        let up = Quat::from_axis_angle(Vec3::Z, anim.current_applied) * Vec3::Y;
+        let new_anim =
+            start_or_retarget_snap(Some(anim), Vec3::Z, up, 1, 0.18, SnapRollEasing::EaseOutCubic);
         assert!((new_anim.start_angle - prev_applied).abs() < 1e-6);
         assert!((new_anim.target_angle - std::f32::consts::PI).abs() < 1e-4,
             "Expected target ~PI (2x90°), got {}", new_anim.target_angle);
@@ -1529,12 +1632,17 @@ mod tests {
 
     #[test]
     fn snap_roll_opposite_direction_reverses_to_lattice() {
-        let mut anim = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
-        // Advance ~30% (current ≈ 0.47 rad, heading to PI/2 ≈ 1.571)
+        let mut anim =
+            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        // Advance ~30% (heading to PI/2 ≈ 1.571)
         advance_snap(&mut anim, 0.054);
         let current = anim.current_applied;
         assert!(current > 0.0 && current < std::f32::consts::FRAC_PI_2);
-        let new_anim = start_or_retarget_snap(Some(anim), -1, 0.18, SnapRollEasing::EaseOutCubic);
+        // The transform has rotated with the animation: up at press time
+        // reflects the applied angle (world-aligned start).
+        let up = Quat::from_axis_angle(Vec3::Z, current) * Vec3::Y;
+        let new_anim = start_or_retarget_snap(
+            Some(anim), Vec3::Z, up, -1, 0.18, SnapRollEasing::EaseOutCubic);
         // Should target 0.0 (nearest lattice below current in negative direction)
         assert!(new_anim.target_angle.abs() < 1e-6,
             "Expected target ~0, got {}", new_anim.target_angle);
@@ -1568,10 +1676,137 @@ mod tests {
 
     #[test]
     fn snap_roll_start_from_none_is_independent() {
-        let anim1 = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
-        let anim2 = start_or_retarget_snap(None, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let anim1 =
+            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let anim2 =
+            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
         assert!((anim1.target_angle - anim2.target_angle).abs() < f32::EPSILON);
         assert!((anim1.start_angle - anim2.start_angle).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn lattice_axis_forward_yields_four_candidates_at_90deg() {
+        // Looking straight down: local Z (back) parallel to world Y.
+        let mut angles = world_lattice_angles(Vec3::Y, Vec3::Z);
+        assert_eq!(angles.len(), 4, "Y axis pair must be excluded: {angles:?}");
+        angles.sort_by(f32::total_cmp);
+        for pair in angles.windows(2) {
+            assert!(
+                (pair[1] - pair[0] - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+                "Candidates must be exactly 90° apart: {angles:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lattice_near_axis_forward_still_yields_four_candidates() {
+        // Playtest regression: view drifted a few degrees off a world axis
+        // must NOT resurrect the near-forward axis pair as junk candidates
+        // (6 stops with two perceptually arbitrary ones). 45° dominance rule.
+        let local_z = Quat::from_axis_angle(Vec3::X, 8_f32.to_radians()) * Vec3::Z;
+        let up = Quat::from_axis_angle(local_z, 5_f32.to_radians())
+            * (Vec3::Y - Vec3::Y.dot(local_z) * local_z).normalize();
+
+        let angles = world_lattice_angles(local_z, up);
+        assert_eq!(
+            angles.len(),
+            4,
+            "Near-axis view must exclude the ±Z pair, got {angles:?}"
+        );
+
+        // Exact 45° edge-on view: both axis families sit at proj² ≈ 0.5.
+        // Float rounding must never exclude both (≥4 invariant) — the 0.49
+        // threshold keeps the tie inclusive, so all 6 survive.
+        let boundary_z = Vec3::new(0.0, 1.0, 1.0).normalize();
+        let boundary_up = (Vec3::Y - Vec3::Y.dot(boundary_z) * boundary_z).normalize();
+        assert_eq!(
+            world_lattice_angles(boundary_z, boundary_up).len(),
+            6,
+            "At exactly 45° both axis families are equally valid"
+        );
+    }
+
+    #[test]
+    fn lattice_diagonal_forward_yields_six_candidates_cycling_2pi() {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_3, TAU};
+        // Forward = (1,1,1)/√3, so local Z (back) is the opposite diagonal.
+        let local_z = -Vec3::ONE.normalize();
+        // Start exactly on a candidate: world X projected onto the roll plane.
+        let start = (Vec3::X - Vec3::X.dot(local_z) * local_z).normalize();
+
+        let angles = world_lattice_angles(local_z, start);
+        assert_eq!(angles.len(), 6, "All 6 axes survive on a diagonal: {angles:?}");
+
+        // Six Q presses walk the hexagon: each step ~60° (never 90°),
+        // the total is a full turn, and we return to the start candidate.
+        let mut up = start;
+        let mut total = 0.0_f32;
+        for _ in 0..6 {
+            let step = next_lattice_step(&world_lattice_angles(local_z, up), 1);
+            assert!((step - FRAC_PI_3).abs() < 1e-3, "Expected ~60° step, got {step}");
+            assert!((step - FRAC_PI_2).abs() > 0.1, "Step must not be 90°, got {step}");
+            total += step;
+            up = Quat::from_axis_angle(local_z, step) * up;
+        }
+        assert!((total - TAU).abs() < 1e-3, "Six presses must sum to 2π, got {total}");
+        assert!(up.dot(start) > 0.9999, "Cycle must return to start, got {up:?}");
+    }
+
+    #[test]
+    fn lattice_drifted_up_travels_residual() {
+        // Up rolled 10° off the Y candidate (CCW, rotate_local_z convention).
+        let up = Quat::from_axis_angle(Vec3::Z, 10_f32.to_radians()) * Vec3::Y;
+        let angles = world_lattice_angles(Vec3::Z, up);
+
+        let q = next_lattice_step(&angles, 1);
+        let e = next_lattice_step(&angles, -1);
+        assert!((q - 80_f32.to_radians()).abs() < 1e-4, "Q must travel ≈+80°, got {q}");
+        assert!((e + 10_f32.to_radians()).abs() < 1e-4, "E must travel ≈−10°, got {e}");
+
+        // Both presses land within ε of a world candidate.
+        let up_q = Quat::from_axis_angle(Vec3::Z, q) * up;
+        let up_e = Quat::from_axis_angle(Vec3::Z, e) * up;
+        assert!(up_q.dot(Vec3::NEG_X) > 0.9999, "Q must land on −X, got {up_q:?}");
+        assert!(up_e.dot(Vec3::Y) > 0.9999, "E must land on +Y, got {up_e:?}");
+    }
+
+    #[test]
+    fn lattice_eps_on_skips_exact_candidate() {
+        // Up exactly on a candidate: the press must travel a full step, not ~0.
+        let angles = world_lattice_angles(Vec3::Z, Vec3::Y);
+        let q = next_lattice_step(&angles, 1);
+        let e = next_lattice_step(&angles, -1);
+        assert!((q - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "Q from an exact candidate must be +90°, got {q}");
+        assert!((e + std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "E from an exact candidate must be −90°, got {e}");
+    }
+
+    #[test]
+    fn snap_retarget_drifted_frame_lands_on_candidates() {
+        let local_z = Vec3::Z;
+        // Start 10° off the Y candidate: fresh Q targets the −X candidate (+80°).
+        let up0 = Quat::from_axis_angle(local_z, 10_f32.to_radians()) * Vec3::Y;
+
+        // Same-direction press mid-flight extends to the NEXT candidate (−Y).
+        let mut anim =
+            start_or_retarget_snap(None, local_z, up0, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        advance_snap(&mut anim, 0.054);
+        let up_mid = Quat::from_axis_angle(local_z, anim.current_applied) * up0;
+        let extended = start_or_retarget_snap(
+            Some(anim), local_z, up_mid, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let up_ext = Quat::from_axis_angle(local_z, extended.target_angle) * up0;
+        assert!(up_ext.dot(Vec3::NEG_Y) > 0.9999, "Extend must land on −Y, got {up_ext:?}");
+
+        // Opposite press mid-flight reverses to the candidate behind (+Y).
+        let mut anim =
+            start_or_retarget_snap(None, local_z, up0, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        advance_snap(&mut anim, 0.054);
+        let up_mid = Quat::from_axis_angle(local_z, anim.current_applied) * up0;
+        let reversed = start_or_retarget_snap(
+            Some(anim), local_z, up_mid, -1, 0.18, SnapRollEasing::EaseOutCubic);
+        let up_rev = Quat::from_axis_angle(local_z, reversed.target_angle) * up0;
+        assert!(up_rev.dot(Vec3::Y) > 0.9999, "Reverse must land on +Y, got {up_rev:?}");
     }
 
     #[test]
