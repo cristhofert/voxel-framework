@@ -1,6 +1,7 @@
 //! Basic world example — minimal voxel-framework demo with texture array.
 //!
-//! Controls: WASD / Space / Shift / Q+E roll (continuous; opt-in snap mode via `PlayerConfig::roll_mode`) / mouse look.
+//! Controls: WASD / Space / Shift / Q+E world-aligned snap roll (showcases
+//! `RollMode::Snap`; the library default is `RollMode::Continuous`) / mouse look.
 //! Escape — pause menu  |  Left click — lock cursor.
 //!
 //! Textures (32×32 PNGs from assets/basic_world/textures/):
@@ -61,6 +62,7 @@ fn main() {
     let mut player_config = PlayerConfig {
         spawn_position: spawn_pos,
         speed: 16.0,
+        roll_mode: RollMode::Snap,
         ..default()
     };
 

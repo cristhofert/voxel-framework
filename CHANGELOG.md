@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for existing consumers).
 
 ### Changed
+- `RollMode::Snap` semantics: Q/E now animates to the next **world-aligned**
+  up candidate (Starframe-style click-to-orient) instead of a fixed ±90°
+  relative to the orientation at press time — correcting the horizon drift
+  that 6DOF mouse look accumulates. Candidates are the 6 signed world axes
+  projected perpendicular to the view: near-axis views give exactly 4 stops,
+  diagonal views up to 6. Cancel-and-restart retargeting is lattice-aware.
+  No API change; `RollMode::Continuous` untouched. Locked by
+  `openspec/specs/player/spec.md` (v2). `examples/basic_world` now showcases
+  `RollMode::Snap`.
+- Default `PlayerConfig::snap_roll_duration_secs` raised from `0.18` to `0.5`
+  after playtest feedback (snappier felt too abrupt).
 - Project license changed from MIT to LGPL-3.0-or-later.
 - `DefaultVoxel` now overrides `VoxelType::hardness()` and `mining_level()`
   per variant (`Air = 0.0/0`, `Rock = 3.0/1`, `IronOre = 4.0/2`,
