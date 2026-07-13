@@ -429,7 +429,7 @@ App::new()
 | Input | Action |
 |---|---|
 | Mouse | Yaw + pitch (6DOF, no clamp) |
-| Q / E | Roll left / right (continuous by default; set `PlayerConfig::roll_mode = RollMode::Snap` for animated 90° increments) |
+| Q / E | Roll left / right (continuous by default; set `PlayerConfig::roll_mode = RollMode::Snap` to animate to the next **world-aligned** up direction — corrects the horizon drift 6DOF mouse look accumulates; near-axis views give exactly 4 stops, diagonal views up to 6) |
 | W / S | Forward / backward |
 | A / D | Strafe left / right |
 | Space | Move along local up |

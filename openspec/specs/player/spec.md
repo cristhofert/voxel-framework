@@ -1,13 +1,14 @@
-# Player Capability — Snap Roll Mode (v1)
+# Player Capability — Snap Roll Mode (v2)
 
 This spec defines the player roll behavior spanning `Player` (`src/player/mod.rs`),
 `PlayerConfig` (`src/player/mod.rs`), and re-exports in `src/prelude.rs`. It locks
-the continuous-roll default, the opt-in snap-roll mode with easing animation, the
-cancel-and-restart lattice semantics, configurable duration/easing, and grounded-mode
-roll suppression. Behavior described here MUST hold for any player spawned via
-`spawn_player`.
+the continuous-roll default, the opt-in snap-roll mode with easing animation
+targeting world-aligned up candidates, the world-aligned lattice definition, the
+lattice-aware cancel-and-restart semantics, configurable duration/easing, and
+grounded-mode roll suppression. Behavior described here MUST hold for any player
+spawned via `spawn_player`.
 
-Source of truth: this file. Last updated by archive of `player-snap-roll-mode` on 2026-06-27.
+Source of truth: this file. Last updated by archive of `player-world-aligned-snap` on 2026-07-12.
 
 ## Requirements
 
@@ -32,52 +33,114 @@ path MUST be byte-for-byte unchanged so existing consumers observe no delta.
 - THEN local Z rotation MUST advance by `0.15` radians (`1.5 * 0.1`)
 - AND no `SnapRollAnim` SHALL be created on `Player::snap_anim`
 
+### Requirement: World-Aligned Lattice Definition
+
+At Q/E `just_pressed` in snap mode, the system MUST build the candidate up set as
+the 6 signed world axes (`±X, ±Y, ±Z`) projected onto the plane perpendicular to the
+player's local Z (roll axis), normalized. Axes lying within ~45° of local Z
+(projection length² below ~0.5) MUST be excluded — the axis family the player is
+roughly looking along never yields up candidates, so a mostly-axis-aligned view
+produces exactly 4 stops. At least 4 candidates SHALL always survive: the exact
+threshold constant is implementation-defined but MUST keep the exact-45° tie
+inclusive (float rounding at an edge-on 45° view must not exclude both axis
+families). For each candidate `c`, the signed roll angle from current up `u` MUST
+use the `rotate_local_z` convention: `δ = atan2(cross(u, c) · z, u · c)`.
+
+The target MUST be the next candidate in the press direction — Q = smallest positive
+δ (counterclockwise around forward), E = largest negative δ (clockwise) — wrapping
+past ±π when no candidate remains ahead.
+
+EPS_ON RULE: if `u` already lies on a candidate within floating-point tolerance,
+that candidate MUST be skipped and the next one in the press direction selected —
+a press SHALL always produce visible motion. The tolerance is an implementation
+constant, not fixed by this spec.
+
+The target MUST be fixed at press time and MUST NOT re-resolve mid-animation.
+
+#### Scenario: Forward on a world axis yields a perfect 4-lattice
+
+- GIVEN local Z parallel to a world axis (e.g. looking straight down)
+- WHEN candidates are built
+- THEN that axis pair is excluded, exactly 4 candidates remain at exactly 90° spacing
+
+#### Scenario: Near-axis forward still yields a 4-lattice
+
+- GIVEN local Z drifted a few degrees off a world axis (typical mouse-look drift)
+- WHEN candidates are built
+- THEN the near-forward axis pair is excluded and exactly 4 candidates remain
+- AND no press can target a stop derived from the near-forward axis
+(Playtest regression: with a pure epsilon guard the drifted ±Z pair survived as
+two perceptually arbitrary stops — 6 positions where the player expects 4.)
+
+#### Scenario: Generic diagonal forward yields 6 candidates with non-90° steps
+
+- GIVEN forward `(1,1,1)/√3` (all components nonzero)
+- WHEN candidates are built and Q is pressed repeatedly from a candidate
+- THEN 6 candidates exist ~60° apart, each step is non-90°
+- AND six presses cycle back to the starting candidate
+
+#### Scenario: EPS_ON skip on an exact candidate
+
+- GIVEN `transform.up()` exactly on a candidate (within tolerance)
+- WHEN Q is pressed
+- THEN the target MUST be the next candidate beyond it, never a ~0° no-op
+
 ### Requirement: Snap Mode Is Opt-In via PlayerConfig
 
-Setting `PlayerConfig::roll_mode = RollMode::Snap` before `spawn_player` SHALL
-make the spawned `Player` use snap mode. In `PlayerMode::FreeFlight`,
-`KeyCode::KeyQ` `just_pressed` SHALL start an animation rotating local Z by
-`+PI/2` over `Player::snap_roll_duration_secs` using the configured
-`SnapRollEasing`. `KeyCode::KeyE` `just_pressed` SHALL do the same with `-PI/2`.
-While the animation runs, `keys.pressed` (held) MUST NOT trigger additional
-rotations — only `just_pressed` events count.
+Setting `PlayerConfig::roll_mode = RollMode::Snap` before `spawn_player` SHALL make
+the spawned `Player` use snap mode. In `PlayerMode::FreeFlight`, `KeyCode::KeyQ`
+`just_pressed` SHALL start an animation rotating local Z by the signed angle to the
+next world-aligned up candidate counterclockwise around forward; `KeyCode::KeyE`
+`just_pressed` SHALL do the same clockwise (per World-Aligned Lattice Definition).
+Duration and easing follow the existing configurable requirement. While the animation
+runs, `keys.pressed` (held) MUST NOT trigger additional rotations — only
+`just_pressed` events count.
+(Previously: fixed `±PI/2` relative to orientation at press time.)
 
-#### Scenario: Q press in snap mode starts +90 animation
+#### Scenario: Q press from a world-aligned orientation targets +90°
 
-- GIVEN `PlayerConfig { roll_mode: RollMode::Snap, ..default() }` and a spawned `Player` in `PlayerMode::FreeFlight`
-- WHEN `KeyCode::KeyQ` `just_pressed` fires on a frame
-- THEN `Player::snap_anim` MUST be `Some(SnapRollAnim { sign: +1, .. })` with `target_angle == PI/2`
+- GIVEN a snap-mode `Player` in FreeFlight with `local_z = Vec3::Z`, `up = Vec3::Y`
+- WHEN `KeyCode::KeyQ` `just_pressed` fires
+- THEN `snap_anim` target MUST equal `+PI/2` (reproduces prior behavior)
+
+#### Scenario: Q press from a drifted orientation travels the residual
+
+- GIVEN a snap-mode `Player` whose up is rolled 10° off the nearest candidate
+- WHEN `KeyCode::KeyQ` `just_pressed` fires
+- THEN the target MUST be the next candidate CCW (≈ +80°), not `+PI/2`
+- AND on `finished`, `transform.up()` lands within ε of that candidate (absent mouse motion)
 
 #### Scenario: Held key does not stack rotations
 
-- GIVEN a snap-mode `Player` with an in-progress `snap_anim` toward `+PI/2`
-- WHEN `KeyCode::KeyQ` is reported by `keys.pressed` (held) but NOT `just_pressed`
-- THEN no new animation SHALL start
-- AND `target_angle` SHALL remain `PI/2`
+- GIVEN a snap-mode `Player` with an in-progress `snap_anim`
+- WHEN the key is reported by `keys.pressed` (held) but NOT `just_pressed`
+- THEN no new animation SHALL start and the target SHALL remain unchanged
 
 ### Requirement: Cancel-and-Restart Is Lattice-Aware
 
-If a snap animation is in progress and a `just_pressed` event fires for the SAME
-direction, the animation SHALL retarget so the new target equals
-`anchor + (completed_quadrants + 1) * sign * PI/2`, restarting from the current
-applied angle (not from anchor). If `just_pressed` fires for the OPPOSITE
-direction, it SHALL cancel and snap toward the nearest 90 deg lattice point below
-the current applied angle in the new direction. Across any sequence of consecutive
-snaps, local Z roll MUST land on a `PI/2` multiple once `finished == true`.
+All presses SHALL resolve via one primitive: "next candidate in direction `d` from a
+reference up" (with the EPS_ON rule). Fresh press: reference = current
+`transform.up()`. Same-direction press mid-animation: reference = the in-flight
+target up; the animation SHALL retarget one candidate further, resuming from the
+current applied angle. Opposite-direction press mid-animation: reference = current
+`transform.up()` in the new direction (nearest stop behind). Once `finished == true`,
+`transform.up()` MUST be within ε of a lattice candidate, provided no mouse motion
+occurred during the animation.
+(Previously: lattice = multiples of `PI/2` from the press-time anchor.)
 
-#### Scenario: Same-direction press extends by 90 from anchor
+#### Scenario: Same-direction press extends one candidate further
 
-- GIVEN `snap_anim` in progress at `applied = 0.40 rad` toward `target = PI/2` with `sign = +1`
+- GIVEN a world-aligned start, `snap_anim` at `applied = 0.40 rad` toward `PI/2`
 - WHEN `KeyCode::KeyQ` `just_pressed` fires again
-- THEN the new `target_angle` MUST equal `PI` (two quadrants from anchor)
-- AND the animation MUST resume from `applied = 0.40 rad`, not from `0.0`
+- THEN the new target MUST be the next candidate past `PI/2` (here `PI`)
+- AND the animation MUST resume from `0.40 rad`, not restart
 
-#### Scenario: Opposite-direction press snaps to nearest lattice below
+#### Scenario: Opposite-direction press reverses to nearest stop behind
 
-- GIVEN `snap_anim` in progress at `applied ≈ 0.47 rad` (~27 deg) heading to `+PI/2`
+- GIVEN a world-aligned start, `snap_anim` at `applied ≈ 0.47 rad` toward `PI/2`
 - WHEN `KeyCode::KeyE` `just_pressed` fires
-- THEN the animation MUST retarget to `0.0` from anchor (nearest 90 deg lattice point at-or-below current applied angle in the negative direction)
-- AND on `finished`, the local Z rotation delta from anchor MUST be exactly a multiple of `PI/2`
+- THEN the animation MUST retarget the next candidate clockwise from current up (here `0.0`)
+- AND on `finished`, `transform.up()` MUST be within ε of that candidate
 
 ### Requirement: Easing and Duration Are Configurable
 
