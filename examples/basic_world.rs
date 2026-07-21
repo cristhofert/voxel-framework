@@ -63,6 +63,9 @@ fn main() {
         spawn_position: spawn_pos,
         speed: 16.0,
         roll_mode: RollMode::Snap,
+        // Anchored FPS look: level horizon, pitch ±89°, Q/E switch the anchor
+        // axis (RollMode is ignored while Anchored is active).
+        look_mode: LookMode::Anchored,
         ..default()
     };
 
