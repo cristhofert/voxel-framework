@@ -269,6 +269,9 @@ const MOUSE_SCALE: f32 = 0.003;
 ///   roll plane).
 ///
 /// Set via [`PlayerConfig::roll_mode`]; defaults to [`RollMode::Continuous`].
+///
+/// **Ignored when [`LookMode::Anchored`] is active**: in Anchored look Q/E
+/// switch the anchor axis instead of rolling, regardless of this setting.
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RollMode {
     /// Roll continuously while Q/E is held (default, original behavior).
@@ -277,6 +280,27 @@ pub enum RollMode {
     /// Snap-rotate to the next world-aligned up candidate per key press with
     /// easing animation (90° steps when forward is on a world axis).
     Snap,
+}
+
+/// How mouse look is interpreted in [`PlayerMode::FreeFlight`].
+///
+/// - [`LookMode::SixDof`] — true 6DOF look: yaw/pitch around local axes, free
+///   roll via Q/E per [`RollMode`]. Default, original behavior.
+/// - [`LookMode::Anchored`] — FPS-style look around a switchable world-axis
+///   anchor ([`Player::anchor_up`]): level horizon by construction, pitch
+///   clamped to ±89°. Q/E animate a switch of the anchor to the next
+///   world-aligned lattice candidate; **[`RollMode`] is IGNORED** — neither
+///   continuous roll nor roll-only snap occurs.
+///
+/// Set via [`PlayerConfig::look_mode`]; defaults to [`LookMode::SixDof`].
+/// [`PlayerMode::Grounded`] is unaffected by this setting.
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LookMode {
+    /// True 6DOF mouse look with free roll (default, original behavior).
+    #[default]
+    SixDof,
+    /// FPS look anchored to a signed world axis; Q/E switch the anchor.
+    Anchored,
 }
 
 /// Easing curve used by [`RollMode::Snap`] animations.
@@ -438,6 +462,18 @@ pub struct Player {
     pub snap_roll_easing: SnapRollEasing,
     /// Active snap-roll animation state (runtime-only, not persisted).
     pub(crate) snap_anim: Option<SnapRollAnim>,
+    /// Mouse-look interpretation in [`PlayerMode::FreeFlight`]. See [`LookMode`].
+    /// Copied from [`PlayerConfig::look_mode`] on spawn.
+    pub look_mode: LookMode,
+    /// Current anchor axis for [`LookMode::Anchored`] look: always one of the
+    /// 6 signed world axes. Yaw orbits this axis; pitch is clamped to ±89°
+    /// from the plane perpendicular to it. Initialized on spawn to the signed
+    /// world axis nearest the spawn orientation's up. Unused in
+    /// [`LookMode::SixDof`].
+    pub anchor_up: Vec3,
+    /// Source signed world axis of an in-flight anchor switch, committed to
+    /// [`Player::anchor_up`] when the animation finishes (runtime-only).
+    pub(crate) pending_anchor: Option<Vec3>,
 }
 
 impl Default for Player {
@@ -460,6 +496,9 @@ impl Default for Player {
             snap_roll_duration: 0.5,
             snap_roll_easing: SnapRollEasing::EaseOutCubic,
             snap_anim: None,
+            look_mode: LookMode::SixDof,
+            anchor_up: Vec3::Y,
+            pending_anchor: None,
         }
     }
 }
@@ -535,6 +574,9 @@ pub struct PlayerConfig {
     /// Easing curve for snap-roll animations.
     /// Copied into [`Player::snap_roll_easing`] on spawn.
     pub snap_roll_easing: SnapRollEasing,
+    /// Mouse-look interpretation in [`PlayerMode::FreeFlight`]. Copied into
+    /// [`Player::look_mode`] on spawn. Defaults to [`LookMode::SixDof`].
+    pub look_mode: LookMode,
 }
 
 impl Default for PlayerConfig {
@@ -550,6 +592,7 @@ impl Default for PlayerConfig {
             roll_mode: RollMode::Continuous,
             snap_roll_duration_secs: 0.5,
             snap_roll_easing: SnapRollEasing::EaseOutCubic,
+            look_mode: LookMode::SixDof,
         }
     }
 }
@@ -592,6 +635,10 @@ pub fn spawn_player(
     let look_at = config.look_at;
     let fov = config.fov_degrees.to_radians();
 
+    // Build the transform first so the anchor axis can be derived from the
+    // actual spawn orientation.
+    let transform = Transform::from_translation(spawn).looking_at(look_at, Vec3::Y);
+
     commands.spawn((
         Player {
             speed: config.speed,
@@ -611,13 +658,16 @@ pub fn spawn_player(
             snap_roll_duration: config.snap_roll_duration_secs,
             snap_roll_easing: config.snap_roll_easing,
             snap_anim: None,
+            look_mode: config.look_mode,
+            anchor_up: nearest_world_axis(*transform.up()),
+            pending_anchor: None,
         },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             fov,
             ..default()
         }),
-        Transform::from_translation(spawn).looking_at(look_at, Vec3::Y),
+        transform,
     ));
 }
 
@@ -632,32 +682,50 @@ pub(crate) fn apply_easing(t: f32, easing: SnapRollEasing) -> f32 {
     }
 }
 
-/// Signed roll angles δ ∈ (−π, π] from `up` to each surviving world-axis
-/// candidate around the roll axis `local_z` (Bevy's BACK vector).
+/// The 6 signed world axes in canonical order.
 ///
-/// The candidate set is the 6 signed world axes (±X, ±Y, ±Z) projected onto
+/// The order is load-bearing: it is the candidate iteration order of
+/// [`world_lattice_candidates`] and the deterministic tie-break sequence of
+/// [`nearest_world_axis`] (first-in-order wins).
+pub(crate) const AXES: [Vec3; 6] = [
+    Vec3::X, Vec3::NEG_X,
+    Vec3::Y, Vec3::NEG_Y,
+    Vec3::Z, Vec3::NEG_Z,
+];
+
+/// Like [`world_lattice_angles`] but returns `(angle δ, SOURCE signed world
+/// axis)` per surviving candidate.
+///
+/// The candidate set is the 6 signed world axes ([`AXES`]) projected onto
 /// the plane perpendicular to `local_z` and normalized. Axes whose projection
 /// has length² < [`SNAP_MIN_PROJ_SQ`] are excluded — an axis within 45° of
 /// the roll axis is "the one you are looking along" and would yield a
 /// perceptually arbitrary up stop (at least 4 candidates always survive).
 /// Each angle is `δ = atan2(cross(up, c) · local_z, up · c)` — the
 /// [`Transform::rotate_local_z`] convention, so δ feeds it unmodified.
-pub(crate) fn world_lattice_angles(local_z: Vec3, up: Vec3) -> Vec<f32> {
-    const AXES: [Vec3; 6] = [
-        Vec3::X, Vec3::NEG_X,
-        Vec3::Y, Vec3::NEG_Y,
-        Vec3::Z, Vec3::NEG_Z,
-    ];
-    let mut angles = Vec::with_capacity(6);
+pub(crate) fn world_lattice_candidates(local_z: Vec3, up: Vec3) -> Vec<(f32, Vec3)> {
+    let mut candidates = Vec::with_capacity(6);
     for axis in AXES {
         let proj = axis - axis.dot(local_z) * local_z;
         if proj.length_squared() < SNAP_MIN_PROJ_SQ {
             continue;
         }
         let c = proj.normalize();
-        angles.push(up.cross(c).dot(local_z).atan2(up.dot(c)));
+        candidates.push((up.cross(c).dot(local_z).atan2(up.dot(c)), axis));
     }
-    angles
+    candidates
+}
+
+/// Signed roll angles δ ∈ (−π, π] from `up` to each surviving world-axis
+/// candidate around the roll axis `local_z` (Bevy's BACK vector).
+///
+/// Thin wrapper over [`world_lattice_candidates`] that drops each candidate's
+/// source axis — see that function for the lattice rule.
+pub(crate) fn world_lattice_angles(local_z: Vec3, up: Vec3) -> Vec<f32> {
+    world_lattice_candidates(local_z, up)
+        .into_iter()
+        .map(|(a, _)| a)
+        .collect()
 }
 
 /// Next lattice step in press direction `dir` (+1 = Q / CCW, −1 = E / CW).
@@ -678,6 +746,35 @@ pub(crate) fn next_lattice_step(angles: &[f32], dir: i32) -> f32 {
             .iter()
             .map(|&d| if d < -SNAP_EPS_ON { d } else { d - TAU })
             .fold(f32::NEG_INFINITY, f32::max)
+    }
+}
+
+/// Mirror of [`next_lattice_step`] carrying each candidate's source axis:
+/// same [`SNAP_EPS_ON`] wrap, min (dir > 0) / max (dir < 0) by wrapped angle.
+/// Returns the wrapped angle together with the winning candidate's SOURCE
+/// signed world axis.
+///
+/// The caller guarantees a non-empty slice (the [`SNAP_MIN_PROJ_SQ`]
+/// ≥4-candidate invariant); panics otherwise rather than returning garbage.
+pub(crate) fn next_lattice_candidate(cands: &[(f32, Vec3)], dir: i32) -> (f32, Vec3) {
+    use std::f32::consts::TAU;
+    assert!(
+        !cands.is_empty(),
+        "next_lattice_candidate: empty candidate slice — SNAP_MIN_PROJ_SQ \
+         guarantees at least 4 lattice candidates"
+    );
+    if dir > 0 {
+        cands
+            .iter()
+            .map(|&(d, axis)| (if d > SNAP_EPS_ON { d } else { d + TAU }, axis))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap()
+    } else {
+        cands
+            .iter()
+            .map(|&(d, axis)| (if d < -SNAP_EPS_ON { d } else { d - TAU }, axis))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap()
     }
 }
 
@@ -756,6 +853,66 @@ pub(crate) fn start_or_retarget_snap(
     }
 }
 
+/// The reference up [`start_or_retarget_snap`] resolves candidates from,
+/// replicated as a pure helper so the Anchored arm can compute the SOURCE
+/// axis of the exact candidate the animation will land on:
+///
+/// - Same direction mid-animation → `up` advanced by the not-yet-applied
+///   residual (`Quat::from_axis_angle(local_z, target − applied) * up`).
+/// - Fresh press or opposite direction → `up` unchanged.
+pub(crate) fn snap_reference_up(
+    existing: Option<SnapRollAnim>,
+    local_z: Vec3,
+    up: Vec3,
+    dir: i32,
+) -> Vec3 {
+    match existing {
+        Some(anim) => {
+            let same_dir = (dir > 0 && anim.target_angle > anim.start_angle)
+                || (dir < 0 && anim.target_angle < anim.start_angle);
+            if same_dir {
+                let residual = anim.target_angle - anim.current_applied;
+                Quat::from_axis_angle(local_z, residual) * up
+            } else {
+                up
+            }
+        }
+        None => up,
+    }
+}
+
+/// Clamps a pitch delta so `asin(forward · anchor_up)` stays within ±89°.
+///
+/// `pitch = asin(clamp(forward · anchor_up, −1, 1))`; returns
+/// `clamp(pitch + pitch_d, ±89°) − pitch`. The clamp-then-subtract form gives
+/// exact truncation at the poles for free: at the limit, outward deltas
+/// return 0 while inward deltas pass through. Pure and NaN-free (the dot is
+/// clamped to asin's domain).
+pub(crate) fn clamp_pitch_delta(forward: Vec3, anchor_up: Vec3, pitch_d: f32) -> f32 {
+    let limit = 89_f32.to_radians();
+    let pitch = forward.dot(anchor_up).clamp(-1.0, 1.0).asin();
+    (pitch + pitch_d).clamp(-limit, limit) - pitch
+}
+
+/// Signed world axis with the maximum dot product against `v`.
+///
+/// Iterates [`AXES`] in canonical order keeping the max with strict `>`, so
+/// ties break deterministically toward the first axis in the order
+/// `[X, NEG_X, Y, NEG_Y, Z, NEG_Z]`. Used to initialize
+/// [`Player::anchor_up`] at spawn.
+pub(crate) fn nearest_world_axis(v: Vec3) -> Vec3 {
+    let mut best = AXES[0];
+    let mut best_dot = v.dot(AXES[0]);
+    for axis in AXES.into_iter().skip(1) {
+        let d = v.dot(axis);
+        if d > best_dot {
+            best = axis;
+            best_dot = d;
+        }
+    }
+    best
+}
+
 pub(crate) fn advance_snap(anim: &mut SnapRollAnim, dt: f32) -> (f32, bool) {
     anim.elapsed += dt;
     let t = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
@@ -806,56 +963,124 @@ pub fn player_look(
     }
 
     match &player.mode {
-        PlayerMode::FreeFlight => {
-            if delta != Vec2::ZERO {
-                let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
-                let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
-                // Rotate around LOCAL axes — preserves 6DOF orientation.
-                transform.rotate_local_y(yaw_d);
-                transform.rotate_local_x(pitch_d);
-            }
-
-            // Q / E roll.
-            match player.roll_mode {
-                RollMode::Continuous => {
-                    let mut roll = 0.0_f32;
-                    if keys.pressed(KeyCode::KeyQ) { roll += 1.0; }
-                    if keys.pressed(KeyCode::KeyE) { roll -= 1.0; }
-                    if roll != 0.0 {
-                        transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
-                    }
+        PlayerMode::FreeFlight => match player.look_mode {
+            LookMode::SixDof => {
+                if delta != Vec2::ZERO {
+                    let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
+                    let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
+                    // Rotate around LOCAL axes — preserves 6DOF orientation.
+                    transform.rotate_local_y(yaw_d);
+                    transform.rotate_local_x(pitch_d);
                 }
-                RollMode::Snap => {
-                    if keys.just_pressed(KeyCode::KeyQ) {
-                        player.snap_anim = Some(start_or_retarget_snap(
-                            player.snap_anim,
-                            *transform.local_z(),
-                            *transform.up(),
-                            1,
-                            player.snap_roll_duration,
-                            player.snap_roll_easing,
-                        ));
+
+                // Q / E roll.
+                match player.roll_mode {
+                    RollMode::Continuous => {
+                        let mut roll = 0.0_f32;
+                        if keys.pressed(KeyCode::KeyQ) { roll += 1.0; }
+                        if keys.pressed(KeyCode::KeyE) { roll -= 1.0; }
+                        if roll != 0.0 {
+                            transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
+                        }
                     }
-                    if keys.just_pressed(KeyCode::KeyE) {
-                        player.snap_anim = Some(start_or_retarget_snap(
-                            player.snap_anim,
-                            *transform.local_z(),
-                            *transform.up(),
-                            -1,
-                            player.snap_roll_duration,
-                            player.snap_roll_easing,
-                        ));
-                    }
-                    if let Some(ref mut anim) = player.snap_anim {
-                        let (delta, finished) = advance_snap(anim, time.delta_secs());
-                        transform.rotate_local_z(delta);
-                        if finished {
-                            player.snap_anim = None;
+                    RollMode::Snap => {
+                        if keys.just_pressed(KeyCode::KeyQ) {
+                            player.snap_anim = Some(start_or_retarget_snap(
+                                player.snap_anim,
+                                *transform.local_z(),
+                                *transform.up(),
+                                1,
+                                player.snap_roll_duration,
+                                player.snap_roll_easing,
+                            ));
+                        }
+                        if keys.just_pressed(KeyCode::KeyE) {
+                            player.snap_anim = Some(start_or_retarget_snap(
+                                player.snap_anim,
+                                *transform.local_z(),
+                                *transform.up(),
+                                -1,
+                                player.snap_roll_duration,
+                                player.snap_roll_easing,
+                            ));
+                        }
+                        if let Some(ref mut anim) = player.snap_anim {
+                            let (delta, finished) = advance_snap(anim, time.delta_secs());
+                            transform.rotate_local_z(delta);
+                            if finished {
+                                player.snap_anim = None;
+                            }
                         }
                     }
                 }
             }
-        }
+            LookMode::Anchored => {
+                if delta != Vec2::ZERO {
+                    let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
+                    let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
+                    // Yaw: WORLD-space rotation around the anchor axis. While a
+                    // switch animation runs this is still the OLD anchor —
+                    // pending_anchor is only committed on finish.
+                    transform.rotate(Quat::from_axis_angle(player.anchor_up, yaw_d));
+                    // Pitch: local-X rotation, clamped so the elevation against
+                    // the anchor stays within ±89°.
+                    let clamped =
+                        clamp_pitch_delta(*transform.forward(), player.anchor_up, pitch_d);
+                    transform.rotate_local_x(clamped);
+                }
+
+                // Q / E: switch the anchor to the next lattice candidate
+                // (RollMode is ignored in Anchored look).
+                if keys.just_pressed(KeyCode::KeyQ) {
+                    let local_z = *transform.local_z();
+                    let up = *transform.up();
+                    let ref_up = snap_reference_up(player.snap_anim, local_z, up, 1);
+                    let (_, axis) =
+                        next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), 1);
+                    player.pending_anchor = Some(axis);
+                    player.snap_anim = Some(start_or_retarget_snap(
+                        player.snap_anim,
+                        local_z,
+                        up,
+                        1,
+                        player.snap_roll_duration,
+                        player.snap_roll_easing,
+                    ));
+                }
+                if keys.just_pressed(KeyCode::KeyE) {
+                    let local_z = *transform.local_z();
+                    let up = *transform.up();
+                    let ref_up = snap_reference_up(player.snap_anim, local_z, up, -1);
+                    let (_, axis) =
+                        next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), -1);
+                    player.pending_anchor = Some(axis);
+                    player.snap_anim = Some(start_or_retarget_snap(
+                        player.snap_anim,
+                        local_z,
+                        up,
+                        -1,
+                        player.snap_roll_duration,
+                        player.snap_roll_easing,
+                    ));
+                }
+                if let Some(ref mut anim) = player.snap_anim {
+                    let (delta, finished) = advance_snap(anim, time.delta_secs());
+                    transform.rotate_local_z(delta);
+                    if finished {
+                        // Commit the pure signed world axis, then renormalize
+                        // the frame: look_to preserves forward and snaps
+                        // screen-up onto the new anchor's projection, absorbing
+                        // any roll accumulated vs. the new axis mid-animation.
+                        if let Some(anchor) = player.pending_anchor.take() {
+                            player.anchor_up = anchor;
+                        }
+                        let fwd = *transform.forward();
+                        transform.look_to(fwd, player.anchor_up);
+                        player.snap_anim = None;
+                    }
+                }
+            }
+        },
         PlayerMode::Grounded { .. } => {
             if delta != Vec2::ZERO {
                 let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
@@ -1831,5 +2056,237 @@ mod tests {
             "dist={dist} must be >= PLAYER_RADIUS={PLAYER_RADIUS}"
         );
         let _ = vox_center; // silence unused warning
+    }
+
+    // ─── Anchored look: pitch clamp ──────────────────────────────────────────
+
+    #[test]
+    fn clamp_pitch_under_limit_passes_through() {
+        // Level forward (pitch 0 vs +Y anchor): moderate deltas are untouched.
+        let d = clamp_pitch_delta(Vec3::NEG_Z, Vec3::Y, 30_f32.to_radians());
+        assert!((d - 30_f32.to_radians()).abs() < 1e-5, "got {d}");
+        let d = clamp_pitch_delta(Vec3::NEG_Z, Vec3::Y, -30_f32.to_radians());
+        assert!((d + 30_f32.to_radians()).abs() < 1e-5, "got {d}");
+    }
+
+    #[test]
+    fn clamp_pitch_crossing_limit_truncates() {
+        // From +80° elevation a +20° request truncates to +9° (lands at +89°).
+        let f_hi = Vec3::new(0.0, 80_f32.to_radians().sin(), -(80_f32.to_radians().cos()));
+        let d = clamp_pitch_delta(f_hi, Vec3::Y, 20_f32.to_radians());
+        assert!((d - 9_f32.to_radians()).abs() < 1e-4, "expected ~+9°, got {d}");
+
+        // Mirror: from −80° a −20° request truncates to −9° (lands at −89°).
+        let f_lo = Vec3::new(0.0, -(80_f32.to_radians().sin()), -(80_f32.to_radians().cos()));
+        let d = clamp_pitch_delta(f_lo, Vec3::Y, -20_f32.to_radians());
+        assert!((d + 9_f32.to_radians()).abs() < 1e-4, "expected ~−9°, got {d}");
+    }
+
+    #[test]
+    fn clamp_pitch_at_limit_blocks_outward_allows_inward() {
+        // Exactly at the +89° pole: outward is blocked, inward passes through.
+        let f = Vec3::new(0.0, 89_f32.to_radians().sin(), -(89_f32.to_radians().cos()));
+        let outward = clamp_pitch_delta(f, Vec3::Y, 5_f32.to_radians());
+        assert!(outward.abs() < 1e-4, "outward delta at the pole must be ~0, got {outward}");
+        let inward = clamp_pitch_delta(f, Vec3::Y, -5_f32.to_radians());
+        assert!((inward + 5_f32.to_radians()).abs() < 1e-4,
+            "inward delta must pass through, got {inward}");
+    }
+
+    // ─── Anchored look: lattice candidates ───────────────────────────────────
+
+    #[test]
+    fn candidates_axis_forward_have_source_axes() {
+        use std::f32::consts::FRAC_PI_2;
+        // Axial view (local Z = world Z, up = Y): the ±Z pair is filtered, the
+        // four survivors carry their source axes with the expected angles.
+        let cands = world_lattice_candidates(Vec3::Z, Vec3::Y);
+        assert_eq!(cands.len(), 4, "±Z must be excluded: {cands:?}");
+        let angle_of = |axis: Vec3| {
+            cands
+                .iter()
+                .find(|(_, a)| *a == axis)
+                .unwrap_or_else(|| panic!("axis {axis:?} missing from {cands:?}"))
+                .0
+        };
+        assert!((angle_of(Vec3::X) + FRAC_PI_2).abs() < 1e-5, "X must sit at −π/2");
+        assert!((angle_of(Vec3::NEG_X) - FRAC_PI_2).abs() < 1e-5, "−X must sit at +π/2");
+        assert!(angle_of(Vec3::Y).abs() < 1e-5, "Y must sit at 0");
+        assert!((angle_of(Vec3::NEG_Y).abs() - std::f32::consts::PI).abs() < 1e-5,
+            "−Y must sit at ±π");
+    }
+
+    #[test]
+    fn candidates_diagonal_forward_yield_six_axes() {
+        // Diagonal view: every signed world axis survives, each exactly once.
+        let local_z = -Vec3::ONE.normalize();
+        let up = (Vec3::X - Vec3::X.dot(local_z) * local_z).normalize();
+        let cands = world_lattice_candidates(local_z, up);
+        assert_eq!(cands.len(), 6, "all 6 axes survive on a diagonal: {cands:?}");
+        for axis in AXES {
+            assert_eq!(
+                cands.iter().filter(|(_, a)| *a == axis).count(),
+                1,
+                "axis {axis:?} must appear exactly once: {cands:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lattice_angles_equal_candidate_angles() {
+        // The wrapper must be observably identical to the candidate angles.
+        let diag_z = -Vec3::ONE.normalize();
+        let diag_up = (Vec3::X - Vec3::X.dot(diag_z) * diag_z).normalize();
+        for (local_z, up) in [(Vec3::Z, Vec3::Y), (diag_z, diag_up)] {
+            let angles = world_lattice_angles(local_z, up);
+            let cands = world_lattice_candidates(local_z, up);
+            assert_eq!(angles.len(), cands.len());
+            for (a, (c, _)) in angles.iter().zip(cands.iter()) {
+                assert_eq!(a, c, "wrapper angle {a} != candidate angle {c}");
+            }
+        }
+    }
+
+    // ─── Anchored look: candidate stepping ───────────────────────────────────
+
+    #[test]
+    fn next_lattice_candidate_matches_next_lattice_step() {
+        // Drifted up (10° off Y): the axis-carrying mirror must agree with the
+        // locked next_lattice_step in both directions.
+        let up = Quat::from_axis_angle(Vec3::Z, 10_f32.to_radians()) * Vec3::Y;
+        let cands = world_lattice_candidates(Vec3::Z, up);
+        let angles = world_lattice_angles(Vec3::Z, up);
+        for dir in [1, -1] {
+            let (cand_angle, _) = next_lattice_candidate(&cands, dir);
+            let step = next_lattice_step(&angles, dir);
+            assert_eq!(cand_angle, step, "dir {dir}: {cand_angle} != {step}");
+        }
+    }
+
+    #[test]
+    fn next_candidate_q_yields_neg_x_e_yields_x() {
+        use std::f32::consts::FRAC_PI_2;
+        // From (local_z = Z, up = Y): Q travels +90° to the −X candidate,
+        // E travels −90° to the +X candidate.
+        let cands = world_lattice_candidates(Vec3::Z, Vec3::Y);
+        let (q_angle, q_axis) = next_lattice_candidate(&cands, 1);
+        assert!((q_angle - FRAC_PI_2).abs() < 1e-5, "Q must travel +π/2, got {q_angle}");
+        assert_eq!(q_axis, Vec3::NEG_X);
+        let (e_angle, e_axis) = next_lattice_candidate(&cands, -1);
+        assert!((e_angle + FRAC_PI_2).abs() < 1e-5, "E must travel −π/2, got {e_angle}");
+        assert_eq!(e_axis, Vec3::X);
+    }
+
+    // ─── Anchored look: reference up and anchor commit ───────────────────────
+
+    #[test]
+    fn snap_reference_up_fresh_and_opposite_use_up() {
+        let up = Quat::from_axis_angle(Vec3::Z, 10_f32.to_radians()) * Vec3::Y;
+        // Fresh press: no animation → reference is the current up.
+        assert_eq!(snap_reference_up(None, Vec3::Z, up, 1), up);
+        // Opposite-direction press mid-animation → reference is still up.
+        let mut anim =
+            start_or_retarget_snap(None, Vec3::Z, up, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        advance_snap(&mut anim, 0.054);
+        assert_eq!(snap_reference_up(Some(anim), Vec3::Z, up, -1), up);
+    }
+
+    #[test]
+    fn snap_reference_up_same_dir_advances_residual() {
+        let up0 = Vec3::Y;
+        let mut anim =
+            start_or_retarget_snap(None, Vec3::Z, up0, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        advance_snap(&mut anim, 0.054);
+        // The transform rotated with the animation: up now reflects the
+        // applied angle. Same-dir reference = up advanced by the residual,
+        // i.e. the in-flight target up.
+        let up_mid = Quat::from_axis_angle(Vec3::Z, anim.current_applied) * up0;
+        let ref_up = snap_reference_up(Some(anim), Vec3::Z, up_mid, 1);
+        let expected =
+            Quat::from_axis_angle(Vec3::Z, anim.target_angle - anim.current_applied) * up_mid;
+        assert!(ref_up.dot(expected) > 0.9999, "ref {ref_up:?} != target up {expected:?}");
+        // For this fresh anim the in-flight target is the −X candidate.
+        assert!(ref_up.dot(Vec3::NEG_X) > 0.9999, "expected ~−X, got {ref_up:?}");
+    }
+
+    #[test]
+    fn anchor_commit_matches_pending_projection() {
+        let local_z = Vec3::Z;
+        let dur = 0.18;
+        let ease = SnapRollEasing::EaseOutCubic;
+        let up0 = Quat::from_axis_angle(local_z, 10_f32.to_radians()) * Vec3::Y;
+        let proj = |axis: Vec3| (axis - axis.dot(local_z) * local_z).normalize();
+
+        // Fresh Q: pending axis −X; the animation must land on its projection.
+        let ref_up = snap_reference_up(None, local_z, up0, 1);
+        let (_, axis) = next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), 1);
+        assert_eq!(axis, Vec3::NEG_X);
+        let anim = start_or_retarget_snap(None, local_z, up0, 1, dur, ease);
+        let landed = Quat::from_axis_angle(local_z, anim.target_angle) * up0;
+        assert!(landed.dot(proj(axis)) > 0.9999, "fresh: {landed:?} != proj({axis:?})");
+
+        // Extend (same dir mid-anim): pending axis −Y, one candidate further.
+        let mut anim = start_or_retarget_snap(None, local_z, up0, 1, dur, ease);
+        advance_snap(&mut anim, 0.054);
+        let up_mid = Quat::from_axis_angle(local_z, anim.current_applied) * up0;
+        let ref_up = snap_reference_up(Some(anim), local_z, up_mid, 1);
+        let (_, axis) = next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), 1);
+        assert_eq!(axis, Vec3::NEG_Y);
+        let extended = start_or_retarget_snap(Some(anim), local_z, up_mid, 1, dur, ease);
+        let landed = Quat::from_axis_angle(local_z, extended.target_angle) * up0;
+        assert!(landed.dot(proj(axis)) > 0.9999, "extend: {landed:?} != proj({axis:?})");
+
+        // Reverse (opposite dir mid-anim): pending axis +Y, behind current up.
+        let mut anim = start_or_retarget_snap(None, local_z, up0, 1, dur, ease);
+        advance_snap(&mut anim, 0.054);
+        let up_mid = Quat::from_axis_angle(local_z, anim.current_applied) * up0;
+        let ref_up = snap_reference_up(Some(anim), local_z, up_mid, -1);
+        let (_, axis) = next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), -1);
+        assert_eq!(axis, Vec3::Y);
+        let reversed = start_or_retarget_snap(Some(anim), local_z, up_mid, -1, dur, ease);
+        let landed = Quat::from_axis_angle(local_z, reversed.target_angle) * up0;
+        assert!(landed.dot(proj(axis)) > 0.9999, "reverse: {landed:?} != proj({axis:?})");
+    }
+
+    // ─── Anchored look: spawn anchor and defaults ────────────────────────────
+
+    #[test]
+    fn nearest_world_axis_snaps_biased_vectors() {
+        assert_eq!(nearest_world_axis(Vec3::new(0.9, 0.1, 0.2)), Vec3::X);
+        assert_eq!(nearest_world_axis(Vec3::new(-2.0, 0.5, 0.5)), Vec3::NEG_X);
+        assert_eq!(nearest_world_axis(Vec3::new(0.1, -1.5, 0.3)), Vec3::NEG_Y);
+        assert_eq!(nearest_world_axis(Vec3::new(-0.1, 0.2, 0.95)), Vec3::Z);
+        assert_eq!(nearest_world_axis(Vec3::new(0.2, 0.3, -0.9)), Vec3::NEG_Z);
+    }
+
+    #[test]
+    fn nearest_world_axis_tie_uses_axes_order() {
+        // Strict `>` keeps the first max in AXES order [X, −X, Y, −Y, Z, −Z].
+        assert_eq!(nearest_world_axis(Vec3::new(1.0, 1.0, 0.0)), Vec3::X);
+        assert_eq!(nearest_world_axis(Vec3::new(0.0, 1.0, 1.0)), Vec3::Y);
+        assert_eq!(nearest_world_axis(Vec3::new(-1.0, -1.0, -1.0)), Vec3::NEG_X);
+    }
+
+    #[test]
+    fn look_mode_defaults_to_sixdof() {
+        let p = Player::default();
+        assert_eq!(p.look_mode, LookMode::SixDof);
+        assert_eq!(p.anchor_up, Vec3::Y);
+        assert!(p.pending_anchor.is_none());
+        assert_eq!(PlayerConfig::default().look_mode, LookMode::SixDof);
+    }
+
+    #[test]
+    fn look_mode_config_copies_to_player() {
+        // Non-default value must propagate config → component.
+        let config = PlayerConfig {
+            look_mode: LookMode::Anchored,
+            ..default()
+        };
+        let player = Player {
+            look_mode: config.look_mode,
+            ..default()
+        };
+        assert_eq!(player.look_mode, LookMode::Anchored);
     }
 }
