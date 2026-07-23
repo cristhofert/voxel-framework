@@ -2289,4 +2289,115 @@ mod tests {
         };
         assert_eq!(player.look_mode, LookMode::Anchored);
     }
+
+    // ---- Frame-loop integration tests -------------------------------------
+    //
+    // Three Anchored behaviors are frame-loop properties, not pure functions:
+    // a level horizon under diagonal input, mouse-look staying on the OLD
+    // anchor while a switch animates, and `RollMode::Continuous` being inert.
+    // These drive `player_look` through a headless `App`.
+
+    /// Builds a headless app that runs `player_look` over one Anchored player
+    /// starting from the identity transform (forward −Z, up +Y, right +X).
+    fn anchored_app(roll_mode: RollMode) -> (App, Entity) {
+        let mut app = App::new();
+        app.add_message::<MouseMotion>();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, player_look);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Player { look_mode: LookMode::Anchored, roll_mode, ..default() },
+                Transform::default(),
+            ))
+            .id();
+        (app, entity)
+    }
+
+    /// Advances one frame: sets `dt`, applies the exact held-key set (freshly
+    /// added keys register as `just_pressed`, persisting keys do not), injects
+    /// mouse motion, then runs the schedule.
+    fn step(app: &mut App, mouse: Vec2, held: &[KeyCode], dt: f32) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(dt));
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.clear(); // drop last frame's just_pressed / just_released
+            let stale: Vec<KeyCode> = input
+                .get_pressed()
+                .copied()
+                .filter(|k| !held.contains(k))
+                .collect();
+            for k in stale { input.release(k); }
+            for k in held { input.press(*k); } // re-press keeps held keys out of just_pressed
+        }
+        if mouse != Vec2::ZERO {
+            app.world_mut().write_message(MouseMotion { delta: mouse });
+        }
+        app.update();
+    }
+
+    fn forward_of(app: &App, entity: Entity) -> Vec3 {
+        *app.world().entity(entity).get::<Transform>().unwrap().forward()
+    }
+
+    #[test]
+    fn anchored_diagonal_input_keeps_horizon_level() {
+        let (mut app, e) = anchored_app(RollMode::Continuous);
+        // Strong diagonal input for enough frames to push pitch into the clamp.
+        for _ in 0..15 {
+            step(&mut app, Vec2::new(60.0, -80.0), &[], 0.016);
+            let right = *app.world().entity(e).get::<Transform>().unwrap().right();
+            // World-yaw around Y ∘ local-X pitch never rolls the frame: the
+            // camera's right vector stays in the horizontal plane.
+            assert!(right.dot(Vec3::Y).abs() < 1e-4,
+                "horizon rolled: right·Y = {}", right.dot(Vec3::Y));
+        }
+        // The ±89° clamp both engaged (we pushed past 88°) and held (never over).
+        let elevation = forward_of(&app, e).dot(Vec3::Y).abs();
+        assert!(elevation >= 88_f32.to_radians().sin(),
+            "clamp never engaged: |forward·Y| = {elevation}");
+        assert!(elevation <= 89_f32.to_radians().sin() + 1e-4,
+            "pitch exceeded ±89°: |forward·Y| = {elevation}");
+    }
+
+    #[test]
+    fn anchored_switch_yaw_uses_old_anchor() {
+        let (mut app, e) = anchored_app(RollMode::Continuous);
+        // Frame 1: tap Q to begin a switch. The default 0.5s duration keeps it
+        // running across the next frame (2 × 0.1s = 0.2s < 0.5s).
+        step(&mut app, Vec2::ZERO, &[KeyCode::KeyQ], 0.1);
+        {
+            let p = app.world().entity(e).get::<Player>().unwrap();
+            assert!(p.snap_anim.is_some(), "Q should start a switch animation");
+            assert!(p.pending_anchor.is_some(), "pending anchor should be set");
+            assert_eq!(p.anchor_up, Vec3::Y, "anchor must not commit mid-animation");
+        }
+        let before = forward_of(&app, e);
+        // Frame 2: release Q, yaw with the mouse while the switch still runs.
+        step(&mut app, Vec2::new(50.0, 0.0), &[], 0.1);
+        let p = app.world().entity(e).get::<Player>().unwrap();
+        assert!(p.snap_anim.is_some(), "animation should still be running");
+        assert_eq!(p.anchor_up, Vec3::Y, "yaw must not commit the pending anchor");
+        let after = forward_of(&app, e);
+        // Yaw ran around the OLD anchor (world Y): a rotation about Y preserves
+        // forward·Y, and the pending axis is non-Y, so a wrong anchor would
+        // tilt forward out of the horizontal plane.
+        assert!(after.dot(Vec3::Y).abs() < 1e-5, "yaw left the Y-plane → wrong anchor");
+        assert!((after - before).length() > 1e-3, "yaw had no visible effect");
+    }
+
+    #[test]
+    fn anchored_ignores_continuous_roll_mode() {
+        let (mut app, e) = anchored_app(RollMode::Continuous);
+        // In SixDof this would roll the frame every tick; in Anchored, Q must
+        // instead begin an animated anchor switch — RollMode is inert.
+        step(&mut app, Vec2::ZERO, &[KeyCode::KeyQ], 0.1);
+        let p = app.world().entity(e).get::<Player>().unwrap();
+        assert_eq!(p.roll_mode, RollMode::Continuous);
+        assert!(p.snap_anim.is_some() && p.pending_anchor.is_some(),
+            "Continuous roll_mode must be inert in Anchored — Q takes the switch path");
+    }
 }
