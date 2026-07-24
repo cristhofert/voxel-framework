@@ -9,7 +9,7 @@
 //!
 //! The framework is built around three core abstractions:
 //!
-//! - **[`VoxelType`](crate::voxel::VoxelType)** — a trait that every voxel palette must implement.
+//! - **[`voxel::VoxelType`]** — a trait that every voxel palette must implement.
 //!   It describes whether a voxel is solid, what color it renders as, and how
 //!   it serializes to and from a single byte for persistence. The built-in
 //!   [`voxel::DefaultVoxel`] palette covers five material types (Air, Rock,
@@ -103,7 +103,7 @@
 //!
 //! ## Extending the Framework
 //!
-//! To use a custom voxel palette, implement [`VoxelType`](crate::voxel::VoxelType) on your own type and
+//! To use a custom voxel palette, implement [`voxel::VoxelType`] on your own type and
 //! substitute it wherever the framework is generic over `V: VoxelType`:
 //!
 //! - [`generator::GeneratorPlugin::<YourVoxel>::new()`][`generator::GeneratorPlugin`]
@@ -114,6 +114,8 @@
 //! a [`generator::GeneratorResource`].
 //!
 //! See [`prelude`] for the most commonly used re-exports.
+
+#![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod audio;
 pub mod chunk;

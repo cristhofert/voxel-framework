@@ -186,7 +186,7 @@ pub struct PauseMenuConfig {
     ///
     /// Defaults to [`Handle::default()`] at construction time. [`PauseMenuPlugin`]
     /// replaces the default handle with the embedded NotoSans font during
-    /// `Startup` (see [`EMBEDDED_NOTO_SANS_PATH`]) so games inherit a legible
+    /// `Startup` (see `EMBEDDED_NOTO_SANS_PATH`) so games inherit a legible
     /// unicode-capable font without loading any asset themselves. To override,
     /// insert [`PauseMenuConfig`] with a custom `font` handle before the menu is
     /// first spawned.
@@ -197,7 +197,7 @@ pub struct PauseMenuConfig {
     ///
     /// Defaults to [`Handle::default()`] at construction time. [`PauseMenuPlugin`]
     /// replaces the default handle with the embedded NotoSansSymbols2 font
-    /// during `Startup` (see [`EMBEDDED_NOTO_SYMBOLS_PATH`]). To override,
+    /// during `Startup` (see `EMBEDDED_NOTO_SYMBOLS_PATH`). To override,
     /// insert [`PauseMenuConfig`] with a custom `symbol_font` handle before the
     /// menu is first spawned.
     pub symbol_font: Handle<Font>,

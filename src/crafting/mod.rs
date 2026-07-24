@@ -423,7 +423,7 @@ fn handle_craft_click<I: ItemType>(
 /// want the built-in `C`-key crafting menu, or provide your own UI by reading
 /// [`CraftingRegistry<I>`] and calling [`can_craft`] / [`try_craft`] directly.
 ///
-/// Mirrors the [`MiningPlugin`] / [`MiningInputPlugin`] split pattern.
+/// Mirrors the [`crate::world::MiningPlugin`] / [`crate::world::MiningInputPlugin`] split pattern.
 pub struct CraftingPlugin<I: ItemType> {
     _m: PhantomData<I>,
 }
