@@ -17,7 +17,7 @@
 All 5 phases checked `[x]` in `tasks.md`. Task 5.3 (manual playtest) is marked
 APPROVED 2026-07-21 by the user (level horizon, ±89° stop, animated Q/E switch
 with pure axis; `basic_world` kept as Anchored showcase). Note: the line still
-carries a stale "PENDIENTE — requiere display" fragment after the APPROVED
+carries a stale "PENDING — requires display" fragment after the APPROVED
 marker (see Suggestions).
 
 ---
@@ -111,8 +111,8 @@ diff (3 files) exactly.
 **WARNING**: None.
 
 **SUGGESTION**:
-1. `tasks.md` 5.3 still ends with the stale "**PENDIENTE — requiere display; lo
-   hace el usuario.**" fragment after the APPROVED marker — clean it up at
+1. `tasks.md` 5.3 still ends with the stale "**PENDING — requires display; done
+   by the user.**" fragment after the APPROVED marker — clean it up at
    archive time to avoid audit confusion.
 2. The 3 PARTIAL (manual) scenarios could gain automated coverage later via a
    minimal Bevy `App` harness driving `player_look` for a few frames (assert

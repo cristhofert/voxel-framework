@@ -41,4 +41,4 @@ Baseline: 169 existing lib tests MUST stay green and unedited. Never `cargo buil
 
 - [x] 5.1 Set `look_mode: LookMode::Anchored` in `examples/basic_world.rs` for playtest (showcase vs revert decided post-playtest).
 - [x] 5.2 Gate: `cargo test --doc` + `cargo check --example basic_world` green.
-- [x] 5.3 Manual playtest per proposal: level horizon under diagonal input, ±89° stop, Q/E animated 90° switch, anchor always a pure axis, 6DOF regression check without `look_mode`. — APPROVED 2026-07-21: usuario confirmó 1–3; basic_world queda como showcase Anchored.
+- [x] 5.3 Manual playtest per proposal: level horizon under diagonal input, ±89° stop, Q/E animated 90° switch, anchor always a pure axis, 6DOF regression check without `look_mode`. — APPROVED 2026-07-21: user confirmed 1–3; basic_world kept as the Anchored showcase.

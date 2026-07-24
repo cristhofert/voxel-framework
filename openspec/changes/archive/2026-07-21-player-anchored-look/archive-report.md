@@ -57,7 +57,7 @@ the cross-session backup.
 filesystem exploration artifact.)
 
 Housekeeping applied before the move: removed the stale
-"PENDIENTE — requiere display" fragment from `tasks.md` 5.3 (redundant next to
+"PENDING — requires display" fragment from `tasks.md` 5.3 (redundant next to
 the APPROVED 2026-07-21 marker; verify-report Suggestion 1).
 
 ---
