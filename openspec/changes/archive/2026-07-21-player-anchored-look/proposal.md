@@ -2,7 +2,7 @@
 
 ## Intent
 
-Playtest feedback: 6DOF look in `PlayerMode::FreeFlight` "se descontrola al girar" — unbounded rotation causes disorientation. Users want a Minecraft-creative-style FPS camera: horizon always level, pitch clamped — but with the player's "up" switchable among the 6 signed world axes (±X/±Y/±Z, Super Mario Galaxy-style), manually via Q/E with the existing snap-roll animation. An angular-rate cap was explicitly rejected ("space sim" feel — "esto no es la nave, es el jugador").
+Playtest feedback: 6DOF look in `PlayerMode::FreeFlight` "spins out of control when turning" — unbounded rotation causes disorientation. Users want a Minecraft-creative-style FPS camera: horizon always level, pitch clamped — but with the player's "up" switchable among the 6 signed world axes (±X/±Y/±Z, Super Mario Galaxy-style), manually via Q/E with the existing snap-roll animation. An angular-rate cap was explicitly rejected ("space sim" feel — "this isn't the ship, it's the player").
 
 ## Scope
 

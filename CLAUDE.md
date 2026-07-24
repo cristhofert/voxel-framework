@@ -25,29 +25,29 @@ cargo run --example basic_world
 
 ### Plugin composition
 
-`VoxelCorePlugin` (en `src/lib.rs`) es el motor puro — no asume nada del juego:
+`VoxelCorePlugin` (in `src/lib.rs`) is the pure engine — it assumes nothing about the game:
 - `WorldPlugin` + `WorldConfigPlugin` — `ChunkManager`, `ViewerPosition`, streaming, TOML config
-- `RenderPlugin<DefaultVoxel>` — shared `StandardMaterial` para chunks con vertex colors
-- `MeshPlugin<DefaultVoxel>` — generación de mesh async y chunk despawn
-- `OcclusionPlugin<DefaultVoxel>` — oculta chunks rodeados de vecinos sólidos
-- `MiningPlugin` / `PlacementPlugin` — APIs de break/place (estilo pure-function)
-- `LoadingPlugin` — eventos `LoadingProgress` + `WorldReady`
+- `RenderPlugin<DefaultVoxel>` — shared `StandardMaterial` for chunks with vertex colors
+- `MeshPlugin<DefaultVoxel>` — async mesh generation and chunk despawn
+- `OcclusionPlugin<DefaultVoxel>` — hides chunks surrounded by solid neighbors
+- `MiningPlugin` / `PlacementPlugin` — break/place APIs (pure-function style)
+- `LoadingPlugin` — `LoadingProgress` + `WorldReady` events
 
-`VoxelPlugin` es el batteries-included: internamente usa `VoxelCorePlugin` y agrega los plugins game-specific:
+`VoxelPlugin` is the batteries-included plugin: internally it uses `VoxelCorePlugin` and adds the game-specific plugins:
 - `FragmentPlugin`, `SkyboxPlugin`, `SfxPlugin`, `HotbarPlugin`, `UiPlugin`
 
-Los juegos eligen qué necesitan:
+Games pick what they need:
 
 ```rust
-// Motor voxel puro
+// Pure voxel engine
 .add_plugins(VoxelCorePlugin::<DefaultVoxel>::new())
 .add_plugins(GeneratorPlugin::<MyVoxel>::new())
 
-// Todo batteries-included
+// Everything, batteries-included
 .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ```
 
-`GeneratorPlugin<V>` y `PersistencePlugin<V>` son siempre opt-in — requieren que el usuario provea `GeneratorResource<V>`.
+`GeneratorPlugin<V>` and `PersistencePlugin<V>` are always opt-in — they require the user to provide a `GeneratorResource<V>`.
 
 ### Generic voxel type `V: VoxelType`
 
