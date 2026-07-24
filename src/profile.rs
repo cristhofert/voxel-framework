@@ -1,6 +1,6 @@
 //! Internal profiling helpers.
 //!
-//! All instrumentation in this crate goes through the [`profile_span!`] macro
+//! All instrumentation in this crate goes through the `profile_span!` macro
 //! exported from the crate root. With the `tracing` Cargo feature **off** the
 //! macro expands to nothing, so there is zero overhead in default builds.
 //!
@@ -8,9 +8,9 @@
 //!
 //! | Feature | Effect |
 //! |---------|--------|
-//! | (none)  | All [`profile_span!`] invocations compile to nothing. |
-//! | `tracing` | Hot paths emit [`tracing`] spans. Consumers attach their own subscriber. |
-//! | `tracy` | Implies `tracing`, plus a helper [`init_tracy`] that sets up a [`tracing-tracy`] subscriber for live profiling with a Tracy client. |
+//! | (none)  | All `profile_span!` invocations compile to nothing. |
+//! | `tracing` | Hot paths emit `tracing` spans. Consumers attach their own subscriber. |
+//! | `tracy` | Implies `tracing`, plus a helper `init_tracy` that sets up a `tracing-tracy` subscriber for live profiling with a Tracy client. |
 //!
 //! # Usage
 //!

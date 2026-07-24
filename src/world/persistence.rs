@@ -25,7 +25,7 @@ use crate::world::{ChunkManager, ChunkModified};
 /// Resource that holds the base data directory for the active world.
 ///
 /// Set automatically by [`PersistencePlugin::with_world`] and
-/// [`PlayerPlugin::with_world`].  All world-specific files (chunks,
+/// [`PlayerPlugin::with_world`](crate::player::PlayerPlugin::with_world).  All world-specific files (chunks,
 /// `player_data.json`) are stored under this path:
 ///
 /// ```text

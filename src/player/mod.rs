@@ -384,7 +384,7 @@ pub struct Player {
     /// frame rate.
     pub speed: f32,
     /// Mouse sensitivity multiplier (dimensionless). `1.0` matches the default
-    /// "Minecraft-like" feel via the internal [`MOUSE_SCALE`] constant; lower
+    /// "Minecraft-like" feel via the internal `MOUSE_SCALE` constant; lower
     /// values are slower, higher values are faster. The Settings slider exposes
     /// the range `0.10`–`1.00` (10%–100%) to the user.
     pub sensitivity: f32,
@@ -545,7 +545,7 @@ pub struct PlayerConfig {
     pub speed: f32,
     /// Mouse sensitivity multiplier (dimensionless). Copied into
     /// [`Player::sensitivity`] on spawn. `1.0` = default "Minecraft-like" feel;
-    /// see [`MOUSE_SCALE`] for the underlying rad/px rate.
+    /// see `MOUSE_SCALE` for the underlying rad/px rate.
     pub sensitivity: f32,
     /// Roll angular speed in radians per second. Copied into
     /// [`Player::roll_speed`] on spawn.
@@ -1415,7 +1415,7 @@ pub fn player_cursor_system(
 
 /// Applies fall damage when the player lands after a significant drop.
 ///
-/// Reads [`Player::impact_speed`] set by [`player_resolve_collision`] and
+/// Reads `Player::impact_speed` set by [`player_resolve_collision`] and
 /// computes damage as `(impact_speed - fall_safe_speed).max(0) * 2.0`. When
 /// health reaches zero the player is teleported to [`PlayerHealth::spawn_position`]
 /// and a [`PlayerDied`] message is sent.
@@ -1471,7 +1471,7 @@ pub fn player_fall_damage(
 /// Regen and poison are handled exclusively by
 /// [`apply_health_effects`](crate::player::effects::apply_health_effects)
 /// inside [`StatusEffectsPlugin`](crate::player::effects::StatusEffectsPlugin).
-/// This system only reads [`AppliedEffectModifiers`] to apply damage resistance
+/// This system only reads [`AppliedEffectModifiers`](crate::player::effects::AppliedEffectModifiers) to apply damage resistance
 /// to incoming [`PlayerDamaged`] events. `AppliedEffectModifiers` is optional —
 /// the system degrades gracefully when no `StatusEffectsPlugin` is registered.
 ///

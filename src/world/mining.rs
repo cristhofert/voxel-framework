@@ -474,7 +474,7 @@ impl Plugin for MiningPlugin {
 ///
 /// `MiningInputPlugin<V, I>` adds two [`Update`] systems:
 ///
-/// 1. `hotbar_to_tool_system` — reads the active hotbar slot from [`Inventory<I>`]
+/// 1. `hotbar_to_tool_system` — reads the active hotbar slot from [`Inventory<I>`](crate::items::Inventory)
 ///    and updates [`ToolStats`] with the slot's tool level and speed each frame.
 /// 2. `mining_input_system` — raycasts from the active [`Camera3d`] (max
 ///    `6.0` world units). While the **left mouse button** is held and the ray
