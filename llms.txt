@@ -1,0 +1,22 @@
+# voxel-framework
+
+> A reusable Bevy 0.18 library for building voxel games: chunk storage, procedural generation, greedy meshing, world streaming, PBR rendering, mining/placement, and an optional 6DOF player. It is a library, not a game — games depend on it and compose its plugins.
+
+Key mental model: implement (or use the built-in `DefaultVoxel`) the `VoxelType` trait; pick `VoxelCorePlugin` (pure engine) or `VoxelPlugin` (batteries-included); add `GeneratorPlugin` + `PersistencePlugin` opt-in with a `GeneratorResource`. Critical runtime contracts: update `ViewerPosition` every frame or nothing streams; generators run on background threads and must not touch the Bevy `World`; mining/placement are pure functions you call from your own systems.
+
+## Docs
+
+- [AGENTS.md](./AGENTS.md): Fast orientation for agents building a game with the crate — core model, the plugin decision, and the non-obvious runtime gotchas.
+- [README.md](./README.md): Full usage guide — quick start, world config, persistence, LOD, occlusion, mining/placement, player, custom voxel types and generators.
+- [Player capability spec](./openspec/specs/player/spec.md): Authoritative behavior spec for the 6DOF player (look modes, roll, snap).
+
+## Examples
+
+- [examples/basic_world.rs](./examples/basic_world.rs): Minimal working game — asteroid world, texture array, player. Requires the `items` feature.
+- [examples/basic_world.md](./examples/basic_world.md): Line-by-line walkthrough of basic_world.rs.
+- [examples/minetest.rs](./examples/minetest.rs): Advanced example using `items,crafting,mobs`.
+
+## Optional
+
+- [CLAUDE.md](./CLAUDE.md): For agents working ON the crate itself (repo workflow, architecture, SDD) — not for consumers.
+- [CHANGELOG.md](./CHANGELOG.md): Version history and public-API changes.
