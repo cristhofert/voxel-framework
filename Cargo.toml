@@ -7,7 +7,15 @@ description = "A reusable voxel engine framework built on Bevy"
 authors = ["Cristhofer <cristraviesodeleon@gmail.com>"]
 license = "LGPL-3.0-or-later"
 repository = "https://github.com/cristhofert/voxel-framework"
+homepage = "https://github.com/cristhofert/voxel-framework"
+documentation = "https://docs.rs/voxel-framework"
 readme = "README.md"
+keywords = ["voxel", "bevy", "gamedev", "voxel-engine", "procedural"]
+categories = ["game-development", "rendering", "graphics"]
+
+# Build docs.rs pages with every feature so the full public API renders.
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = ["items", "crafting", "mobs"]
