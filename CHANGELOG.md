@@ -11,19 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RollMode::Snap` for animated 90° Q/E roll, configurable duration and easing
   via `PlayerConfig`. Default remains `RollMode::Continuous` (no behavior change
   for existing consumers).
-- `LookMode` (`SixDof` default, `Anchored`) on `PlayerConfig` and `Player`,
-  re-exported from the prelude. `LookMode::Anchored` turns FreeFlight into a
-  Minecraft-creative-style FPS camera: world-space yaw around a switchable
-  world-axis anchor (`Player::anchor_up`, initialized to the nearest signed
-  world axis at spawn), pitch clamped to ±89°, zero horizon roll by
-  construction. Q/E switch the anchor to the next signed world axis
-  (Super Mario Galaxy-style) reusing the snap-roll animation
-  (`snap_roll_duration_secs` / `snap_roll_easing`); `RollMode` is inert while
-  Anchored. Purely additive — the `SixDof` default is byte-compatible for
-  existing consumers. Locked by `openspec/specs/player/spec.md` (v3).
-  `examples/basic_world` now showcases `LookMode::Anchored`.
+- `PlayerMode::FreeFlightAnchored` for Minecraft-creative-style FPS camera
+  movement: world-space yaw around a switchable world-axis anchor
+  (`Player::anchor_up`, initialized to the nearest signed world axis at spawn),
+  pitch clamped to ±89°, and a level horizon. Q/E switch the anchor using the
+  snap-roll animation (`snap_roll_duration_secs` / `snap_roll_easing`).
 
 ### Changed
+- Player movement configuration now uses explicit complete modes:
+  `FreeFlightSixDof { roll_mode }`, `FreeFlightAnchored`, and `Grounded`.
+  The separate `LookMode` and `PlayerConfig::roll_mode` settings were removed;
+  roll behavior is part of the 6DOF mode.
 - `RollMode::Snap` semantics: Q/E now animates to the next **world-aligned**
   up candidate (Starframe-style click-to-orient) instead of a fixed ±90°
   relative to the orientation at press time — correcting the horizon drift

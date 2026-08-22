@@ -1,4 +1,4 @@
-# Player Capability — Look & Roll Modes (v3)
+# Player Capability — Movement, Look & Roll Modes (v4)
 
 This spec defines the player look-and-roll behavior spanning `Player` (`src/player/mod.rs`),
 `PlayerConfig` (`src/player/mod.rs`), and re-exports in `src/prelude.rs`. It locks
@@ -15,8 +15,8 @@ Source of truth: this file. Last updated by archive of `player-anchored-look` on
 
 ### Requirement: Continuous Roll Is Default and Preserved
 
-`Player::default()` MUST set `roll_mode == RollMode::Continuous`. When
-`RollMode::Continuous` is active in `PlayerMode::FreeFlight`, holding `KeyCode::KeyQ`
+`Player::default()` MUST set `mode` to `FreeFlightSixDof { roll_mode: RollMode::Continuous }`. When
+`RollMode::Continuous` is active in `PlayerMode::FreeFlightSixDof`, holding `KeyCode::KeyQ`
 or `KeyCode::KeyE` SHALL rotate the player around local Z at `Player::roll_speed`
 rad/s, scaled by frame delta (frame-rate independent). The continuous-mode code
 path MUST be byte-for-byte unchanged so existing consumers observe no delta.
@@ -24,12 +24,12 @@ path MUST be byte-for-byte unchanged so existing consumers observe no delta.
 #### Scenario: Default mode is continuous
 
 - GIVEN `let p = Player::default();`
-- WHEN `p.roll_mode` is read
-- THEN it MUST equal `RollMode::Continuous`
+- WHEN `p.mode` is read
+- THEN it MUST equal `PlayerMode::FreeFlightSixDof { roll_mode: RollMode::Continuous }`
 
 #### Scenario: Holding Q rolls continuously in free flight
 
-- GIVEN a `Player` in `PlayerMode::FreeFlight` with `roll_speed = 1.5` and `RollMode::Continuous`
+- GIVEN a `Player` in `PlayerMode::FreeFlightSixDof` with `roll_speed = 1.5` and `RollMode::Continuous`
 - WHEN `KeyCode::KeyQ` is held for `0.1s` of accumulated `time.delta_secs()`
 - THEN local Z rotation MUST advance by `0.15` radians (`1.5 * 0.1`)
 - AND no `SnapRollAnim` SHALL be created on `Player::snap_anim`
@@ -88,8 +88,8 @@ two perceptually arbitrary stops — 6 positions where the player expects 4.)
 
 ### Requirement: Snap Mode Is Opt-In via PlayerConfig
 
-Setting `PlayerConfig::roll_mode = RollMode::Snap` before `spawn_player` SHALL make
-the spawned `Player` use snap mode. In `PlayerMode::FreeFlight`, `KeyCode::KeyQ`
+Setting `PlayerConfig::mode = PlayerMode::FreeFlightSixDof { roll_mode: RollMode::Snap }` before `spawn_player` SHALL make
+the spawned `Player` use snap mode. In `PlayerMode::FreeFlightSixDof`, `KeyCode::KeyQ`
 `just_pressed` SHALL start an animation rotating local Z by the signed angle to the
 next world-aligned up candidate counterclockwise around forward; `KeyCode::KeyE`
 `just_pressed` SHALL do the same clockwise (per World-Aligned Lattice Definition).
@@ -175,40 +175,36 @@ behavior at `src/player/mod.rs:585`.
 
 #### Scenario: Grounded continuous ignores Q/E
 
-- GIVEN a `Player` with `mode = PlayerMode::Grounded` and `roll_mode = RollMode::Continuous`
+- GIVEN a `Player` with `mode = PlayerMode::Grounded`
 - WHEN `KeyCode::KeyQ` is held for any duration
 - THEN local Z rotation MUST NOT change
 
 #### Scenario: Grounded snap ignores Q/E
 
-- GIVEN a `Player` with `mode = PlayerMode::Grounded` and `roll_mode = RollMode::Snap`
+- GIVEN a `Player` with `mode = PlayerMode::Grounded`
 - WHEN `KeyCode::KeyQ` `just_pressed` fires
 - THEN `Player::snap_anim` MUST remain `None`
 - AND local Z rotation MUST NOT change
 
-### Requirement: Anchored Look Mode Is Opt-In
+### Requirement: Explicit Free-Flight Modes
 
-A `LookMode` enum (`SixDof` = default, `Anchored`) SHALL exist on `PlayerConfig`
-and `Player`, MUST be copied config → component by `spawn_player`, and MUST be
-re-exported from the prelude. Defaults MUST yield `LookMode::SixDof`, so existing
-consumers are byte-compatible with zero code changes.
+`PlayerMode` SHALL expose complete movement experiences: `FreeFlightSixDof { roll_mode }`, `FreeFlightAnchored`, and `Grounded { gravity, jump_speed }`. A separate look-mode configuration SHALL NOT exist. `FreeFlightSixDof` is the default and owns its Q/E `RollMode`; `FreeFlightAnchored` uses Q/E for anchor switching.
 
-#### Scenario: Default preserves 6DOF behavior
+#### Scenario: Default selects six-degree-of-freedom flight
 
-- GIVEN a game that never sets `look_mode`
-- WHEN a player is spawned and FreeFlight look runs
-- THEN `look_mode == LookMode::SixDof`
-- AND mouse look, roll, and snap roll behave exactly per spec v2
+- GIVEN `PlayerConfig::default()`
+- WHEN a player is spawned
+- THEN its mode MUST be `PlayerMode::FreeFlightSixDof { roll_mode: RollMode::Continuous }`
 
-#### Scenario: Spawn copies non-default look mode
+#### Scenario: Grounded has no look-mode cross configuration
 
-- GIVEN `PlayerConfig { look_mode: LookMode::Anchored, ..default() }`
-- WHEN `spawn_player` produces a `Player`
-- THEN `Player::look_mode == LookMode::Anchored`
+- GIVEN `PlayerConfig { mode: PlayerMode::Grounded { gravity: 20.0, jump_speed: 8.0 }, ..default() }`
+- WHEN a player is spawned
+- THEN no look-mode setting is required or consulted
 
 ### Requirement: Anchored FPS Look in FreeFlight
 
-In `PlayerMode::FreeFlight` with `LookMode::Anchored`: yaw MUST be a world-space
+In `PlayerMode::FreeFlightAnchored`: yaw MUST be a world-space
 rotation around `Player::anchor_up`; pitch MUST be a local-X rotation whose delta
 is clamped so `asin(forward · anchor_up)` stays within [−89°, +89°]; free roll
 MUST NOT occur — screen-up is the projection of `anchor_up` ⊥ forward by
@@ -273,22 +269,20 @@ nearest signed world axis to the spawn up, with deterministic tie-breaking.
 - WHEN `anchor_up` is read after each `finished`
 - THEN it is always exactly one of the 6 signed world axes
 
-### Requirement: RollMode Is Inert in Anchored Look
+### Requirement: Anchored Mode Owns Anchor Switching
 
-When `LookMode::Anchored` is active in FreeFlight, `RollMode` MUST have no
-effect: Q/E mean anchor switch regardless of `roll_mode`; neither continuous roll
-nor roll-only snap SHALL occur. This interaction SHALL be documented in the
-rustdoc of both enums.
+When `PlayerMode::FreeFlightAnchored` is active, Q/E MUST mean anchor switching;
+no roll configuration exists for this mode.
 
 #### Scenario: Continuous roll suppressed in Anchored
 
-- GIVEN Anchored with `roll_mode = RollMode::Continuous`
+- GIVEN a `Player` in `PlayerMode::FreeFlightAnchored`
 - WHEN `KeyQ` is held across frames
 - THEN no continuous roll occurs
 - AND only the initial `just_pressed` starts one anchor switch
 
-#### Scenario: Grounded ignores LookMode
+#### Scenario: Grounded ignores PlayerMode
 
-- GIVEN `mode = PlayerMode::Grounded` with `look_mode = LookMode::Anchored`
+- GIVEN `mode = PlayerMode::Grounded`
 - WHEN look and Q/E input arrive
 - THEN behavior is identical to spec v2 Grounded (Y-anchored look, no roll)

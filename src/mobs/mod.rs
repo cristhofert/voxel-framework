@@ -114,7 +114,7 @@ pub struct MobConfig {
     /// frame and snaps to the ground via capsule collision (Minecraft-style).
     /// `None` disables gravity and ground-snapping entirely so the mob floats
     /// freely in 3D — useful for zero-g / space games where mobs should drift
-    /// alongside a [`crate::player::PlayerMode::FreeFlight`] player.
+    /// alongside a [`crate::player::PlayerMode::FreeFlightSixDof`] player.
     ///
     /// In zero-g mode the mob's `vertical_velocity` field stays at `0.0`;
     /// only horizontal AI velocity drives motion.
@@ -174,24 +174,26 @@ pub fn spawn_mob(
         base_color: config.color,
         ..default()
     });
-    commands.spawn((
-        Mob {
-            health: config.max_health,
-            ai_state: MobAiState::Patrol,
-            velocity: Vec3::ZERO,
-            vertical_velocity: 0.0,
-            on_ground: false,
-            attack_cooldown: 0.0,
-            patrol_timer: 0.0,
-            patrol_dir: Vec3::ZERO,
-            home_position: position,
-        },
-        MobConfigComponent(config),
-        Transform::from_translation(position),
-        Visibility::default(),
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-    )).id()
+    commands
+        .spawn((
+            Mob {
+                health: config.max_health,
+                ai_state: MobAiState::Patrol,
+                velocity: Vec3::ZERO,
+                vertical_velocity: 0.0,
+                on_ground: false,
+                attack_cooldown: 0.0,
+                patrol_timer: 0.0,
+                patrol_dir: Vec3::ZERO,
+                home_position: position,
+            },
+            MobConfigComponent(config),
+            Transform::from_translation(position),
+            Visibility::default(),
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+        ))
+        .id()
 }
 
 /// Internal component that stores the [`MobConfig`] on the entity so systems
@@ -206,7 +208,9 @@ fn mob_ai_system(
     mut mob_q: Query<(&Transform, &mut Mob, &MobConfigComponent)>,
     time: Res<Time>,
 ) {
-    let Ok(player_tf) = player_q.single() else { return };
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
     let player_pos = player_tf.translation;
     let dt = time.delta_secs();
 
@@ -267,7 +271,9 @@ fn mob_attack_system(
     mut mob_q: Query<(&Transform, &mut Mob, &MobConfigComponent)>,
     mut player_health: ResMut<PlayerHealth>,
 ) {
-    let Ok(player_tf) = player_q.single() else { return };
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
     let player_pos = player_tf.translation;
 
     for (mob_tf, mut mob, cfg) in mob_q.iter_mut() {
@@ -307,8 +313,9 @@ fn mob_physics_system<V: VoxelType>(
                 // Capsule collision.
                 let half = MOB_HALF_HEIGHT;
                 let bottom = tf.translation - Vec3::Y * half;
-                let top    = tf.translation + Vec3::Y * half;
-                let push = resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
+                let top = tf.translation + Vec3::Y * half;
+                let push =
+                    resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
                 tf.translation += push;
 
                 // Ground detection.
@@ -335,8 +342,9 @@ fn mob_physics_system<V: VoxelType>(
                 // ground inference.
                 let half = MOB_HALF_HEIGHT;
                 let bottom = tf.translation - Vec3::Y * half;
-                let top    = tf.translation + Vec3::Y * half;
-                let push = resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
+                let top = tf.translation + Vec3::Y * half;
+                let push =
+                    resolve_capsule_collision::<V, ()>(bottom, top, MOB_RADIUS, &manager, &chunks);
                 tf.translation += push;
             }
         }
@@ -350,7 +358,9 @@ fn mob_death_system(
 ) {
     for (entity, tf, mob) in mob_q.iter() {
         if mob.health <= 0.0 {
-            died_writer.write(MobDied { position: tf.translation });
+            died_writer.write(MobDied {
+                position: tf.translation,
+            });
             commands.entity(entity).despawn();
         }
     }
@@ -361,7 +371,9 @@ fn mob_despawn_system(
     player_q: Query<&Transform, With<Player>>,
     mut commands: Commands,
 ) {
-    let Ok(player_tf) = player_q.single() else { return };
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
     let player_pos = player_tf.translation;
     for (entity, tf, cfg) in mob_q.iter() {
         if tf.translation.distance(player_pos) > cfg.0.despawn_distance {
@@ -399,12 +411,16 @@ pub struct MobPlugin<V: VoxelType> {
 impl<V: VoxelType> MobPlugin<V> {
     /// Creates a new [`MobPlugin`] for voxel type `V`.
     pub fn new() -> Self {
-        Self { _m: std::marker::PhantomData }
+        Self {
+            _m: std::marker::PhantomData,
+        }
     }
 }
 
 impl<V: VoxelType> Default for MobPlugin<V> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<V: VoxelType> Plugin for MobPlugin<V> {
@@ -500,7 +516,11 @@ mod tests {
             step(&mut mob, &mut tf, None, 0.1);
         }
 
-        assert!((tf.translation.x - 2.0).abs() < 1e-4, "x drift = {}", tf.translation.x);
+        assert!(
+            (tf.translation.x - 2.0).abs() < 1e-4,
+            "x drift = {}",
+            tf.translation.x
+        );
         assert_eq!(tf.translation.y, 100.0, "y must not change in zero-g");
     }
 
@@ -515,7 +535,14 @@ mod tests {
             step(&mut mob, &mut tf, Some(20.0), 0.1);
         }
 
-        assert!(tf.translation.y < 100.0, "grounded mob must fall (got y={})", tf.translation.y);
-        assert!(mob.vertical_velocity < 0.0, "vertical velocity must accumulate downward");
+        assert!(
+            tf.translation.y < 100.0,
+            "grounded mob must fall (got y={})",
+            tf.translation.y
+        );
+        assert!(
+            mob.vertical_velocity < 0.0,
+            "vertical velocity must accumulate downward"
+        );
     }
 }
