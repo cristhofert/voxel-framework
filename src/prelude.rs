@@ -141,5 +141,11 @@ pub use crate::world::manifest::{VoxelPaletteEntry, WorldManifest, WorldManifest
 // Settings persistence
 pub use crate::settings::PersistedSettings;
 
+// Plugin catalog category marker traits
+pub use crate::plugin_category::{
+    ConveniencePlugin, DefaultImplementationPlugin, EnginePlugin, GameplayPlugin,
+    VoxelFrameworkPlugin, WorldDataPlugin,
+};
+
 // Top-level plugins
 pub use crate::{VoxelCorePlugin, VoxelPlugin};

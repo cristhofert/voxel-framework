@@ -13,7 +13,7 @@
 - Save-on-unload — chunks written to disk when streaming out
 - PBR rendering via Bevy's `StandardMaterial` with vertex colors
 - Binary chunk persistence
-- Dynamic LOD (3 levels based on viewer distance)
+- Dynamic LOD (2 levels based on viewer distance)
 - Auto-save chunk persistence (optional, disk-backed)
 - TOML world configuration via `world.toml`
 - Coordinate utilities for world/chunk/voxel space conversions
@@ -25,23 +25,42 @@
 
 ## Plugin Architecture
 
-The framework offers two top-level plugins so games can include only what they need:
+`voxel-framework` is a flat catalog of composable Bevy plugins grouped by
+responsibility. Games choose the plugins they need from these official
+categories:
 
-| Plugin | What it includes |
+| Category | Meaning | Examples |
+|---|---|---|
+| Engine | Foundation for streamable/renderable voxel worlds | `WorldPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
+| World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
+| Gameplay | Reusable rules and interactions | `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
+| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
+| Convenience | Bundles, input adapters, compatibility, recipes/prototyping helpers | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
+
+The categories are also exposed as marker traits:
+`EnginePlugin`, `WorldDataPlugin`, `GameplayPlugin`,
+`DefaultImplementationPlugin`, and `ConveniencePlugin`.
+
+`VoxelCorePlugin<V>` and `VoxelPlugin<V>` are convenience bundles kept for
+compatibility and quick starts. They are useful, but they are not the primary
+architecture:
+
+| Bundle | What it composes |
 |---|---|
-| `VoxelCorePlugin` | World streaming, render, mesh, occlusion, mining, placement, loading |
-| `VoxelPlugin` | Everything in `VoxelCorePlugin` plus fragments, skybox, audio, UI, and hotbar when the `items` feature is enabled |
+| `VoxelCorePlugin<V>` | Engine foundation plus the lightweight gameplay primitives `MiningPlugin` and `PlacementPlugin` |
+| `VoxelPlugin<V>` | `VoxelCorePlugin<V>` plus selected defaults: fragments, skybox, SFX events, UI, and hotbar when the `items` feature is enabled |
 
-`GeneratorPlugin<V>` and `PersistencePlugin<V>` are always opt-in regardless of which top-level plugin you use.
+`GeneratorPlugin<V>` and `PersistencePlugin<V>` are explicit World Data choices
+regardless of which convenience bundle you use.
 
 ```rust
-// Minimal — pure voxel engine, no game-specific systems
+// Compatibility bundle: historical core runtime
 App::new()
     .add_plugins(DefaultPlugins)
     .add_plugins(VoxelCorePlugin::<DefaultVoxel>::new())
     .add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
 
-// Batteries-included — everything
+// Quick-start bundle for examples/prototypes
 App::new()
     .add_plugins(DefaultPlugins)
     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
@@ -409,9 +428,9 @@ fn check_ready(state: Res<WorldLoadingState>) {
 }
 ```
 
-## Player (6DOF Jetpack)
+## Player
 
-`PlayerPlugin<V>` adds a first-person 6DOF camera with capsule collision, mouse look, WASD movement, and Q/E roll. No gravity — designed for zero-g / astronaut gameplay.
+`PlayerPlugin<V>` adds a first-person player with capsule collision, mouse look, WASD movement, and selectable movement/look modes. The default is zero-g 6DOF flight; anchored free flight and grounded gravity movement are also available through `PlayerConfig::mode`.
 
 ```rust
 use voxel_framework::player::PlayerPlugin;
