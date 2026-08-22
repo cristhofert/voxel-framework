@@ -25,19 +25,33 @@
 //!   thread and produce fully populated [`chunk::Chunk<V>`] values, which are
 //!   then handed back to the main world for meshing and insertion.
 //!
-//! ## Plugin Architecture
+//! ## Plugin Catalog Architecture
 //!
-//! Two plugins cover most use cases:
+//! `voxel-framework` exposes a flat catalog of Bevy plugins grouped by
+//! responsibility. Game crates compose the plugins they need instead of
+//! depending on a hidden monolithic game plugin:
 //!
-//! | Plugin | Purpose |
-//! |--------|---------|
-//! | [`VoxelCorePlugin`] | Engine systems only — chunk management, streaming, meshing, rendering, mining, placement. No game-specific content. |
-//! | [`VoxelPlugin`] | Everything in [`VoxelCorePlugin`] plus game content: skybox, audio, hotbar, UI, fragment entities. |
+//! | Category | Purpose | Examples |
+//! |----------|---------|----------|
+//! | Engine | Foundation for streamable/renderable voxel worlds | [`world::WorldPlugin`], [`mesh::MeshPlugin`], [`render::RenderPlugin`] |
+//! | World Data | Chunk sources, generation, persistence, lifecycle data | [`generator::GeneratorPlugin`], [`world::PersistencePlugin`] |
+//! | Gameplay | Reusable rules and interactions | [`world::mining::MiningPlugin`], [`world::placement::PlacementPlugin`], [`player::PlayerPlugin`] |
+//! | Default Implementation | Replaceable UI/audio/visual defaults | [`ui::UiPlugin`], [`skybox::SkyboxPlugin`], [`audio::DefaultAudioPlugin`] |
+//! | Convenience | Compatibility bundles, input adapters, recipes, prototyping helpers | [`VoxelCorePlugin`], [`VoxelPlugin`] |
+//!
+//! These categories are also represented by marker traits in
+//! [`plugin_category`]. They are documentation and API classification tools;
+//! Bevy composition still uses the normal [`Plugin`] trait.
+//!
+//! [`VoxelCorePlugin`] and [`VoxelPlugin`] remain available as convenience
+//! bundles for compatibility and quick starts, but they are not the primary
+//! architecture. New domain behavior should normally be modeled as an explicit
+//! Engine, World Data, Gameplay, or Default Implementation plugin.
 //!
 //! [`generator::GeneratorPlugin`] is always **opt-in** because it is generic
 //! over `V: VoxelType` and requires the caller to supply a
 //! [`generator::GeneratorResource`] holding a concrete generator. Add it
-//! separately after either core plugin.
+//! separately after either a bundle or explicit engine plugins.
 //!
 //! ## The Chunk Pipeline
 //!
@@ -69,9 +83,9 @@
 //!   entity so Bevy's renderer picks it up on the next frame.
 //!        │
 //!        ▼
-//! OcclusionPlugin — visibility culling
-//!   Each frame, tests chunk entities against the camera frustum and sets
-//!   Visibility accordingly to skip GPU draw calls for off-screen chunks.
+//! OcclusionPlugin — neighbor-solid occlusion
+//!   Reacts to ChunkModified and hides chunks whose six face-adjacent
+//!   neighbours are all loaded and fully solid.
 //! ```
 //!
 //! ## Quick Start
@@ -98,8 +112,8 @@
 //!     .run();
 //! ```
 //!
-//! Use [`VoxelCorePlugin`] instead of [`VoxelPlugin`] when you want the engine
-//! layer without the bundled game content (skybox, audio, hotbar, UI).
+//! Use explicit catalog plugins instead of [`VoxelPlugin`] when you want full
+//! control over engine, world data, gameplay, and presentation defaults.
 //!
 //! ## Extending the Framework
 //!
@@ -130,6 +144,7 @@ pub mod mesh;
 pub mod mobs;
 pub mod noise;
 pub mod player;
+pub mod plugin_category;
 pub mod prelude;
 pub mod profile;
 pub mod render;
@@ -157,13 +172,17 @@ use world::placement::PlacementPlugin;
 use world::occlusion::OcclusionPlugin;
 use world::{WorldConfigPlugin, WorldPlugin};
 
-/// Engine-only plugin with no game-specific content.
+/// Convenience bundle for the historical core voxel runtime.
 ///
-/// `VoxelCorePlugin<V>` wires up the complete voxel engine layer — world
-/// streaming, chunk lifecycle, meshing, PBR rendering, occlusion culling, and
-/// player interactions — without any game-specific subsystems (skybox, audio,
-/// hotbar, UI). It is the right choice when you are building your own game
-/// layer on top of the framework and want full control over what gets added.
+/// `VoxelCorePlugin<V>` wires up the legacy core bundle — world streaming,
+/// chunk lifecycle, meshing, PBR rendering, neighbor-solid occlusion, mining,
+/// placement, and loading state — without the bundled presentation defaults
+/// from [`VoxelPlugin`].
+///
+/// In the plugin catalog taxonomy this type is a [`plugin_category::ConveniencePlugin`]:
+/// it composes stricter Engine and Gameplay plugins for compatibility and quick
+/// starts. New architecture should describe those individual plugins by their
+/// primary categories rather than treating this bundle as the whole model.
 ///
 /// The generic parameter `V` selects the voxel type used by the rendering,
 /// meshing, and occlusion systems. Defaults to [`DefaultVoxel`] for backwards
@@ -178,9 +197,9 @@ use world::{WorldConfigPlugin, WorldPlugin};
 /// | [`WorldConfigPlugin`] | Inserts the [`world::WorldConfig`] resource |
 /// | `RenderPlugin<V>` | Shared chunk PBR material and entity spawn |
 /// | `MeshPlugin<V>` | Greedy mesh generation and chunk despawn |
-/// | `OcclusionPlugin<V>` | Per-chunk frustum culling |
-/// | [`world::mining::MiningPlugin`] | Raycast voxel removal |
-/// | [`world::placement::PlacementPlugin`] | Raycast voxel placement |
+/// | `OcclusionPlugin<V>` | Neighbor-solid chunk occlusion |
+/// | [`world::mining::MiningPlugin`] | Gameplay primitive for voxel removal |
+/// | [`world::placement::PlacementPlugin`] | Gameplay primitive for voxel placement |
 /// | [`world::loading::LoadingPlugin`] | World loading state machine |
 ///
 /// # Not included (opt-in)
@@ -188,7 +207,7 @@ use world::{WorldConfigPlugin, WorldPlugin};
 /// - [`generator::GeneratorPlugin`] — requires the caller to supply a
 ///   [`generator::GeneratorResource`].
 /// - [`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`], [`HotbarPlugin`],
-///   [`UiPlugin`] — use [`VoxelPlugin`] to get all of these at once.
+///   [`UiPlugin`] — presentation/gameplay defaults included by [`VoxelPlugin`].
 ///
 /// # Example
 ///
@@ -211,7 +230,7 @@ use world::{WorldConfigPlugin, WorldPlugin};
 ///
 /// # See also
 ///
-/// - [`VoxelPlugin`] — batteries-included variant that also adds game content.
+/// - [`VoxelPlugin`] — broader quick-start convenience bundle.
 pub struct VoxelCorePlugin<V: VoxelType = DefaultVoxel> {
     _m: std::marker::PhantomData<V>,
 }
@@ -240,12 +259,13 @@ impl<V: VoxelType> Plugin for VoxelCorePlugin<V> {
     }
 }
 
-/// Batteries-included plugin that registers the full voxel framework.
+/// Quick-start convenience bundle for demos and prototypes.
 ///
-/// `VoxelPlugin<V>` is the quickest way to add a complete voxel world to a
-/// Bevy application. It composes [`VoxelCorePlugin<V>`] (engine systems) with
-/// the game-facing subsystems listed below. Prefer [`VoxelCorePlugin`] when
-/// you need fine-grained control over which subsystems are active.
+/// `VoxelPlugin<V>` composes [`VoxelCorePlugin<V>`] with selected presentation
+/// and gameplay defaults. It is useful for examples, demos, and early
+/// prototyping, but it is not the architectural definition of the full
+/// framework. Production games should treat it as a convenience bundle and
+/// switch to explicit catalog plugins when they need finer control.
 ///
 /// The generic parameter `V` selects the voxel type. Defaults to
 /// [`DefaultVoxel`] — `VoxelPlugin::default()` produces an asteroid-palette
@@ -286,7 +306,7 @@ impl<V: VoxelType> Plugin for VoxelCorePlugin<V> {
 ///
 /// # See also
 ///
-/// - [`VoxelCorePlugin`] — engine-only variant without game content.
+/// - [`VoxelCorePlugin`] — narrower compatibility/convenience bundle.
 /// - [`prelude`] — commonly used re-exports for convenience imports.
 pub struct VoxelPlugin<V: VoxelType = DefaultVoxel> {
     _m: std::marker::PhantomData<V>,

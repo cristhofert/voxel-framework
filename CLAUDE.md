@@ -25,25 +25,42 @@ cargo run --example basic_world
 
 ### Plugin composition
 
-`VoxelCorePlugin` (in `src/lib.rs`) is the pure engine — it assumes nothing about the game:
-- `WorldPlugin` + `WorldConfigPlugin` — `ChunkManager`, `ViewerPosition`, streaming, TOML config
-- `RenderPlugin<DefaultVoxel>` — shared `StandardMaterial` for chunks with vertex colors
-- `MeshPlugin<DefaultVoxel>` — async mesh generation and chunk despawn
-- `OcclusionPlugin<DefaultVoxel>` — hides chunks surrounded by solid neighbors
-- `MiningPlugin` / `PlacementPlugin` — break/place APIs (pure-function style)
-- `LoadingPlugin` — `LoadingProgress` + `WorldReady` events
+The public architecture is a **flat Bevy plugin catalog**, not a hierarchy of
+hidden super-plugins. Every plugin has one primary category:
 
-`VoxelPlugin` is the batteries-included plugin: internally it uses `VoxelCorePlugin` and adds the game-specific plugins:
-- `FragmentPlugin`, `SkyboxPlugin`, `SfxPlugin`, `HotbarPlugin`, `UiPlugin`
+| Category | Purpose |
+|---|---|
+| Engine | Foundation for streamable/renderable voxel worlds |
+| World Data | Chunk generation, persistence, sources, manifests |
+| Gameplay | Reusable rules/interactions: mining, placement, player, items, drops, crafting, mobs |
+| Default Implementation | Replaceable UI/audio/visual defaults |
+| Convenience | Compatibility bundles, input adapters, examples/prototyping helpers |
 
-Games pick what they need:
+`src/plugin_category.rs` defines marker traits for those categories. They are
+documentation/API classification markers; Bevy still composes everything
+through the normal `Plugin` trait.
+
+`VoxelCorePlugin` and `VoxelPlugin` are **Convenience** bundles kept for
+compatibility and quick starts:
+
+- `VoxelCorePlugin` composes Engine plugins plus the lightweight Gameplay
+  primitives `MiningPlugin` and `PlacementPlugin`.
+- `VoxelPlugin` composes `VoxelCorePlugin` plus selected defaults:
+  `FragmentPlugin`, `SkyboxPlugin`, `SfxPlugin`, `HotbarPlugin` when `items` is
+  enabled, and `UiPlugin`.
+
+New domain behavior should not start in Convenience. Put it in Engine, World
+Data, Gameplay, or Default Implementation first; use Convenience only to
+compose/adapt existing pieces.
+
+Games pick explicit plugins or use a convenience bundle:
 
 ```rust
-// Pure voxel engine
+// Historical core runtime convenience bundle
 .add_plugins(VoxelCorePlugin::<DefaultVoxel>::new())
 .add_plugins(GeneratorPlugin::<MyVoxel>::new())
 
-// Everything, batteries-included
+// Quick-start convenience bundle for examples/prototypes
 .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 ```
 

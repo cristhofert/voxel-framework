@@ -133,9 +133,8 @@ pub struct ChunkCoordComp(pub IVec3);
 ///
 /// | `ChunkLod` | Distance from viewer | Sampling step | Effective resolution |
 /// |------------|---------------------|---------------|----------------------|
-/// | `0`        | < 50 units          | 1 (every voxel) | Full 16³ |
-/// | `1`        | 50–100 units        | 2 (every 2nd)   | Effective 8³ |
-/// | `2`        | > 100 units         | 4 (every 4th)   | Effective 4³ |
+/// | `0`        | < 200 units         | 1 (every voxel) | Full 16³ |
+/// | `1`        | >= 200 units        | 2 (every 2nd)   | Effective 8³ |
 ///
 /// The value is updated every frame by `lod_update_system` based on the
 /// distance between the chunk center and [`crate::world::systems::ViewerPosition`].
