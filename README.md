@@ -428,8 +428,8 @@ App::new()
 
 | Input | Action |
 |---|---|
-| Mouse | Yaw + pitch (6DOF, no clamp, by default; set `PlayerConfig::look_mode = LookMode::Anchored` for a Minecraft-creative-style FPS camera — yaw orbits a world-axis anchor, pitch clamps at ±89°, and the horizon never rolls) |
-| Q / E | Roll left / right (continuous by default; set `PlayerConfig::roll_mode = RollMode::Snap` to animate to the next **world-aligned** up direction — corrects the horizon drift 6DOF mouse look accumulates; near-axis views give exactly 4 stops, diagonal views up to 6). In `LookMode::Anchored`, Q/E instead switch the anchor to the next signed world axis (±X/±Y/±Z, Super Mario Galaxy-style) with the same snap animation — `RollMode` has no effect there |
+| Mouse | Depends on `PlayerConfig::mode`: `FreeFlightSixDof` gives yaw + pitch with no clamp; `FreeFlightAnchored` gives FPS-style yaw around a world-axis anchor with pitch clamped to ±89° and a level horizon |
+| Q / E | In `FreeFlightSixDof`, roll left/right (continuous or snap, configured in the mode); in `FreeFlightAnchored`, switch the anchor to the next signed world axis (±X/±Y/±Z) with a snap animation; disabled in `Grounded` |
 | W / S | Forward / backward |
 | A / D | Strafe left / right |
 | Space | Move along local up |

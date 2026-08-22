@@ -91,7 +91,7 @@ use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
 use crate::audio::{SfxEvent, SfxRequest};
-use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
+use crate::chunk::{CHUNK_SIZE, Chunk, VOXEL_SIZE};
 use crate::voxel::VoxelType;
 use crate::world::{ChunkManager, ViewerPosition, WorldDataDir, get_voxel_at};
 
@@ -172,7 +172,8 @@ pub struct PlayerCrouching(pub bool);
 ///
 /// # Variants
 ///
-/// - [`PlayerMode::FreeFlight`] — classic 6DOF, no gravity.  Default.
+/// - [`PlayerMode::FreeFlightSixDof`] — classic 6DOF, no gravity.  Default.
+/// - [`PlayerMode::FreeFlightAnchored`] — free flight with a world-axis-anchored horizon.
 /// - [`PlayerMode::Grounded`] — gravity + jump, WASD on the XZ plane, pitch
 ///   clamped to ±89°.  Suitable for Minetest / Minecraft–style games.
 #[derive(Debug, Clone)]
@@ -182,7 +183,13 @@ pub enum PlayerMode {
     /// This is the default mode and matches the original behaviour of the
     /// player controller.  All six movement axes (forward, back, left, right,
     /// up, down) are relative to the camera's current orientation.
-    FreeFlight,
+    FreeFlightSixDof {
+        /// How Q/E roll input is applied.
+        roll_mode: RollMode,
+    },
+    /// Six-degrees-of-freedom flight with an FPS-style, world-axis-anchored
+    /// horizon. Q/E switch the anchor axis instead of rolling.
+    FreeFlightAnchored,
     /// Gravity-based grounded movement.
     ///
     /// - WASD moves on the **world XZ plane** relative to the camera's current
@@ -208,7 +215,9 @@ pub enum PlayerMode {
 
 impl Default for PlayerMode {
     fn default() -> Self {
-        PlayerMode::FreeFlight
+        PlayerMode::FreeFlightSixDof {
+            roll_mode: RollMode::Continuous,
+        }
     }
 }
 
@@ -261,17 +270,18 @@ const MOUSE_SCALE: f32 = 0.003;
 
 // ─── Snap roll types ─────────────────────────────────────────────────────────
 
-/// Selects how Q/E roll input is applied in [`PlayerMode::FreeFlight`].
+/// Selects how Q/E roll input is applied in [`PlayerMode::FreeFlightSixDof`].
 ///
 /// - [`RollMode::Continuous`] — roll while the key is held (original behavior).
 /// - [`RollMode::Snap`] — each key press animates a snap rotation to the
 ///   next world-aligned up candidate (a signed world axis projected onto the
 ///   roll plane).
 ///
-/// Set via [`PlayerConfig::roll_mode`]; defaults to [`RollMode::Continuous`].
+/// Configured by `PlayerMode::FreeFlightSixDof { roll_mode }`; defaults to
+/// [`RollMode::Continuous`].
 ///
-/// **Ignored when [`LookMode::Anchored`] is active**: in Anchored look Q/E
-/// switch the anchor axis instead of rolling, regardless of this setting.
+/// Ignored by [`PlayerMode::FreeFlightAnchored`]: in anchored flight Q/E switch
+/// the anchor axis instead of rolling.
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RollMode {
     /// Roll continuously while Q/E is held (default, original behavior).
@@ -280,27 +290,6 @@ pub enum RollMode {
     /// Snap-rotate to the next world-aligned up candidate per key press with
     /// easing animation (90° steps when forward is on a world axis).
     Snap,
-}
-
-/// How mouse look is interpreted in [`PlayerMode::FreeFlight`].
-///
-/// - [`LookMode::SixDof`] — true 6DOF look: yaw/pitch around local axes, free
-///   roll via Q/E per [`RollMode`]. Default, original behavior.
-/// - [`LookMode::Anchored`] — FPS-style look around a switchable world-axis
-///   anchor ([`Player::anchor_up`]): level horizon by construction, pitch
-///   clamped to ±89°. Q/E animate a switch of the anchor to the next
-///   world-aligned lattice candidate; **[`RollMode`] is IGNORED** — neither
-///   continuous roll nor roll-only snap occurs.
-///
-/// Set via [`PlayerConfig::look_mode`]; defaults to [`LookMode::SixDof`].
-/// [`PlayerMode::Grounded`] is unaffected by this setting.
-#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
-pub enum LookMode {
-    /// True 6DOF mouse look with free roll (default, original behavior).
-    #[default]
-    SixDof,
-    /// FPS look anchored to a signed world axis; Q/E switch the anchor.
-    Anchored,
 }
 
 /// Easing curve used by [`RollMode::Snap`] animations.
@@ -404,14 +393,14 @@ pub struct Player {
     ///
     /// Gravity accumulates here each frame; a jump impulse sets it to
     /// [`PlayerMode::Grounded::jump_speed`]. Reset to `0.0` when the player
-    /// lands (collision pushes upward).  Unused in [`PlayerMode::FreeFlight`].
+    /// lands (collision pushes upward).  Unused in [`PlayerMode::FreeFlightSixDof`].
     pub vertical_velocity: f32,
     /// Whether the player was on solid ground at the end of the last frame.
     ///
     /// Set to `true` by [`player_resolve_collision`] when a voxel collision
     /// produces an upward push; cleared to `false` at the start of each
     /// collision pass.  Gating jumps on this flag prevents infinite jumping.
-    /// Unused in [`PlayerMode::FreeFlight`].
+    /// Unused in [`PlayerMode::FreeFlightSixDof`].
     pub on_ground: bool,
     /// Absolute landing speed (m/s) recorded when the player just touched ground.
     ///
@@ -442,17 +431,15 @@ pub struct Player {
     /// `true` when `Shift` is held in [`PlayerMode::Grounded`] with
     /// [`Player::on_ground`] `true`, and [`Player::crouching`] is `false`.
     /// Crouch takes priority: if both are held this is `false`.
-    /// Always `false` in [`PlayerMode::FreeFlight`].
+    /// Always `false` in [`PlayerMode::FreeFlightSixDof`].
     pub sprinting: bool,
     /// Whether the player is currently crouching.
     ///
     /// `true` when `Ctrl` is held in [`PlayerMode::Grounded`] mode.
     /// Reduces the effective capsule half-height to [`CROUCH_HALF_HEIGHT`]
     /// and movement speed to 40% of base speed.
-    /// Always `false` in [`PlayerMode::FreeFlight`].
+    /// Always `false` in [`PlayerMode::FreeFlightSixDof`].
     pub crouching: bool,
-    /// Roll input mode. See [`RollMode`] for details.
-    pub roll_mode: RollMode,
     /// Duration in seconds for a single snap-roll step animation (one hop to
     /// the next world-aligned up candidate).
     /// Only used when `roll_mode == RollMode::Snap`. **Default: `0.5`.**
@@ -462,14 +449,11 @@ pub struct Player {
     pub snap_roll_easing: SnapRollEasing,
     /// Active snap-roll animation state (runtime-only, not persisted).
     pub(crate) snap_anim: Option<SnapRollAnim>,
-    /// Mouse-look interpretation in [`PlayerMode::FreeFlight`]. See [`LookMode`].
-    /// Copied from [`PlayerConfig::look_mode`] on spawn.
-    pub look_mode: LookMode,
-    /// Current anchor axis for [`LookMode::Anchored`] look: always one of the
+    /// Current anchor axis for [`PlayerMode::FreeFlightAnchored`] look: always one of the
     /// 6 signed world axes. Yaw orbits this axis; pitch is clamped to ±89°
     /// from the plane perpendicular to it. Initialized on spawn to the signed
     /// world axis nearest the spawn orientation's up. Unused in
-    /// [`LookMode::SixDof`].
+    /// [`PlayerMode::FreeFlightSixDof`].
     pub anchor_up: Vec3,
     /// Source signed world axis of an in-flight anchor switch, committed to
     /// [`Player::anchor_up`] when the animation finishes (runtime-only).
@@ -483,7 +467,7 @@ impl Default for Player {
             sensitivity: 1.0,
             roll_speed: 1.5,
             velocity: Vec3::ZERO,
-            mode: PlayerMode::FreeFlight,
+            mode: PlayerMode::default(),
             vertical_velocity: 0.0,
             on_ground: false,
             impact_speed: 0.0,
@@ -492,11 +476,9 @@ impl Default for Player {
             spawn_immune: true,
             sprinting: false,
             crouching: false,
-            roll_mode: RollMode::Continuous,
             snap_roll_duration: 0.5,
             snap_roll_easing: SnapRollEasing::EaseOutCubic,
             snap_anim: None,
-            look_mode: LookMode::SixDof,
             anchor_up: Vec3::Y,
             pending_anchor: None,
         }
@@ -561,12 +543,9 @@ pub struct PlayerConfig {
     pub fov_degrees: f32,
     /// Movement model used by the player systems.
     ///
-    /// Defaults to [`PlayerMode::FreeFlight`] for backwards compatibility.
+    /// Defaults to [`PlayerMode::FreeFlightSixDof`] for backwards compatibility.
     /// Set to [`PlayerMode::Grounded`] for gravity-based gameplay.
     pub mode: PlayerMode,
-    /// Roll input mode. Copied into [`Player::roll_mode`] on spawn.
-    /// Defaults to [`RollMode::Continuous`].
-    pub roll_mode: RollMode,
     /// Duration in seconds for a single snap-roll step animation (one hop to
     /// the next world-aligned up candidate).
     /// Copied into [`Player::snap_roll_duration`] on spawn. **Default: `0.5`.**
@@ -574,9 +553,6 @@ pub struct PlayerConfig {
     /// Easing curve for snap-roll animations.
     /// Copied into [`Player::snap_roll_easing`] on spawn.
     pub snap_roll_easing: SnapRollEasing,
-    /// Mouse-look interpretation in [`PlayerMode::FreeFlight`]. Copied into
-    /// [`Player::look_mode`] on spawn. Defaults to [`LookMode::SixDof`].
-    pub look_mode: LookMode,
 }
 
 impl Default for PlayerConfig {
@@ -588,11 +564,9 @@ impl Default for PlayerConfig {
             roll_speed: 1.5,
             look_at: Vec3::ZERO,
             fov_degrees: 90.0,
-            mode: PlayerMode::FreeFlight,
-            roll_mode: RollMode::Continuous,
+            mode: PlayerMode::default(),
             snap_roll_duration_secs: 0.5,
             snap_roll_easing: SnapRollEasing::EaseOutCubic,
-            look_mode: LookMode::SixDof,
         }
     }
 }
@@ -634,6 +608,7 @@ pub fn spawn_player(
     let spawn = config.spawn_position;
     let look_at = config.look_at;
     let fov = config.fov_degrees.to_radians();
+    let mode = config.mode.clone();
 
     // Build the transform first so the anchor axis can be derived from the
     // actual spawn orientation.
@@ -645,7 +620,7 @@ pub fn spawn_player(
             sensitivity: config.sensitivity,
             roll_speed: config.roll_speed,
             velocity: Vec3::ZERO,
-            mode: config.mode.clone(),
+            mode,
             vertical_velocity: 0.0,
             on_ground: false,
             impact_speed: 0.0,
@@ -654,19 +629,14 @@ pub fn spawn_player(
             spawn_immune: true,
             sprinting: false,
             crouching: false,
-            roll_mode: config.roll_mode,
             snap_roll_duration: config.snap_roll_duration_secs,
             snap_roll_easing: config.snap_roll_easing,
             snap_anim: None,
-            look_mode: config.look_mode,
             anchor_up: nearest_world_axis(*transform.up()),
             pending_anchor: None,
         },
         Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection {
-            fov,
-            ..default()
-        }),
+        Projection::Perspective(PerspectiveProjection { fov, ..default() }),
         transform,
     ));
 }
@@ -688,9 +658,12 @@ pub(crate) fn apply_easing(t: f32, easing: SnapRollEasing) -> f32 {
 /// [`world_lattice_candidates`] and the deterministic tie-break sequence of
 /// [`nearest_world_axis`] (first-in-order wins).
 pub(crate) const AXES: [Vec3; 6] = [
-    Vec3::X, Vec3::NEG_X,
-    Vec3::Y, Vec3::NEG_Y,
-    Vec3::Z, Vec3::NEG_Z,
+    Vec3::X,
+    Vec3::NEG_X,
+    Vec3::Y,
+    Vec3::NEG_Y,
+    Vec3::Z,
+    Vec3::NEG_Z,
 ];
 
 /// Like [`world_lattice_angles`] but returns `(angle δ, SOURCE signed world
@@ -963,127 +936,128 @@ pub fn player_look(
     }
 
     match &player.mode {
-        PlayerMode::FreeFlight => match player.look_mode {
-            LookMode::SixDof => {
-                if delta != Vec2::ZERO {
-                    let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
-                    let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
-                    // Rotate around LOCAL axes — preserves 6DOF orientation.
-                    transform.rotate_local_y(yaw_d);
-                    transform.rotate_local_x(pitch_d);
-                }
+        PlayerMode::FreeFlightSixDof { roll_mode } => {
+            if delta != Vec2::ZERO {
+                let yaw_d = -delta.x * MOUSE_SCALE * player.sensitivity;
+                let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
+                // Rotate around LOCAL axes — preserves 6DOF orientation.
+                transform.rotate_local_y(yaw_d);
+                transform.rotate_local_x(pitch_d);
+            }
 
-                // Q / E roll.
-                match player.roll_mode {
-                    RollMode::Continuous => {
-                        let mut roll = 0.0_f32;
-                        if keys.pressed(KeyCode::KeyQ) { roll += 1.0; }
-                        if keys.pressed(KeyCode::KeyE) { roll -= 1.0; }
-                        if roll != 0.0 {
-                            transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
-                        }
+            // Q / E roll.
+            match roll_mode {
+                RollMode::Continuous => {
+                    let mut roll = 0.0_f32;
+                    if keys.pressed(KeyCode::KeyQ) {
+                        roll += 1.0;
                     }
-                    RollMode::Snap => {
-                        if keys.just_pressed(KeyCode::KeyQ) {
-                            player.snap_anim = Some(start_or_retarget_snap(
-                                player.snap_anim,
-                                *transform.local_z(),
-                                *transform.up(),
-                                1,
-                                player.snap_roll_duration,
-                                player.snap_roll_easing,
-                            ));
-                        }
-                        if keys.just_pressed(KeyCode::KeyE) {
-                            player.snap_anim = Some(start_or_retarget_snap(
-                                player.snap_anim,
-                                *transform.local_z(),
-                                *transform.up(),
-                                -1,
-                                player.snap_roll_duration,
-                                player.snap_roll_easing,
-                            ));
-                        }
-                        if let Some(ref mut anim) = player.snap_anim {
-                            let (delta, finished) = advance_snap(anim, time.delta_secs());
-                            transform.rotate_local_z(delta);
-                            if finished {
-                                player.snap_anim = None;
-                            }
+                    if keys.pressed(KeyCode::KeyE) {
+                        roll -= 1.0;
+                    }
+                    if roll != 0.0 {
+                        transform.rotate_local_z(roll * player.roll_speed * time.delta_secs());
+                    }
+                }
+                RollMode::Snap => {
+                    if keys.just_pressed(KeyCode::KeyQ) {
+                        player.snap_anim = Some(start_or_retarget_snap(
+                            player.snap_anim,
+                            *transform.local_z(),
+                            *transform.up(),
+                            1,
+                            player.snap_roll_duration,
+                            player.snap_roll_easing,
+                        ));
+                    }
+                    if keys.just_pressed(KeyCode::KeyE) {
+                        player.snap_anim = Some(start_or_retarget_snap(
+                            player.snap_anim,
+                            *transform.local_z(),
+                            *transform.up(),
+                            -1,
+                            player.snap_roll_duration,
+                            player.snap_roll_easing,
+                        ));
+                    }
+                    if let Some(ref mut anim) = player.snap_anim {
+                        let (delta, finished) = advance_snap(anim, time.delta_secs());
+                        transform.rotate_local_z(delta);
+                        if finished {
+                            player.snap_anim = None;
                         }
                     }
                 }
             }
-            LookMode::Anchored => {
-                if delta != Vec2::ZERO {
-                    let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
-                    let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
-                    // Yaw: WORLD-space rotation around the anchor axis. While a
-                    // switch animation runs this is still the OLD anchor —
-                    // pending_anchor is only committed on finish.
-                    transform.rotate(Quat::from_axis_angle(player.anchor_up, yaw_d));
-                    // Pitch: local-X rotation, clamped so the elevation against
-                    // the anchor stays within ±89°.
-                    let clamped =
-                        clamp_pitch_delta(*transform.forward(), player.anchor_up, pitch_d);
-                    transform.rotate_local_x(clamped);
-                }
+        }
+        PlayerMode::FreeFlightAnchored => {
+            if delta != Vec2::ZERO {
+                let yaw_d = -delta.x * MOUSE_SCALE * player.sensitivity;
+                let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
+                // Yaw: WORLD-space rotation around the anchor axis. While a
+                // switch animation runs this is still the OLD anchor —
+                // pending_anchor is only committed on finish.
+                transform.rotate(Quat::from_axis_angle(player.anchor_up, yaw_d));
+                // Pitch: local-X rotation, clamped so the elevation against
+                // the anchor stays within ±89°.
+                let clamped = clamp_pitch_delta(*transform.forward(), player.anchor_up, pitch_d);
+                transform.rotate_local_x(clamped);
+            }
 
-                // Q / E: switch the anchor to the next lattice candidate
-                // (RollMode is ignored in Anchored look).
-                if keys.just_pressed(KeyCode::KeyQ) {
-                    let local_z = *transform.local_z();
-                    let up = *transform.up();
-                    let ref_up = snap_reference_up(player.snap_anim, local_z, up, 1);
-                    let (_, axis) =
-                        next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), 1);
-                    player.pending_anchor = Some(axis);
-                    player.snap_anim = Some(start_or_retarget_snap(
-                        player.snap_anim,
-                        local_z,
-                        up,
-                        1,
-                        player.snap_roll_duration,
-                        player.snap_roll_easing,
-                    ));
-                }
-                if keys.just_pressed(KeyCode::KeyE) {
-                    let local_z = *transform.local_z();
-                    let up = *transform.up();
-                    let ref_up = snap_reference_up(player.snap_anim, local_z, up, -1);
-                    let (_, axis) =
-                        next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), -1);
-                    player.pending_anchor = Some(axis);
-                    player.snap_anim = Some(start_or_retarget_snap(
-                        player.snap_anim,
-                        local_z,
-                        up,
-                        -1,
-                        player.snap_roll_duration,
-                        player.snap_roll_easing,
-                    ));
-                }
-                if let Some(ref mut anim) = player.snap_anim {
-                    let (delta, finished) = advance_snap(anim, time.delta_secs());
-                    transform.rotate_local_z(delta);
-                    if finished {
-                        // Commit the pure signed world axis, then renormalize
-                        // the frame: look_to preserves forward and snaps
-                        // screen-up onto the new anchor's projection, absorbing
-                        // any roll accumulated vs. the new axis mid-animation.
-                        if let Some(anchor) = player.pending_anchor.take() {
-                            player.anchor_up = anchor;
-                        }
-                        let fwd = *transform.forward();
-                        transform.look_to(fwd, player.anchor_up);
-                        player.snap_anim = None;
+            // Q / E: switch the anchor to the next lattice candidate
+            // (RollMode is ignored in Anchored look).
+            if keys.just_pressed(KeyCode::KeyQ) {
+                let local_z = *transform.local_z();
+                let up = *transform.up();
+                let ref_up = snap_reference_up(player.snap_anim, local_z, up, 1);
+                let (_, axis) =
+                    next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), 1);
+                player.pending_anchor = Some(axis);
+                player.snap_anim = Some(start_or_retarget_snap(
+                    player.snap_anim,
+                    local_z,
+                    up,
+                    1,
+                    player.snap_roll_duration,
+                    player.snap_roll_easing,
+                ));
+            }
+            if keys.just_pressed(KeyCode::KeyE) {
+                let local_z = *transform.local_z();
+                let up = *transform.up();
+                let ref_up = snap_reference_up(player.snap_anim, local_z, up, -1);
+                let (_, axis) =
+                    next_lattice_candidate(&world_lattice_candidates(local_z, ref_up), -1);
+                player.pending_anchor = Some(axis);
+                player.snap_anim = Some(start_or_retarget_snap(
+                    player.snap_anim,
+                    local_z,
+                    up,
+                    -1,
+                    player.snap_roll_duration,
+                    player.snap_roll_easing,
+                ));
+            }
+            if let Some(ref mut anim) = player.snap_anim {
+                let (delta, finished) = advance_snap(anim, time.delta_secs());
+                transform.rotate_local_z(delta);
+                if finished {
+                    // Commit the pure signed world axis, then renormalize
+                    // the frame: look_to preserves forward and snaps
+                    // screen-up onto the new anchor's projection, absorbing
+                    // any roll accumulated vs. the new axis mid-animation.
+                    if let Some(anchor) = player.pending_anchor.take() {
+                        player.anchor_up = anchor;
                     }
+                    let fwd = *transform.forward();
+                    transform.look_to(fwd, player.anchor_up);
+                    player.snap_anim = None;
                 }
             }
-        },
+        }
         PlayerMode::Grounded { .. } => {
             if delta != Vec2::ZERO {
-                let yaw_d   = -delta.x * MOUSE_SCALE * player.sensitivity;
+                let yaw_d = -delta.x * MOUSE_SCALE * player.sensitivity;
                 let pitch_d = -delta.y * MOUSE_SCALE * player.sensitivity;
 
                 // Yaw: rotate around WORLD Y so the player stays upright.
@@ -1091,12 +1065,8 @@ pub fn player_look(
 
                 // Pitch: decompose current rotation, apply clamped pitch.
                 let (yaw, pitch, _roll) = transform.rotation.to_euler(EulerRot::YXZ);
-                let new_pitch = (pitch + pitch_d).clamp(
-                    -89_f32.to_radians(),
-                     89_f32.to_radians(),
-                );
-                transform.rotation =
-                    Quat::from_euler(EulerRot::YXZ, yaw, new_pitch, 0.0);
+                let new_pitch = (pitch + pitch_d).clamp(-89_f32.to_radians(), 89_f32.to_radians());
+                transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, new_pitch, 0.0);
             }
             // No roll in grounded mode.
         }
@@ -1139,7 +1109,7 @@ pub fn player_move<V: VoxelType>(
     let dt = time.delta_secs();
 
     match player.mode.clone() {
-        PlayerMode::FreeFlight => {
+        PlayerMode::FreeFlightSixDof { .. } | PlayerMode::FreeFlightAnchored => {
             // Sprint/crouch are not applicable in FreeFlight.
             player.sprinting = false;
             player.crouching = false;
@@ -1147,15 +1117,25 @@ pub fn player_move<V: VoxelType>(
 
             // Local-space axes — full 6DOF.
             let forward = transform.rotation * Vec3::NEG_Z;
-            let right   = transform.rotation * Vec3::X;
-            let up      = transform.rotation * Vec3::Y;
+            let right = transform.rotation * Vec3::X;
+            let up = transform.rotation * Vec3::Y;
 
             let mut direction = Vec3::ZERO;
-            if keys.pressed(KeyCode::KeyW)      { direction += forward; }
-            if keys.pressed(KeyCode::KeyS)      { direction -= forward; }
-            if keys.pressed(KeyCode::KeyA)      { direction -= right;   }
-            if keys.pressed(KeyCode::KeyD)      { direction += right;   }
-            if keys.pressed(KeyCode::Space)     { direction += up;      }
+            if keys.pressed(KeyCode::KeyW) {
+                direction += forward;
+            }
+            if keys.pressed(KeyCode::KeyS) {
+                direction -= forward;
+            }
+            if keys.pressed(KeyCode::KeyA) {
+                direction -= right;
+            }
+            if keys.pressed(KeyCode::KeyD) {
+                direction += right;
+            }
+            if keys.pressed(KeyCode::Space) {
+                direction += up;
+            }
             if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
                 direction -= up;
             }
@@ -1166,31 +1146,45 @@ pub fn player_move<V: VoxelType>(
                 Vec3::ZERO
             };
 
-            let factor = if direction != Vec3::ZERO { ACCEL } else { DECEL };
+            let factor = if direction != Vec3::ZERO {
+                ACCEL
+            } else {
+                DECEL
+            };
             player.velocity = player.velocity.lerp(target, (factor * dt).min(1.0));
             transform.translation += player.velocity * dt;
         }
-        PlayerMode::Grounded { gravity, jump_speed } => {
+        PlayerMode::Grounded {
+            gravity,
+            jump_speed,
+        } => {
             // Horizontal movement on XZ using yaw-only orientation.
             let yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
             let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
-            let right   = Vec3::new( yaw.cos(), 0.0, -yaw.sin());
+            let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
 
             let mut h_dir = Vec3::ZERO;
-            if keys.pressed(KeyCode::KeyW) { h_dir += forward; }
-            if keys.pressed(KeyCode::KeyS) { h_dir -= forward; }
-            if keys.pressed(KeyCode::KeyA) { h_dir -= right;   }
-            if keys.pressed(KeyCode::KeyD) { h_dir += right;   }
+            if keys.pressed(KeyCode::KeyW) {
+                h_dir += forward;
+            }
+            if keys.pressed(KeyCode::KeyS) {
+                h_dir -= forward;
+            }
+            if keys.pressed(KeyCode::KeyA) {
+                h_dir -= right;
+            }
+            if keys.pressed(KeyCode::KeyD) {
+                h_dir += right;
+            }
 
             // Sprint (Shift) and crouch (Ctrl) speed multipliers.
             // Crouch takes priority over sprint if both are held.
             // Sprint only activates when on solid ground (no air-sprinting).
-            let crouching = keys.pressed(KeyCode::ControlLeft)
-                || keys.pressed(KeyCode::ControlRight);
+            let crouching =
+                keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
             let sprinting = !crouching
                 && player.on_ground
-                && (keys.pressed(KeyCode::ShiftLeft)
-                    || keys.pressed(KeyCode::ShiftRight));
+                && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
             player.crouching = crouching;
             player.sprinting = sprinting;
             crouch_res.0 = crouching;
@@ -1216,7 +1210,11 @@ pub fn player_move<V: VoxelType>(
             };
 
             let effective_decel = DECEL * modifier.friction_mult;
-            let factor = if h_dir != Vec3::ZERO { ACCEL } else { effective_decel };
+            let factor = if h_dir != Vec3::ZERO {
+                ACCEL
+            } else {
+                effective_decel
+            };
             player.velocity = player.velocity.lerp(h_target, (factor * dt).min(1.0));
 
             // Freeze gravity until the initial chunk load completes so the
@@ -1461,7 +1459,7 @@ pub fn player_fall_damage(
         player.vertical_velocity = 0.0;
         player.velocity = Vec3::ZERO;
         player.world_loaded = false; // re-freeze gravity until feet chunk reloads
-        player.spawn_immune = true;  // grant immunity on the next landing too
+        player.spawn_immune = true; // grant immunity on the next landing too
         died_writer.write(PlayerDied);
     }
 }
@@ -1484,7 +1482,10 @@ pub fn health_system(
 ) {
     // Process every pending damage event, reduced by damage resistance.
     for event in damaged_reader.read() {
-        let resistance = applied.as_ref().map(|a| a.0.damage_resistance).unwrap_or(0.0);
+        let resistance = applied
+            .as_ref()
+            .map(|a| a.0.damage_resistance)
+            .unwrap_or(0.0);
         let actual = event.amount * (1.0 - resistance.clamp(0.0, 1.0));
         health.health = (health.health - actual).max(0.0);
     }
@@ -1511,7 +1512,10 @@ pub fn respawn_system(
     config: Option<Res<PlayerConfig>>,
 ) {
     for _ in died_reader.read() {
-        let spawn = config.as_ref().map(|c| c.spawn_position).unwrap_or(Vec3::ZERO);
+        let spawn = config
+            .as_ref()
+            .map(|c| c.spawn_position)
+            .unwrap_or(Vec3::ZERO);
         viewer.position = spawn;
     }
 }
@@ -1683,9 +1687,7 @@ fn save_spawn_on_exit(
 /// only while in the `Playing` variant. If the state is not present (i.e.
 /// [`crate::ui::PauseMenuPlugin`] was not added), always returns `true` so the
 /// player systems run unconditionally.
-fn gameplay_active(
-    state: Option<Res<bevy::prelude::State<crate::ui::PauseMenuState>>>,
-) -> bool {
+fn gameplay_active(state: Option<Res<bevy::prelude::State<crate::ui::PauseMenuState>>>) -> bool {
     use crate::ui::PauseMenuState;
     state.map_or(true, |s| matches!(s.get(), PauseMenuState::Playing))
 }
@@ -1736,13 +1738,19 @@ pub struct PlayerPlugin<V: VoxelType> {
 impl<V: VoxelType> PlayerPlugin<V> {
     /// Creates a `PlayerPlugin` using the default world name (`"world"`).
     pub fn new() -> Self {
-        Self { _marker: std::marker::PhantomData, world_name: String::new() }
+        Self {
+            _marker: std::marker::PhantomData,
+            world_name: String::new(),
+        }
     }
 
     /// Creates a `PlayerPlugin` that stores player data under
     /// `./worlds/{world_name}/player_data.json`.
     pub fn with_world(world_name: impl Into<String>) -> Self {
-        Self { _marker: std::marker::PhantomData, world_name: world_name.into() }
+        Self {
+            _marker: std::marker::PhantomData,
+            world_name: world_name.into(),
+        }
     }
 }
 
@@ -1754,7 +1762,11 @@ impl<V: VoxelType> Default for PlayerPlugin<V> {
 
 impl<V: VoxelType> Plugin for PlayerPlugin<V> {
     fn build(&self, app: &mut App) {
-        let name = if self.world_name.is_empty() { "world" } else { &self.world_name };
+        let name = if self.world_name.is_empty() {
+            "world"
+        } else {
+            &self.world_name
+        };
         app.insert_resource(WorldDataDir::for_world(name));
         app.init_resource::<PlayerConfig>();
         app.init_resource::<PlayerHealth>();
@@ -1802,25 +1814,44 @@ mod tests {
         let c = PlayerConfig::default();
         assert_eq!(c.speed, 4.0);
         assert_eq!(c.fov_degrees, 90.0);
-        assert_eq!(c.roll_mode, RollMode::Continuous);
+        assert!(matches!(
+            c.mode,
+            PlayerMode::FreeFlightSixDof {
+                roll_mode: RollMode::Continuous
+            }
+        ));
         assert!((c.snap_roll_duration_secs - 0.5).abs() < f32::EPSILON);
         assert_eq!(c.snap_roll_easing, SnapRollEasing::EaseOutCubic);
     }
 
     #[test]
     fn snap_roll_completes_to_90deg() {
-        let mut anim =
-            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim = start_or_retarget_snap(
+            None,
+            Vec3::Z,
+            Vec3::Y,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         let (delta, finished) = advance_snap(&mut anim, 0.18);
         assert!(finished);
-        assert!((delta - std::f32::consts::FRAC_PI_2).abs() < 1e-4,
-            "Expected ~PI/2, got {delta}");
+        assert!(
+            (delta - std::f32::consts::FRAC_PI_2).abs() < 1e-4,
+            "Expected ~PI/2, got {delta}"
+        );
     }
 
     #[test]
     fn snap_roll_easing_monotonic() {
-        let mut anim =
-            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim = start_or_retarget_snap(
+            None,
+            Vec3::Z,
+            Vec3::Y,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         let step = 0.045;
         let mut deltas = Vec::new();
         for _ in 0..4 {
@@ -1829,36 +1860,62 @@ mod tests {
             deltas.push(d);
         }
         let total: f32 = deltas.iter().sum();
-        assert!((total - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
-            "Sum should be ~PI/2, got {total}");
+        assert!(
+            (total - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+            "Sum should be ~PI/2, got {total}"
+        );
         // Ease-out: deltas should be non-increasing (each <= previous)
         for i in 1..deltas.len() {
-            assert!(deltas[i] <= deltas[i - 1] + 1e-6,
-                "Easing not monotonically decreasing: {:?}", deltas);
+            assert!(
+                deltas[i] <= deltas[i - 1] + 1e-6,
+                "Easing not monotonically decreasing: {:?}",
+                deltas
+            );
         }
     }
 
     #[test]
     fn snap_roll_same_direction_extends_target() {
-        let mut anim =
-            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim = start_or_retarget_snap(
+            None,
+            Vec3::Z,
+            Vec3::Y,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         // Advance ~30%
         advance_snap(&mut anim, 0.054);
         let prev_applied = anim.current_applied;
         // The transform has rotated with the animation: up at press time
         // reflects the applied angle (world-aligned start).
         let up = Quat::from_axis_angle(Vec3::Z, anim.current_applied) * Vec3::Y;
-        let new_anim =
-            start_or_retarget_snap(Some(anim), Vec3::Z, up, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let new_anim = start_or_retarget_snap(
+            Some(anim),
+            Vec3::Z,
+            up,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         assert!((new_anim.start_angle - prev_applied).abs() < 1e-6);
-        assert!((new_anim.target_angle - std::f32::consts::PI).abs() < 1e-4,
-            "Expected target ~PI (2x90°), got {}", new_anim.target_angle);
+        assert!(
+            (new_anim.target_angle - std::f32::consts::PI).abs() < 1e-4,
+            "Expected target ~PI (2x90°), got {}",
+            new_anim.target_angle
+        );
     }
 
     #[test]
     fn snap_roll_opposite_direction_reverses_to_lattice() {
-        let mut anim =
-            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let mut anim = start_or_retarget_snap(
+            None,
+            Vec3::Z,
+            Vec3::Y,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         // Advance ~30% (heading to PI/2 ≈ 1.571)
         advance_snap(&mut anim, 0.054);
         let current = anim.current_applied;
@@ -1867,44 +1924,77 @@ mod tests {
         // reflects the applied angle (world-aligned start).
         let up = Quat::from_axis_angle(Vec3::Z, current) * Vec3::Y;
         let new_anim = start_or_retarget_snap(
-            Some(anim), Vec3::Z, up, -1, 0.18, SnapRollEasing::EaseOutCubic);
+            Some(anim),
+            Vec3::Z,
+            up,
+            -1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         // Should target 0.0 (nearest lattice below current in negative direction)
-        assert!(new_anim.target_angle.abs() < 1e-6,
-            "Expected target ~0, got {}", new_anim.target_angle);
+        assert!(
+            new_anim.target_angle.abs() < 1e-6,
+            "Expected target ~0, got {}",
+            new_anim.target_angle
+        );
     }
 
     #[test]
     fn continuous_mode_unchanged() {
         let player = Player::default();
-        assert_eq!(player.roll_mode, RollMode::Continuous);
+        assert!(matches!(
+            player.mode,
+            PlayerMode::FreeFlightSixDof {
+                roll_mode: RollMode::Continuous
+            }
+        ));
         assert!(player.snap_anim.is_none());
     }
 
     #[test]
     fn snap_roll_config_copies_to_player() {
         let config = PlayerConfig {
-            roll_mode: RollMode::Snap,
+            mode: PlayerMode::FreeFlightSixDof {
+                roll_mode: RollMode::Snap,
+            },
             snap_roll_duration_secs: 0.3,
             snap_roll_easing: SnapRollEasing::Smoothstep,
             ..default()
         };
         let player = Player {
-            roll_mode: config.roll_mode,
+            mode: config.mode.clone(),
             snap_roll_duration: config.snap_roll_duration_secs,
             snap_roll_easing: config.snap_roll_easing,
             ..default()
         };
-        assert_eq!(player.roll_mode, RollMode::Snap);
+        assert!(matches!(
+            player.mode,
+            PlayerMode::FreeFlightSixDof {
+                roll_mode: RollMode::Snap
+            }
+        ));
         assert!((player.snap_roll_duration - 0.3).abs() < f32::EPSILON);
         assert_eq!(player.snap_roll_easing, SnapRollEasing::Smoothstep);
     }
 
     #[test]
     fn snap_roll_start_from_none_is_independent() {
-        let anim1 =
-            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
-        let anim2 =
-            start_or_retarget_snap(None, Vec3::Z, Vec3::Y, 1, 0.18, SnapRollEasing::EaseOutCubic);
+        let anim1 = start_or_retarget_snap(
+            None,
+            Vec3::Z,
+            Vec3::Y,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
+        let anim2 = start_or_retarget_snap(
+            None,
+            Vec3::Z,
+            Vec3::Y,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         assert!((anim1.target_angle - anim2.target_angle).abs() < f32::EPSILON);
         assert!((anim1.start_angle - anim2.start_angle).abs() < f32::EPSILON);
     }
@@ -1960,7 +2050,11 @@ mod tests {
         let start = (Vec3::X - Vec3::X.dot(local_z) * local_z).normalize();
 
         let angles = world_lattice_angles(local_z, start);
-        assert_eq!(angles.len(), 6, "All 6 axes survive on a diagonal: {angles:?}");
+        assert_eq!(
+            angles.len(),
+            6,
+            "All 6 axes survive on a diagonal: {angles:?}"
+        );
 
         // Six Q presses walk the hexagon: each step ~60° (never 90°),
         // the total is a full turn, and we return to the start candidate.
@@ -1968,13 +2062,25 @@ mod tests {
         let mut total = 0.0_f32;
         for _ in 0..6 {
             let step = next_lattice_step(&world_lattice_angles(local_z, up), 1);
-            assert!((step - FRAC_PI_3).abs() < 1e-3, "Expected ~60° step, got {step}");
-            assert!((step - FRAC_PI_2).abs() > 0.1, "Step must not be 90°, got {step}");
+            assert!(
+                (step - FRAC_PI_3).abs() < 1e-3,
+                "Expected ~60° step, got {step}"
+            );
+            assert!(
+                (step - FRAC_PI_2).abs() > 0.1,
+                "Step must not be 90°, got {step}"
+            );
             total += step;
             up = Quat::from_axis_angle(local_z, step) * up;
         }
-        assert!((total - TAU).abs() < 1e-3, "Six presses must sum to 2π, got {total}");
-        assert!(up.dot(start) > 0.9999, "Cycle must return to start, got {up:?}");
+        assert!(
+            (total - TAU).abs() < 1e-3,
+            "Six presses must sum to 2π, got {total}"
+        );
+        assert!(
+            up.dot(start) > 0.9999,
+            "Cycle must return to start, got {up:?}"
+        );
     }
 
     #[test]
@@ -1985,14 +2091,26 @@ mod tests {
 
         let q = next_lattice_step(&angles, 1);
         let e = next_lattice_step(&angles, -1);
-        assert!((q - 80_f32.to_radians()).abs() < 1e-4, "Q must travel ≈+80°, got {q}");
-        assert!((e + 10_f32.to_radians()).abs() < 1e-4, "E must travel ≈−10°, got {e}");
+        assert!(
+            (q - 80_f32.to_radians()).abs() < 1e-4,
+            "Q must travel ≈+80°, got {q}"
+        );
+        assert!(
+            (e + 10_f32.to_radians()).abs() < 1e-4,
+            "E must travel ≈−10°, got {e}"
+        );
 
         // Both presses land within ε of a world candidate.
         let up_q = Quat::from_axis_angle(Vec3::Z, q) * up;
         let up_e = Quat::from_axis_angle(Vec3::Z, e) * up;
-        assert!(up_q.dot(Vec3::NEG_X) > 0.9999, "Q must land on −X, got {up_q:?}");
-        assert!(up_e.dot(Vec3::Y) > 0.9999, "E must land on +Y, got {up_e:?}");
+        assert!(
+            up_q.dot(Vec3::NEG_X) > 0.9999,
+            "Q must land on −X, got {up_q:?}"
+        );
+        assert!(
+            up_e.dot(Vec3::Y) > 0.9999,
+            "E must land on +Y, got {up_e:?}"
+        );
     }
 
     #[test]
@@ -2001,10 +2119,14 @@ mod tests {
         let angles = world_lattice_angles(Vec3::Z, Vec3::Y);
         let q = next_lattice_step(&angles, 1);
         let e = next_lattice_step(&angles, -1);
-        assert!((q - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
-            "Q from an exact candidate must be +90°, got {q}");
-        assert!((e + std::f32::consts::FRAC_PI_2).abs() < 1e-5,
-            "E from an exact candidate must be −90°, got {e}");
+        assert!(
+            (q - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "Q from an exact candidate must be +90°, got {q}"
+        );
+        assert!(
+            (e + std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "E from an exact candidate must be −90°, got {e}"
+        );
     }
 
     #[test]
@@ -2019,9 +2141,18 @@ mod tests {
         advance_snap(&mut anim, 0.054);
         let up_mid = Quat::from_axis_angle(local_z, anim.current_applied) * up0;
         let extended = start_or_retarget_snap(
-            Some(anim), local_z, up_mid, 1, 0.18, SnapRollEasing::EaseOutCubic);
+            Some(anim),
+            local_z,
+            up_mid,
+            1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         let up_ext = Quat::from_axis_angle(local_z, extended.target_angle) * up0;
-        assert!(up_ext.dot(Vec3::NEG_Y) > 0.9999, "Extend must land on −Y, got {up_ext:?}");
+        assert!(
+            up_ext.dot(Vec3::NEG_Y) > 0.9999,
+            "Extend must land on −Y, got {up_ext:?}"
+        );
 
         // Opposite press mid-flight reverses to the candidate behind (+Y).
         let mut anim =
@@ -2029,9 +2160,18 @@ mod tests {
         advance_snap(&mut anim, 0.054);
         let up_mid = Quat::from_axis_angle(local_z, anim.current_applied) * up0;
         let reversed = start_or_retarget_snap(
-            Some(anim), local_z, up_mid, -1, 0.18, SnapRollEasing::EaseOutCubic);
+            Some(anim),
+            local_z,
+            up_mid,
+            -1,
+            0.18,
+            SnapRollEasing::EaseOutCubic,
+        );
         let up_rev = Quat::from_axis_angle(local_z, reversed.target_angle) * up0;
-        assert!(up_rev.dot(Vec3::Y) > 0.9999, "Reverse must land on +Y, got {up_rev:?}");
+        assert!(
+            up_rev.dot(Vec3::Y) > 0.9999,
+            "Reverse must land on +Y, got {up_rev:?}"
+        );
     }
 
     #[test]
@@ -2074,12 +2214,22 @@ mod tests {
         // From +80° elevation a +20° request truncates to +9° (lands at +89°).
         let f_hi = Vec3::new(0.0, 80_f32.to_radians().sin(), -(80_f32.to_radians().cos()));
         let d = clamp_pitch_delta(f_hi, Vec3::Y, 20_f32.to_radians());
-        assert!((d - 9_f32.to_radians()).abs() < 1e-4, "expected ~+9°, got {d}");
+        assert!(
+            (d - 9_f32.to_radians()).abs() < 1e-4,
+            "expected ~+9°, got {d}"
+        );
 
         // Mirror: from −80° a −20° request truncates to −9° (lands at −89°).
-        let f_lo = Vec3::new(0.0, -(80_f32.to_radians().sin()), -(80_f32.to_radians().cos()));
+        let f_lo = Vec3::new(
+            0.0,
+            -(80_f32.to_radians().sin()),
+            -(80_f32.to_radians().cos()),
+        );
         let d = clamp_pitch_delta(f_lo, Vec3::Y, -20_f32.to_radians());
-        assert!((d + 9_f32.to_radians()).abs() < 1e-4, "expected ~−9°, got {d}");
+        assert!(
+            (d + 9_f32.to_radians()).abs() < 1e-4,
+            "expected ~−9°, got {d}"
+        );
     }
 
     #[test]
@@ -2087,10 +2237,15 @@ mod tests {
         // Exactly at the +89° pole: outward is blocked, inward passes through.
         let f = Vec3::new(0.0, 89_f32.to_radians().sin(), -(89_f32.to_radians().cos()));
         let outward = clamp_pitch_delta(f, Vec3::Y, 5_f32.to_radians());
-        assert!(outward.abs() < 1e-4, "outward delta at the pole must be ~0, got {outward}");
+        assert!(
+            outward.abs() < 1e-4,
+            "outward delta at the pole must be ~0, got {outward}"
+        );
         let inward = clamp_pitch_delta(f, Vec3::Y, -5_f32.to_radians());
-        assert!((inward + 5_f32.to_radians()).abs() < 1e-4,
-            "inward delta must pass through, got {inward}");
+        assert!(
+            (inward + 5_f32.to_radians()).abs() < 1e-4,
+            "inward delta must pass through, got {inward}"
+        );
     }
 
     // ─── Anchored look: lattice candidates ───────────────────────────────────
@@ -2109,11 +2264,19 @@ mod tests {
                 .unwrap_or_else(|| panic!("axis {axis:?} missing from {cands:?}"))
                 .0
         };
-        assert!((angle_of(Vec3::X) + FRAC_PI_2).abs() < 1e-5, "X must sit at −π/2");
-        assert!((angle_of(Vec3::NEG_X) - FRAC_PI_2).abs() < 1e-5, "−X must sit at +π/2");
+        assert!(
+            (angle_of(Vec3::X) + FRAC_PI_2).abs() < 1e-5,
+            "X must sit at −π/2"
+        );
+        assert!(
+            (angle_of(Vec3::NEG_X) - FRAC_PI_2).abs() < 1e-5,
+            "−X must sit at +π/2"
+        );
         assert!(angle_of(Vec3::Y).abs() < 1e-5, "Y must sit at 0");
-        assert!((angle_of(Vec3::NEG_Y).abs() - std::f32::consts::PI).abs() < 1e-5,
-            "−Y must sit at ±π");
+        assert!(
+            (angle_of(Vec3::NEG_Y).abs() - std::f32::consts::PI).abs() < 1e-5,
+            "−Y must sit at ±π"
+        );
     }
 
     #[test]
@@ -2122,7 +2285,11 @@ mod tests {
         let local_z = -Vec3::ONE.normalize();
         let up = (Vec3::X - Vec3::X.dot(local_z) * local_z).normalize();
         let cands = world_lattice_candidates(local_z, up);
-        assert_eq!(cands.len(), 6, "all 6 axes survive on a diagonal: {cands:?}");
+        assert_eq!(
+            cands.len(),
+            6,
+            "all 6 axes survive on a diagonal: {cands:?}"
+        );
         for axis in AXES {
             assert_eq!(
                 cands.iter().filter(|(_, a)| *a == axis).count(),
@@ -2170,10 +2337,16 @@ mod tests {
         // E travels −90° to the +X candidate.
         let cands = world_lattice_candidates(Vec3::Z, Vec3::Y);
         let (q_angle, q_axis) = next_lattice_candidate(&cands, 1);
-        assert!((q_angle - FRAC_PI_2).abs() < 1e-5, "Q must travel +π/2, got {q_angle}");
+        assert!(
+            (q_angle - FRAC_PI_2).abs() < 1e-5,
+            "Q must travel +π/2, got {q_angle}"
+        );
         assert_eq!(q_axis, Vec3::NEG_X);
         let (e_angle, e_axis) = next_lattice_candidate(&cands, -1);
-        assert!((e_angle + FRAC_PI_2).abs() < 1e-5, "E must travel −π/2, got {e_angle}");
+        assert!(
+            (e_angle + FRAC_PI_2).abs() < 1e-5,
+            "E must travel −π/2, got {e_angle}"
+        );
         assert_eq!(e_axis, Vec3::X);
     }
 
@@ -2204,9 +2377,15 @@ mod tests {
         let ref_up = snap_reference_up(Some(anim), Vec3::Z, up_mid, 1);
         let expected =
             Quat::from_axis_angle(Vec3::Z, anim.target_angle - anim.current_applied) * up_mid;
-        assert!(ref_up.dot(expected) > 0.9999, "ref {ref_up:?} != target up {expected:?}");
+        assert!(
+            ref_up.dot(expected) > 0.9999,
+            "ref {ref_up:?} != target up {expected:?}"
+        );
         // For this fresh anim the in-flight target is the −X candidate.
-        assert!(ref_up.dot(Vec3::NEG_X) > 0.9999, "expected ~−X, got {ref_up:?}");
+        assert!(
+            ref_up.dot(Vec3::NEG_X) > 0.9999,
+            "expected ~−X, got {ref_up:?}"
+        );
     }
 
     #[test]
@@ -2223,7 +2402,10 @@ mod tests {
         assert_eq!(axis, Vec3::NEG_X);
         let anim = start_or_retarget_snap(None, local_z, up0, 1, dur, ease);
         let landed = Quat::from_axis_angle(local_z, anim.target_angle) * up0;
-        assert!(landed.dot(proj(axis)) > 0.9999, "fresh: {landed:?} != proj({axis:?})");
+        assert!(
+            landed.dot(proj(axis)) > 0.9999,
+            "fresh: {landed:?} != proj({axis:?})"
+        );
 
         // Extend (same dir mid-anim): pending axis −Y, one candidate further.
         let mut anim = start_or_retarget_snap(None, local_z, up0, 1, dur, ease);
@@ -2234,7 +2416,10 @@ mod tests {
         assert_eq!(axis, Vec3::NEG_Y);
         let extended = start_or_retarget_snap(Some(anim), local_z, up_mid, 1, dur, ease);
         let landed = Quat::from_axis_angle(local_z, extended.target_angle) * up0;
-        assert!(landed.dot(proj(axis)) > 0.9999, "extend: {landed:?} != proj({axis:?})");
+        assert!(
+            landed.dot(proj(axis)) > 0.9999,
+            "extend: {landed:?} != proj({axis:?})"
+        );
 
         // Reverse (opposite dir mid-anim): pending axis +Y, behind current up.
         let mut anim = start_or_retarget_snap(None, local_z, up0, 1, dur, ease);
@@ -2245,7 +2430,10 @@ mod tests {
         assert_eq!(axis, Vec3::Y);
         let reversed = start_or_retarget_snap(Some(anim), local_z, up_mid, -1, dur, ease);
         let landed = Quat::from_axis_angle(local_z, reversed.target_angle) * up0;
-        assert!(landed.dot(proj(axis)) > 0.9999, "reverse: {landed:?} != proj({axis:?})");
+        assert!(
+            landed.dot(proj(axis)) > 0.9999,
+            "reverse: {landed:?} != proj({axis:?})"
+        );
     }
 
     // ─── Anchored look: spawn anchor and defaults ────────────────────────────
@@ -2268,26 +2456,36 @@ mod tests {
     }
 
     #[test]
-    fn look_mode_defaults_to_sixdof() {
+    fn player_mode_defaults_to_sixdof() {
         let p = Player::default();
-        assert_eq!(p.look_mode, LookMode::SixDof);
+        assert!(matches!(
+            p.mode,
+            PlayerMode::FreeFlightSixDof {
+                roll_mode: RollMode::Continuous
+            }
+        ));
         assert_eq!(p.anchor_up, Vec3::Y);
         assert!(p.pending_anchor.is_none());
-        assert_eq!(PlayerConfig::default().look_mode, LookMode::SixDof);
+        assert!(matches!(
+            PlayerConfig::default().mode,
+            PlayerMode::FreeFlightSixDof {
+                roll_mode: RollMode::Continuous
+            }
+        ));
     }
 
     #[test]
-    fn look_mode_config_copies_to_player() {
+    fn anchored_mode_config_copies_to_player() {
         // Non-default value must propagate config → component.
         let config = PlayerConfig {
-            look_mode: LookMode::Anchored,
+            mode: PlayerMode::FreeFlightAnchored,
             ..default()
         };
         let player = Player {
-            look_mode: config.look_mode,
+            mode: config.mode.clone(),
             ..default()
         };
-        assert_eq!(player.look_mode, LookMode::Anchored);
+        assert!(matches!(player.mode, PlayerMode::FreeFlightAnchored));
     }
 
     // ---- Frame-loop integration tests -------------------------------------
@@ -2299,7 +2497,7 @@ mod tests {
 
     /// Builds a headless app that runs `player_look` over one Anchored player
     /// starting from the identity transform (forward −Z, up +Y, right +X).
-    fn anchored_app(roll_mode: RollMode) -> (App, Entity) {
+    fn anchored_app() -> (App, Entity) {
         let mut app = App::new();
         app.add_message::<MouseMotion>();
         app.insert_resource(ButtonInput::<KeyCode>::default());
@@ -2308,7 +2506,10 @@ mod tests {
         let entity = app
             .world_mut()
             .spawn((
-                Player { look_mode: LookMode::Anchored, roll_mode, ..default() },
+                Player {
+                    mode: PlayerMode::FreeFlightAnchored,
+                    ..default()
+                },
                 Transform::default(),
             ))
             .id();
@@ -2330,8 +2531,12 @@ mod tests {
                 .copied()
                 .filter(|k| !held.contains(k))
                 .collect();
-            for k in stale { input.release(k); }
-            for k in held { input.press(*k); } // re-press keeps held keys out of just_pressed
+            for k in stale {
+                input.release(k);
+            }
+            for k in held {
+                input.press(*k);
+            } // re-press keeps held keys out of just_pressed
         }
         if mouse != Vec2::ZERO {
             app.world_mut().write_message(MouseMotion { delta: mouse });
@@ -2340,32 +2545,43 @@ mod tests {
     }
 
     fn forward_of(app: &App, entity: Entity) -> Vec3 {
-        *app.world().entity(entity).get::<Transform>().unwrap().forward()
+        *app.world()
+            .entity(entity)
+            .get::<Transform>()
+            .unwrap()
+            .forward()
     }
 
     #[test]
     fn anchored_diagonal_input_keeps_horizon_level() {
-        let (mut app, e) = anchored_app(RollMode::Continuous);
+        let (mut app, e) = anchored_app();
         // Strong diagonal input for enough frames to push pitch into the clamp.
         for _ in 0..15 {
             step(&mut app, Vec2::new(60.0, -80.0), &[], 0.016);
             let right = *app.world().entity(e).get::<Transform>().unwrap().right();
             // World-yaw around Y ∘ local-X pitch never rolls the frame: the
             // camera's right vector stays in the horizontal plane.
-            assert!(right.dot(Vec3::Y).abs() < 1e-4,
-                "horizon rolled: right·Y = {}", right.dot(Vec3::Y));
+            assert!(
+                right.dot(Vec3::Y).abs() < 1e-4,
+                "horizon rolled: right·Y = {}",
+                right.dot(Vec3::Y)
+            );
         }
         // The ±89° clamp both engaged (we pushed past 88°) and held (never over).
         let elevation = forward_of(&app, e).dot(Vec3::Y).abs();
-        assert!(elevation >= 88_f32.to_radians().sin(),
-            "clamp never engaged: |forward·Y| = {elevation}");
-        assert!(elevation <= 89_f32.to_radians().sin() + 1e-4,
-            "pitch exceeded ±89°: |forward·Y| = {elevation}");
+        assert!(
+            elevation >= 88_f32.to_radians().sin(),
+            "clamp never engaged: |forward·Y| = {elevation}"
+        );
+        assert!(
+            elevation <= 89_f32.to_radians().sin() + 1e-4,
+            "pitch exceeded ±89°: |forward·Y| = {elevation}"
+        );
     }
 
     #[test]
     fn anchored_switch_yaw_uses_old_anchor() {
-        let (mut app, e) = anchored_app(RollMode::Continuous);
+        let (mut app, e) = anchored_app();
         // Frame 1: tap Q to begin a switch. The default 0.5s duration keeps it
         // running across the next frame (2 × 0.1s = 0.2s < 0.5s).
         step(&mut app, Vec2::ZERO, &[KeyCode::KeyQ], 0.1);
@@ -2380,24 +2596,35 @@ mod tests {
         step(&mut app, Vec2::new(50.0, 0.0), &[], 0.1);
         let p = app.world().entity(e).get::<Player>().unwrap();
         assert!(p.snap_anim.is_some(), "animation should still be running");
-        assert_eq!(p.anchor_up, Vec3::Y, "yaw must not commit the pending anchor");
+        assert_eq!(
+            p.anchor_up,
+            Vec3::Y,
+            "yaw must not commit the pending anchor"
+        );
         let after = forward_of(&app, e);
         // Yaw ran around the OLD anchor (world Y): a rotation about Y preserves
         // forward·Y, and the pending axis is non-Y, so a wrong anchor would
         // tilt forward out of the horizontal plane.
-        assert!(after.dot(Vec3::Y).abs() < 1e-5, "yaw left the Y-plane → wrong anchor");
-        assert!((after - before).length() > 1e-3, "yaw had no visible effect");
+        assert!(
+            after.dot(Vec3::Y).abs() < 1e-5,
+            "yaw left the Y-plane → wrong anchor"
+        );
+        assert!(
+            (after - before).length() > 1e-3,
+            "yaw had no visible effect"
+        );
     }
 
     #[test]
-    fn anchored_ignores_continuous_roll_mode() {
-        let (mut app, e) = anchored_app(RollMode::Continuous);
+    fn anchored_q_switches_anchor() {
+        let (mut app, e) = anchored_app();
         // In SixDof this would roll the frame every tick; in Anchored, Q must
         // instead begin an animated anchor switch — RollMode is inert.
         step(&mut app, Vec2::ZERO, &[KeyCode::KeyQ], 0.1);
         let p = app.world().entity(e).get::<Player>().unwrap();
-        assert_eq!(p.roll_mode, RollMode::Continuous);
-        assert!(p.snap_anim.is_some() && p.pending_anchor.is_some(),
-            "Continuous roll_mode must be inert in Anchored — Q takes the switch path");
+        assert!(
+            p.snap_anim.is_some() && p.pending_anchor.is_some(),
+            "Continuous roll_mode must be inert in Anchored — Q takes the switch path"
+        );
     }
 }

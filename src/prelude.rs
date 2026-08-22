@@ -4,20 +4,23 @@
 //! public framework types without needing individual imports.
 
 // Voxel types
-pub use crate::voxel::{DefaultVoxel, DefaultTerrainVoxel, MovementModifier, VoxelPalette, VoxelType};
+pub use crate::voxel::{
+    DefaultTerrainVoxel, DefaultVoxel, MovementModifier, VoxelPalette, VoxelType,
+};
 
 // Crafting
 #[cfg(feature = "crafting")]
 pub use crate::crafting::{
-    CraftingIngredient, CraftingPlugin, CraftingUiPlugin, CraftingRecipe, CraftingRegistry,
-    CraftingMenuState, CraftingError, can_craft, try_craft,
+    CraftingError, CraftingIngredient, CraftingMenuState, CraftingPlugin, CraftingRecipe,
+    CraftingRegistry, CraftingUiPlugin, can_craft, try_craft,
 };
 
 // Chunk types and constants
 pub use crate::chunk::{
+    CHUNK_SIZE, CHUNK_VOLUME, Chunk, ChunkCoord, ChunkCoordComp, ChunkLod, VOXEL_SIZE,
+    chunk_center, chunk_origin,
     persistence::{chunk_filename, load_chunk, save_chunk},
-    chunk_center, chunk_origin, world_to_chunk_coord, world_to_local_coord,
-    Chunk, ChunkCoord, ChunkCoordComp, ChunkLod, CHUNK_SIZE, CHUNK_VOLUME, VOXEL_SIZE,
+    world_to_chunk_coord, world_to_local_coord,
 };
 
 // Noise
@@ -25,66 +28,62 @@ pub use crate::noise::{fbm, hash3, value_noise};
 
 // Mesh generation
 pub use crate::mesh::{
-    generate_chunk_mesh, generate_chunk_mesh_with_neighbors, ChunkNeighbors,
-    ATTRIBUTE_TEXTURE_LAYER,
+    ATTRIBUTE_TEXTURE_LAYER, ChunkNeighbors, generate_chunk_mesh,
+    generate_chunk_mesh_with_neighbors,
 };
 
 // Generator
-pub use crate::generator::{
-    ChunkGenerator, ChunkTask, GeneratorPlugin, GeneratorResource,
-    MultiGenerator, MultiGeneratorPlugin, RegionGenerator,
-};
 pub use crate::generator::asteroid::{AsteroidConfig, AsteroidGenerator, MineralFrequencies};
 pub use crate::generator::terrain::{TerrainConfig, TerrainGenerator};
+pub use crate::generator::{
+    ChunkGenerator, ChunkTask, GeneratorPlugin, GeneratorResource, MultiGenerator,
+    MultiGeneratorPlugin, RegionGenerator,
+};
 
 // Mesh plugin
 pub use crate::mesh::MeshPlugin;
 
 // World streaming
 pub use crate::world::{
-    ChunkLoadRequest, ChunkManager, ChunkModified, ChunkUnloadRequest,
-    DEFAULT_LOAD_DISTANCE, DEFAULT_UNLOAD_DISTANCE, ViewerPosition, WorldConfig, WorldPlugin,
-    PersistenceConfig, PersistencePlugin,
-    OcclusionPlugin, is_chunk_occluded,
-    DayCycleConfig, DayCyclePlugin, SunLight,
+    ChunkLoadRequest, ChunkManager, ChunkModified, ChunkUnloadRequest, DEFAULT_LOAD_DISTANCE,
+    DEFAULT_UNLOAD_DISTANCE, DayCycleConfig, DayCyclePlugin, OcclusionPlugin, PersistenceConfig,
+    PersistencePlugin, SunLight, ViewerPosition, WorldConfig, WorldPlugin, is_chunk_occluded,
 };
 
 // World interaction API
 pub use crate::world::{
-    get_voxel_at, set_voxel_at, get_state_at, set_state_at,
-    raycast, RaycastHit,
-    sphere_overlaps_voxels, resolve_sphere_collision,
-    capsule_overlaps_voxels, resolve_capsule_collision,
+    RaycastHit, capsule_overlaps_voxels, get_state_at, get_voxel_at, raycast,
+    resolve_capsule_collision, resolve_sphere_collision, set_state_at, set_voxel_at,
+    sphere_overlaps_voxels,
 };
 
 // Chunk block-state helpers
 pub use crate::chunk::face_to_state;
 
 // Mining API
-pub use crate::world::{
-    tick_mining, stop_mining, mining_input_system,
-    MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
-};
 #[cfg(feature = "items")]
 pub use crate::world::MiningInputPlugin;
+pub use crate::world::{
+    MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken, mining_input_system,
+    stop_mining, tick_mining,
+};
 
 // Placement API
 pub use crate::world::{
-    try_place_voxel, tick_placement,
-    PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced,
+    PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced, tick_placement, try_place_voxel,
 };
 #[cfg(feature = "items")]
-pub use crate::world::{placement_input_system, PlacementInputPlugin};
+pub use crate::world::{PlacementInputPlugin, placement_input_system};
 
 // Loading API
 pub use crate::world::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldReady};
 
 // Render
-pub use crate::render::{
-    ChunkMaterial, ChunkMaterialConfig, ChunkMaterialHandle, ChunkRendered,
-    ChunkTextureArray, RenderPlugin,
-};
 pub use crate::render::material::{build_texture_array, chunk_aabb};
+pub use crate::render::{
+    ChunkMaterial, ChunkMaterialConfig, ChunkMaterialHandle, ChunkRendered, ChunkTextureArray,
+    RenderPlugin,
+};
 
 // Fragment system
 pub use crate::fragments::{Fragment, FragmentConfig, FragmentPlugin};
@@ -97,54 +96,47 @@ pub use crate::skybox::{SkyboxConfig, SkyboxMode, SkyboxPlugin, StarfieldConfig}
 
 // Items system
 #[cfg(feature = "items")]
+pub use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
+#[cfg(feature = "items")]
 pub use crate::items::{
-    DefaultItem, DroppedItem, DropsPlugin, DropTable, HotbarPlugin, HotbarSelectionChanged,
+    DefaultItem, DropTable, DroppedItem, DropsPlugin, HotbarPlugin, HotbarSelectionChanged,
     HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp, ItemType, MagnetConfig,
     load_inventory, save_inventory,
 };
-#[cfg(feature = "items")]
-pub use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
 
 // UI system
 pub use crate::ui::{
-    CrosshairConfig, CrosshairPlugin,
-    LoadingScreenConfig, LoadingScreenPlugin,
-    PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSettingsRequest,
-    DebugOverlayPlugin, DebugOverlayState,
+    CrosshairConfig, CrosshairPlugin, DebugOverlayPlugin, DebugOverlayState, LoadingScreenConfig,
+    LoadingScreenPlugin, PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSettingsRequest,
     UiPlugin,
 };
 #[cfg(feature = "items")]
 pub use crate::ui::{
-    HotbarUiConfig, HotbarUiPlugin,
-    PickupNotificationConfig, PickupNotificationPlugin,
+    HotbarUiConfig, HotbarUiPlugin, PickupNotificationConfig, PickupNotificationPlugin,
 };
 
 // Player (6DOF jetpack / grounded)
-pub use crate::player::{
-    Player, PlayerConfig, PlayerMode, PlayerPlugin,
-    PlayerHealth, PlayerDamaged, PlayerDied,
-    PlayerCrouching,
-    RollMode, SnapRollEasing, LookMode,
-    spawn_player, player_look, player_move, player_resolve_collision, player_cursor_system,
-    health_system, respawn_system,
-    PLAYER_RADIUS, PLAYER_HALF_HEIGHT, SPRINT_MULTIPLIER,
-};
-pub use crate::player::persistence::{save_spawn_position, load_spawn_position};
 pub use crate::player::effects::{
-    ActiveEffects, ActiveEffect, AppliedEffectModifiers,
-    EffectModifiers, StatusEffect, StatusEffectsPlugin,
+    ActiveEffect, ActiveEffects, AppliedEffectModifiers, EffectModifiers, StatusEffect,
+    StatusEffectsPlugin,
+};
+pub use crate::player::persistence::{load_spawn_position, save_spawn_position};
+pub use crate::player::{
+    PLAYER_HALF_HEIGHT, PLAYER_RADIUS, Player, PlayerConfig, PlayerCrouching, PlayerDamaged,
+    PlayerDied, PlayerHealth, PlayerMode, PlayerPlugin, RollMode, SPRINT_MULTIPLIER,
+    SnapRollEasing, health_system, player_cursor_system, player_look, player_move,
+    player_resolve_collision, respawn_system, spawn_player,
 };
 
 // Mobs
 #[cfg(feature = "mobs")]
 pub use crate::mobs::{
-    Mob, MobAiState, MobConfig, MobDied, MobPlugin,
-    spawn_mob, MOB_HALF_HEIGHT, MOB_RADIUS,
+    MOB_HALF_HEIGHT, MOB_RADIUS, Mob, MobAiState, MobConfig, MobDied, MobPlugin, spawn_mob,
 };
 
 // World manifest (requires crafting because the manifest writer reads the recipe registry)
 #[cfg(feature = "crafting")]
-pub use crate::world::manifest::{WorldManifest, WorldManifestPlugin, VoxelPaletteEntry};
+pub use crate::world::manifest::{VoxelPaletteEntry, WorldManifest, WorldManifestPlugin};
 
 // Settings persistence
 pub use crate::settings::PersistedSettings;
