@@ -28,7 +28,7 @@
 
 use bevy::math::IVec3;
 
-use crate::chunk::{Chunk, CHUNK_SIZE};
+use crate::chunk::{CHUNK_SIZE, Chunk};
 use crate::noise::{fbm, hash3};
 use crate::voxel::DefaultTerrainVoxel;
 
@@ -145,7 +145,7 @@ impl Biome {
             Biome::Desert => 0.5,
             Biome::Plains => 0.8,
             Biome::Forest => 1.0,
-            Biome::Snow   => 1.4,
+            Biome::Snow => 1.4,
         }
     }
 
@@ -156,7 +156,7 @@ impl Biome {
             Biome::Desert => (DefaultTerrainVoxel::Sand, DefaultTerrainVoxel::Sand),
             Biome::Plains => (DefaultTerrainVoxel::Grass, DefaultTerrainVoxel::Dirt),
             Biome::Forest => (DefaultTerrainVoxel::Grass, DefaultTerrainVoxel::Dirt),
-            Biome::Snow   => (DefaultTerrainVoxel::Snow, DefaultTerrainVoxel::Gravel),
+            Biome::Snow => (DefaultTerrainVoxel::Snow, DefaultTerrainVoxel::Gravel),
         }
     }
 
@@ -167,7 +167,7 @@ impl Biome {
             Biome::Desert => None,
             Biome::Plains => Some(30), // ~1 in 30 columns
             Biome::Forest => Some(8),  // ~1 in 8 columns — dense
-            Biome::Snow   => None,
+            Biome::Snow => None,
         }
     }
 }
@@ -189,7 +189,6 @@ fn sample_biome(wx: f32, wz: f32, seed: u32) -> Biome {
         Biome::Snow
     }
 }
-
 
 /// Places a tree centered at the given local column `(lx, lz)` with the trunk
 /// base at local Y `trunk_base_ly`. Only voxels whose local Y falls within
@@ -224,7 +223,9 @@ fn place_tree(chunk: &mut Chunk<DefaultTerrainVoxel>, lx: usize, lz: usize, trun
                     continue;
                 }
                 let (cx, cy, cz) = (cx as usize, cy as usize, cz as usize);
-                if cx < CHUNK_SIZE && cy < CHUNK_SIZE && cz < CHUNK_SIZE
+                if cx < CHUNK_SIZE
+                    && cy < CHUNK_SIZE
+                    && cz < CHUNK_SIZE
                     && chunk.get(cx, cy, cz) == DefaultTerrainVoxel::Air
                 {
                     chunk.set(cx, cy, cz, DefaultTerrainVoxel::Leaves);
@@ -299,7 +300,6 @@ impl ChunkGenerator<DefaultTerrainVoxel> for TerrainGenerator {
                             Some((surface_world_ly as usize, true));
                     }
                 }
-
             }
         }
 
@@ -318,7 +318,8 @@ impl ChunkGenerator<DefaultTerrainVoxel> for TerrainGenerator {
                             Biome::Plains
                         };
                         if let Some(density) = biome.tree_density() {
-                            let h = ((hash3(wx_i, 0, wz_i, cfg.seed) * 0.5 + 0.5) * 1_000_000.0) as u32;
+                            let h =
+                                ((hash3(wx_i, 0, wz_i, cfg.seed) * 0.5 + 0.5) * 1_000_000.0) as u32;
                             if h % density == 0 {
                                 place_tree(chunk, lx, lz, trunk_base_ly);
                             }
@@ -350,7 +351,9 @@ mod tests {
         tgen.generate(IVec3::new(0, 1, 0), &mut chunk);
         // There should be at least some non-air voxels.
         let solid_count = (0..CHUNK_SIZE)
-            .flat_map(|x| (0..CHUNK_SIZE).flat_map(move |y| (0..CHUNK_SIZE).map(move |z| (x, y, z))))
+            .flat_map(|x| {
+                (0..CHUNK_SIZE).flat_map(move |y| (0..CHUNK_SIZE).map(move |z| (x, y, z)))
+            })
             .filter(|&(x, y, z)| chunk.get(x, y, z).is_solid())
             .count();
         assert!(solid_count > 0, "surface chunk must have solid voxels");

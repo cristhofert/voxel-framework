@@ -49,9 +49,9 @@ use bevy::prelude::*;
 
 use crate::chunk::Chunk;
 #[cfg(feature = "items")]
-use crate::items::{HotbarState, ItemType};
-#[cfg(feature = "items")]
 use crate::items::inventory::{ContainerComponent, PrimaryContainer};
+#[cfg(feature = "items")]
+use crate::items::{HotbarState, ItemType};
 #[cfg(feature = "items")]
 use crate::player::effects::AppliedEffectModifiers;
 use crate::voxel::VoxelType;
@@ -144,7 +144,10 @@ impl ToolStats {
 
 impl Default for ToolStats {
     fn default() -> Self {
-        Self { tool_level: 0, tool_speed: 1.0 }
+        Self {
+            tool_level: 0,
+            tool_speed: 1.0,
+        }
     }
 }
 
@@ -206,8 +209,12 @@ fn break_voxel<V: VoxelType>(
         world_voxel.z.rem_euclid(cs) as usize,
     );
 
-    let Some(entity) = manager.get_entity(chunk_coord) else { return };
-    let Ok(mut chunk) = chunks.get_mut(entity) else { return };
+    let Some(entity) = manager.get_entity(chunk_coord) else {
+        return;
+    };
+    let Ok(mut chunk) = chunks.get_mut(entity) else {
+        return;
+    };
     if !chunk.is_solid_at(local.0, local.1, local.2) {
         return;
     }
@@ -215,7 +222,11 @@ fn break_voxel<V: VoxelType>(
     drop(chunk);
 
     let wp = voxel_world_pos(chunk_coord, local);
-    broken.write(VoxelBroken { chunk_coord, local, world_pos: wp });
+    broken.write(VoxelBroken {
+        chunk_coord,
+        local,
+        world_pos: wp,
+    });
     modified.write(ChunkModified(chunk_coord));
     notify_border_neighbors(chunk_coord, local, modified);
 }
@@ -228,9 +239,7 @@ fn break_voxel<V: VoxelType>(
 /// where the ray actually entered the face (using `hit_point` vs
 /// `voxel_center`).
 fn quad_offsets(face_normal: Vec3, hit_point: Vec3, voxel_center: Vec3) -> [IVec3; 3] {
-    let sign = |coord: f32, center: f32| -> i32 {
-        if coord >= center { 1 } else { -1 }
-    };
+    let sign = |coord: f32, center: f32| -> i32 { if coord >= center { 1 } else { -1 } };
     let (du, dv) = if face_normal.x.abs() > 0.5 {
         // X face → perpendicular plane is YZ
         (
@@ -517,23 +526,27 @@ pub struct MiningInputPlugin<V: VoxelType, I: ItemType> {
 impl<V: VoxelType, I: ItemType> MiningInputPlugin<V, I> {
     /// Creates a new [`MiningInputPlugin`] for voxel type `V` and item type `I`.
     pub fn new() -> Self {
-        Self { _m: std::marker::PhantomData }
+        Self {
+            _m: std::marker::PhantomData,
+        }
     }
 }
 
 #[cfg(feature = "items")]
 impl<V: VoxelType, I: ItemType> Default for MiningInputPlugin<V, I> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(feature = "items")]
 impl<V: VoxelType, I: ItemType> Plugin for MiningInputPlugin<V, I> {
     fn build(&self, app: &mut App) {
         app.init_resource::<ToolStats>();
-        app.add_systems(Update, (
-            hotbar_to_tool_system::<I>,
-            mining_input_system::<V>,
-        ).chain());
+        app.add_systems(
+            Update,
+            (hotbar_to_tool_system::<I>, mining_input_system::<V>).chain(),
+        );
     }
 }
 
@@ -558,7 +571,10 @@ pub fn hotbar_to_tool_system<I: ItemType>(
     if let Some(slot) = container.0.slots.get(active_slot).and_then(|s| s.as_ref()) {
         tool_stats.tool_level = slot.item.tool_level();
         tool_stats.tool_speed = slot.item.tool_speed()
-            * applied.as_deref().map(|a| a.0.mining_speed_mult).unwrap_or(1.0);
+            * applied
+                .as_deref()
+                .map(|a| a.0.mining_speed_mult)
+                .unwrap_or(1.0);
     } else {
         tool_stats.reset();
     }
@@ -591,21 +607,24 @@ pub fn mining_input_system<V: VoxelType>(
         return;
     };
 
-    let origin    = cam_tf.translation();
+    let origin = cam_tf.translation();
     let direction = cam_tf.forward().as_vec3();
 
     // `transmute_lens` gives a read-only view without a second conflicting query.
     let mut lens = chunks.transmute_lens::<&crate::chunk::Chunk<V>>();
-    let Some(hit) = super::raycast::raycast(
-        origin, direction, 6.0, &manager, &lens.query(),
-    ) else {
+    let Some(hit) = super::raycast::raycast(origin, direction, 6.0, &manager, &lens.query()) else {
         stop_mining(&mut state);
         return;
     };
 
     // Check that the active tool can mine this voxel type.
-    let voxel_mining_level = lens.query()
-        .get(manager.get_entity(hit.chunk_coord).unwrap_or(Entity::PLACEHOLDER))
+    let voxel_mining_level = lens
+        .query()
+        .get(
+            manager
+                .get_entity(hit.chunk_coord)
+                .unwrap_or(Entity::PLACEHOLDER),
+        )
         .map(|chunk| {
             let (x, y, z) = hit.local;
             chunk.get(x, y, z).mining_level()
@@ -645,11 +664,17 @@ pub fn mining_input_system<V: VoxelType>(
         let vy = hit.chunk_coord.y * cs + hit.local.1 as i32;
         let vz = hit.chunk_coord.z * cs + hit.local.2 as i32;
         let primary = IVec3::new(vx, vy, vz);
-        let center  = Vec3::new(vx as f32 + 0.5, vy as f32 + 0.5, vz as f32 + 0.5);
-        let hit_pt  = origin + hit.distance * direction.normalize();
+        let center = Vec3::new(vx as f32 + 0.5, vy as f32 + 0.5, vz as f32 + 0.5);
+        let hit_pt = origin + hit.distance * direction.normalize();
 
         for offset in quad_offsets(hit.face_normal, hit_pt, center) {
-            break_voxel(primary + offset, &manager, &mut chunks, &mut broken, &mut modified);
+            break_voxel(
+                primary + offset,
+                &manager,
+                &mut chunks,
+                &mut broken,
+                &mut modified,
+            );
         }
     }
 }
@@ -837,7 +862,10 @@ mod tests {
     #[test]
     fn tool_level_below_mining_level_blocks_progress() {
         let delta = gated_effective_delta(0.1, 1, 1.0, 2);
-        assert!(delta.is_none(), "tool_level=1 must not mine voxel with mining_level=2");
+        assert!(
+            delta.is_none(),
+            "tool_level=1 must not mine voxel with mining_level=2"
+        );
 
         // Confirm `stop_mining` semantics — state resets when gate trips.
         let mut state = MiningState {

@@ -21,12 +21,12 @@
 //! output bit-identical across compiler versions, and makes the algorithm fully
 //! auditable within this codebase.
 
-mod value;
 mod fbm;
+mod value;
 
+/// Fractal Brownian Motion over value noise — see [`fbm::fbm`] for full docs.
+pub use fbm::fbm;
 /// Deterministic integer lattice hash — see [`value::hash3`] for full docs.
 pub use value::hash3;
 /// 3-D value noise with trilinear interpolation — see [`value::value_noise`] for full docs.
 pub use value::value_noise;
-/// Fractal Brownian Motion over value noise — see [`fbm::fbm`] for full docs.
-pub use fbm::fbm;

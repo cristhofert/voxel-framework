@@ -58,8 +58,7 @@ pub use tracing::{Level, instrument, span};
 macro_rules! profile_span {
     ($name:expr) => {
         #[cfg(feature = "tracing")]
-        let _voxel_profile_span =
-            ::tracing::span!(::tracing::Level::INFO, $name).entered();
+        let _voxel_profile_span = ::tracing::span!(::tracing::Level::INFO, $name).entered();
     };
 }
 

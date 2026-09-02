@@ -83,7 +83,9 @@ use bevy::prelude::Resource;
 /// - [`VoxelPalette`] — runtime RGBA overrides keyed by `VoxelType`.
 ///
 /// [`air`]: VoxelType::air
-pub trait VoxelType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash + 'static {
+pub trait VoxelType:
+    Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash + 'static
+{
     /// Human-readable name for this voxel type. Used in UI and world manifest.
     fn name(&self) -> &'static str;
 
@@ -256,7 +258,12 @@ pub struct MovementModifier {
 
 impl Default for MovementModifier {
     fn default() -> Self {
-        Self { speed_mult: 1.0, jump_mult: 1.0, gravity_mult: 1.0, friction_mult: 1.0 }
+        Self {
+            speed_mult: 1.0,
+            jump_mult: 1.0,
+            gravity_mult: 1.0,
+            friction_mult: 1.0,
+        }
     }
 }
 
@@ -320,11 +327,11 @@ impl VoxelType for DefaultVoxel {
     #[inline]
     fn name(&self) -> &'static str {
         match self {
-            DefaultVoxel::Air             => "Air",
-            DefaultVoxel::Rock            => "Rock",
-            DefaultVoxel::IronOre         => "Iron Ore",
-            DefaultVoxel::SiliconCrystal  => "Silicon Crystal",
-            DefaultVoxel::RareMineral     => "Rare Mineral",
+            DefaultVoxel::Air => "Air",
+            DefaultVoxel::Rock => "Rock",
+            DefaultVoxel::IronOre => "Iron Ore",
+            DefaultVoxel::SiliconCrystal => "Silicon Crystal",
+            DefaultVoxel::RareMineral => "Rare Mineral",
         }
     }
 
@@ -370,22 +377,22 @@ impl VoxelType for DefaultVoxel {
     #[inline]
     fn hardness(&self) -> f32 {
         match self {
-            DefaultVoxel::Air            => 0.0,
-            DefaultVoxel::Rock           => 3.0,
-            DefaultVoxel::IronOre        => 4.0,
+            DefaultVoxel::Air => 0.0,
+            DefaultVoxel::Rock => 3.0,
+            DefaultVoxel::IronOre => 4.0,
             DefaultVoxel::SiliconCrystal => 2.5,
-            DefaultVoxel::RareMineral    => 5.0,
+            DefaultVoxel::RareMineral => 5.0,
         }
     }
 
     #[inline]
     fn mining_level(&self) -> u8 {
         match self {
-            DefaultVoxel::Air            => 0,
-            DefaultVoxel::Rock           => 1,
-            DefaultVoxel::IronOre        => 2,
+            DefaultVoxel::Air => 0,
+            DefaultVoxel::Rock => 1,
+            DefaultVoxel::IronOre => 2,
             DefaultVoxel::SiliconCrystal => 1,
-            DefaultVoxel::RareMineral    => 2,
+            DefaultVoxel::RareMineral => 2,
         }
     }
 
@@ -509,22 +516,22 @@ impl VoxelType for DefaultTerrainVoxel {
     #[inline]
     fn name(&self) -> &'static str {
         match self {
-            DefaultTerrainVoxel::Air         => "Air",
-            DefaultTerrainVoxel::Grass       => "Grass",
-            DefaultTerrainVoxel::Dirt        => "Dirt",
-            DefaultTerrainVoxel::Stone       => "Stone",
-            DefaultTerrainVoxel::Sand        => "Sand",
-            DefaultTerrainVoxel::Wood        => "Wood",
-            DefaultTerrainVoxel::Leaves      => "Leaves",
-            DefaultTerrainVoxel::Gravel      => "Gravel",
-            DefaultTerrainVoxel::Snow        => "Snow",
-            DefaultTerrainVoxel::Water       => "Water",
-            DefaultTerrainVoxel::CoalOre     => "Coal Ore",
-            DefaultTerrainVoxel::IronOre     => "Iron Ore",
+            DefaultTerrainVoxel::Air => "Air",
+            DefaultTerrainVoxel::Grass => "Grass",
+            DefaultTerrainVoxel::Dirt => "Dirt",
+            DefaultTerrainVoxel::Stone => "Stone",
+            DefaultTerrainVoxel::Sand => "Sand",
+            DefaultTerrainVoxel::Wood => "Wood",
+            DefaultTerrainVoxel::Leaves => "Leaves",
+            DefaultTerrainVoxel::Gravel => "Gravel",
+            DefaultTerrainVoxel::Snow => "Snow",
+            DefaultTerrainVoxel::Water => "Water",
+            DefaultTerrainVoxel::CoalOre => "Coal Ore",
+            DefaultTerrainVoxel::IronOre => "Iron Ore",
             DefaultTerrainVoxel::Cobblestone => "Cobblestone",
-            DefaultTerrainVoxel::Sandstone   => "Sandstone",
-            DefaultTerrainVoxel::Planks      => "Planks",
-            DefaultTerrainVoxel::Brick       => "Brick",
+            DefaultTerrainVoxel::Sandstone => "Sandstone",
+            DefaultTerrainVoxel::Planks => "Planks",
+            DefaultTerrainVoxel::Brick => "Brick",
         }
     }
 
@@ -536,44 +543,44 @@ impl VoxelType for DefaultTerrainVoxel {
     #[inline]
     fn color(&self) -> [f32; 4] {
         match self {
-            DefaultTerrainVoxel::Air    => [0.0,  0.0,  0.0,  0.0],
-            DefaultTerrainVoxel::Grass  => [0.30, 0.60, 0.20, 1.0],
-            DefaultTerrainVoxel::Dirt   => [0.50, 0.35, 0.20, 1.0],
-            DefaultTerrainVoxel::Stone  => [0.50, 0.50, 0.50, 1.0],
-            DefaultTerrainVoxel::Sand   => [0.85, 0.80, 0.50, 1.0],
-            DefaultTerrainVoxel::Wood   => [0.45, 0.30, 0.18, 1.0],
+            DefaultTerrainVoxel::Air => [0.0, 0.0, 0.0, 0.0],
+            DefaultTerrainVoxel::Grass => [0.30, 0.60, 0.20, 1.0],
+            DefaultTerrainVoxel::Dirt => [0.50, 0.35, 0.20, 1.0],
+            DefaultTerrainVoxel::Stone => [0.50, 0.50, 0.50, 1.0],
+            DefaultTerrainVoxel::Sand => [0.85, 0.80, 0.50, 1.0],
+            DefaultTerrainVoxel::Wood => [0.45, 0.30, 0.18, 1.0],
             DefaultTerrainVoxel::Leaves => [0.20, 0.55, 0.15, 1.0],
             DefaultTerrainVoxel::Gravel => [0.55, 0.52, 0.50, 1.0],
-            DefaultTerrainVoxel::Snow   => [0.92, 0.95, 0.98, 1.0],
-            DefaultTerrainVoxel::Water       => [0.15, 0.40, 0.75, 0.7],
-            DefaultTerrainVoxel::CoalOre     => [0.30, 0.30, 0.30, 1.0],
-            DefaultTerrainVoxel::IronOre     => [0.60, 0.45, 0.35, 1.0],
+            DefaultTerrainVoxel::Snow => [0.92, 0.95, 0.98, 1.0],
+            DefaultTerrainVoxel::Water => [0.15, 0.40, 0.75, 0.7],
+            DefaultTerrainVoxel::CoalOre => [0.30, 0.30, 0.30, 1.0],
+            DefaultTerrainVoxel::IronOre => [0.60, 0.45, 0.35, 1.0],
             DefaultTerrainVoxel::Cobblestone => [0.40, 0.40, 0.40, 1.0],
-            DefaultTerrainVoxel::Sandstone   => [0.80, 0.72, 0.45, 1.0],
-            DefaultTerrainVoxel::Planks      => [0.65, 0.48, 0.28, 1.0],
-            DefaultTerrainVoxel::Brick       => [0.65, 0.28, 0.20, 1.0],
+            DefaultTerrainVoxel::Sandstone => [0.80, 0.72, 0.45, 1.0],
+            DefaultTerrainVoxel::Planks => [0.65, 0.48, 0.28, 1.0],
+            DefaultTerrainVoxel::Brick => [0.65, 0.28, 0.20, 1.0],
         }
     }
 
     #[inline]
     fn to_byte(&self) -> u8 {
         match self {
-            DefaultTerrainVoxel::Air    => 0,
-            DefaultTerrainVoxel::Grass  => 1,
-            DefaultTerrainVoxel::Dirt   => 2,
-            DefaultTerrainVoxel::Stone  => 3,
-            DefaultTerrainVoxel::Sand   => 4,
-            DefaultTerrainVoxel::Wood   => 5,
+            DefaultTerrainVoxel::Air => 0,
+            DefaultTerrainVoxel::Grass => 1,
+            DefaultTerrainVoxel::Dirt => 2,
+            DefaultTerrainVoxel::Stone => 3,
+            DefaultTerrainVoxel::Sand => 4,
+            DefaultTerrainVoxel::Wood => 5,
             DefaultTerrainVoxel::Leaves => 6,
             DefaultTerrainVoxel::Gravel => 7,
-            DefaultTerrainVoxel::Snow   => 8,
-            DefaultTerrainVoxel::Water       => 9,
-            DefaultTerrainVoxel::CoalOre     => 10,
-            DefaultTerrainVoxel::IronOre     => 11,
+            DefaultTerrainVoxel::Snow => 8,
+            DefaultTerrainVoxel::Water => 9,
+            DefaultTerrainVoxel::CoalOre => 10,
+            DefaultTerrainVoxel::IronOre => 11,
             DefaultTerrainVoxel::Cobblestone => 12,
-            DefaultTerrainVoxel::Sandstone   => 13,
-            DefaultTerrainVoxel::Planks      => 14,
-            DefaultTerrainVoxel::Brick       => 15,
+            DefaultTerrainVoxel::Sandstone => 13,
+            DefaultTerrainVoxel::Planks => 14,
+            DefaultTerrainVoxel::Brick => 15,
         }
     }
 
@@ -588,49 +595,49 @@ impl VoxelType for DefaultTerrainVoxel {
             6 => DefaultTerrainVoxel::Leaves,
             7 => DefaultTerrainVoxel::Gravel,
             8 => DefaultTerrainVoxel::Snow,
-            9  => DefaultTerrainVoxel::Water,
+            9 => DefaultTerrainVoxel::Water,
             10 => DefaultTerrainVoxel::CoalOre,
             11 => DefaultTerrainVoxel::IronOre,
             12 => DefaultTerrainVoxel::Cobblestone,
             13 => DefaultTerrainVoxel::Sandstone,
             14 => DefaultTerrainVoxel::Planks,
             15 => DefaultTerrainVoxel::Brick,
-            _  => DefaultTerrainVoxel::Air,
+            _ => DefaultTerrainVoxel::Air,
         }
     }
 
     #[inline]
     fn hardness(&self) -> f32 {
         match self {
-            DefaultTerrainVoxel::Air    => 0.0, // unbreakable
-            DefaultTerrainVoxel::Grass  => 0.5,
-            DefaultTerrainVoxel::Dirt   => 0.5,
-            DefaultTerrainVoxel::Stone  => 3.0,
-            DefaultTerrainVoxel::Sand   => 0.5,
-            DefaultTerrainVoxel::Wood   => 1.5,
+            DefaultTerrainVoxel::Air => 0.0, // unbreakable
+            DefaultTerrainVoxel::Grass => 0.5,
+            DefaultTerrainVoxel::Dirt => 0.5,
+            DefaultTerrainVoxel::Stone => 3.0,
+            DefaultTerrainVoxel::Sand => 0.5,
+            DefaultTerrainVoxel::Wood => 1.5,
             DefaultTerrainVoxel::Leaves => 0.3,
             DefaultTerrainVoxel::Gravel => 0.75,
-            DefaultTerrainVoxel::Snow   => 0.3,
-            DefaultTerrainVoxel::Water       => 0.0, // unbreakable
-            DefaultTerrainVoxel::CoalOre     => 3.0,
-            DefaultTerrainVoxel::IronOre     => 4.0,
+            DefaultTerrainVoxel::Snow => 0.3,
+            DefaultTerrainVoxel::Water => 0.0, // unbreakable
+            DefaultTerrainVoxel::CoalOre => 3.0,
+            DefaultTerrainVoxel::IronOre => 4.0,
             DefaultTerrainVoxel::Cobblestone => 2.5,
-            DefaultTerrainVoxel::Sandstone   => 1.5,
-            DefaultTerrainVoxel::Planks      => 1.0,
-            DefaultTerrainVoxel::Brick       => 2.0,
+            DefaultTerrainVoxel::Sandstone => 1.5,
+            DefaultTerrainVoxel::Planks => 1.0,
+            DefaultTerrainVoxel::Brick => 2.0,
         }
     }
 
     #[inline]
     fn mining_level(&self) -> u8 {
         match self {
-            DefaultTerrainVoxel::Stone       => 1,
-            DefaultTerrainVoxel::Gravel      => 1,
-            DefaultTerrainVoxel::CoalOre     => 1,
-            DefaultTerrainVoxel::IronOre     => 2,
+            DefaultTerrainVoxel::Stone => 1,
+            DefaultTerrainVoxel::Gravel => 1,
+            DefaultTerrainVoxel::CoalOre => 1,
+            DefaultTerrainVoxel::IronOre => 2,
             DefaultTerrainVoxel::Cobblestone => 1,
-            DefaultTerrainVoxel::Sandstone   => 1,
-            DefaultTerrainVoxel::Brick       => 1,
+            DefaultTerrainVoxel::Sandstone => 1,
+            DefaultTerrainVoxel::Brick => 1,
             _ => 0,
         }
     }
@@ -638,22 +645,22 @@ impl VoxelType for DefaultTerrainVoxel {
     #[inline]
     fn texture_layer(&self, _face_index: usize) -> u32 {
         match self {
-            DefaultTerrainVoxel::Air         => 0,
-            DefaultTerrainVoxel::Grass       => 1,
-            DefaultTerrainVoxel::Dirt        => 2,
-            DefaultTerrainVoxel::Stone       => 3,
-            DefaultTerrainVoxel::Sand        => 4,
-            DefaultTerrainVoxel::Wood        => 5,
-            DefaultTerrainVoxel::Leaves      => 6,
-            DefaultTerrainVoxel::Gravel      => 7,
-            DefaultTerrainVoxel::Snow        => 8,
-            DefaultTerrainVoxel::Water       => 9,
-            DefaultTerrainVoxel::CoalOre     => 10,
-            DefaultTerrainVoxel::IronOre     => 11,
+            DefaultTerrainVoxel::Air => 0,
+            DefaultTerrainVoxel::Grass => 1,
+            DefaultTerrainVoxel::Dirt => 2,
+            DefaultTerrainVoxel::Stone => 3,
+            DefaultTerrainVoxel::Sand => 4,
+            DefaultTerrainVoxel::Wood => 5,
+            DefaultTerrainVoxel::Leaves => 6,
+            DefaultTerrainVoxel::Gravel => 7,
+            DefaultTerrainVoxel::Snow => 8,
+            DefaultTerrainVoxel::Water => 9,
+            DefaultTerrainVoxel::CoalOre => 10,
+            DefaultTerrainVoxel::IronOre => 11,
             DefaultTerrainVoxel::Cobblestone => 12,
-            DefaultTerrainVoxel::Sandstone   => 13,
-            DefaultTerrainVoxel::Planks      => 14,
-            DefaultTerrainVoxel::Brick       => 15,
+            DefaultTerrainVoxel::Sandstone => 13,
+            DefaultTerrainVoxel::Planks => 14,
+            DefaultTerrainVoxel::Brick => 15,
         }
     }
 
@@ -736,7 +743,10 @@ impl<V: VoxelType> VoxelPalette<V> {
     /// with each channel in `[0.0, 1.0]`.
     #[inline]
     pub fn color_of(&self, voxel: &V) -> [f32; 4] {
-        self.colors.get(voxel).copied().unwrap_or_else(|| voxel.color())
+        self.colors
+            .get(voxel)
+            .copied()
+            .unwrap_or_else(|| voxel.color())
     }
 }
 

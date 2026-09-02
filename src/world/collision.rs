@@ -579,9 +579,8 @@ mod tests {
         // Capsule near the corner of the voxel — unambiguous minimum-exit direction.
         let bottom = Vec3::new(0.1, 0.1, 0.1);
         let top = Vec3::new(0.1, 1.9, 0.1);
-        let resolved_bottom = resolve_capsule_collision::<DefaultVoxel, ()>(
-            bottom, top, 0.4, &manager, &chunks,
-        );
+        let resolved_bottom =
+            resolve_capsule_collision::<DefaultVoxel, ()>(bottom, top, 0.4, &manager, &chunks);
         let resolved_top = resolved_bottom + (top - bottom);
 
         let still_overlapping = capsule_overlaps_voxels::<DefaultVoxel, ()>(

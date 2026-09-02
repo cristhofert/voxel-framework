@@ -15,15 +15,15 @@ use std::path::PathBuf;
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
-use crate::chunk::{Chunk, ChunkCoord, ChunkCoordComp, ChunkLod, CHUNK_SIZE};
 use crate::chunk::persistence as chunk_persistence;
+use crate::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkCoordComp, ChunkLod};
 use crate::render::material::{ChunkMaterial, ChunkMaterialHandle, ChunkRendered};
 use crate::voxel::VoxelType;
-use crate::world::{ChunkManager, ChunkModified, ChunkUnloadRequest, ViewerPosition};
 use crate::world::persistence::PersistenceConfig;
+use crate::world::{ChunkManager, ChunkModified, ChunkUnloadRequest, ViewerPosition};
 
-use super::{ChunkNeighbors, generate_chunk_mesh_with_neighbors};
 use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
+use super::{ChunkNeighbors, generate_chunk_mesh_with_neighbors};
 
 // ─── EmptyMesh ────────────────────────────────────────────────────────────────
 
@@ -81,7 +81,12 @@ pub fn chunk_mesh_system<V: VoxelType>(
     chunk_material: Res<ChunkMaterialHandle>,
     viewer: Res<ViewerPosition>,
     mut meshes: ResMut<Assets<Mesh>>,
-    chunks: Query<(&Chunk<V>, Option<&Mesh3d>, Option<&ChunkLod>, Has<EmptyMesh>)>,
+    chunks: Query<(
+        &Chunk<V>,
+        Option<&Mesh3d>,
+        Option<&ChunkLod>,
+        Has<EmptyMesh>,
+    )>,
 ) {
     // Determine which material path is active.
     // Custom (texture array) takes priority; fall back to StandardMaterial.
@@ -358,7 +363,8 @@ pub fn lod_update_system<V: VoxelType>(
             transform.translation + Vec3::splat(chunk_size_f * 0.5)
         };
 
-        let new_lod = compute_lod_with_hysteresis(chunk_center, viewer.position, current_lod.0, 5.0);
+        let new_lod =
+            compute_lod_with_hysteresis(chunk_center, viewer.position, current_lod.0, 5.0);
 
         if new_lod != current_lod.0 {
             // Find the coord for this entity so we can emit ChunkModified(coord).

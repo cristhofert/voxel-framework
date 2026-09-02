@@ -156,7 +156,6 @@ pub mod world;
 
 use bevy::prelude::*;
 
-use voxel::VoxelType;
 use audio::SfxPlugin;
 use fragments::FragmentPlugin;
 #[cfg(feature = "items")]
@@ -166,10 +165,11 @@ use render::RenderPlugin;
 use skybox::SkyboxPlugin;
 use ui::UiPlugin;
 use voxel::DefaultVoxel;
+use voxel::VoxelType;
 use world::loading::LoadingPlugin;
 use world::mining::MiningPlugin;
-use world::placement::PlacementPlugin;
 use world::occlusion::OcclusionPlugin;
+use world::placement::PlacementPlugin;
 use world::{WorldConfigPlugin, WorldPlugin};
 
 /// Convenience bundle for the historical core voxel runtime.
@@ -238,12 +238,16 @@ pub struct VoxelCorePlugin<V: VoxelType = DefaultVoxel> {
 impl<V: VoxelType> VoxelCorePlugin<V> {
     /// Creates a new [`VoxelCorePlugin`] for voxel type `V`.
     pub fn new() -> Self {
-        Self { _m: std::marker::PhantomData }
+        Self {
+            _m: std::marker::PhantomData,
+        }
     }
 }
 
 impl<V: VoxelType> Default for VoxelCorePlugin<V> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<V: VoxelType> Plugin for VoxelCorePlugin<V> {
@@ -315,12 +319,16 @@ pub struct VoxelPlugin<V: VoxelType = DefaultVoxel> {
 impl<V: VoxelType> VoxelPlugin<V> {
     /// Creates a new [`VoxelPlugin`] for voxel type `V`.
     pub fn new() -> Self {
-        Self { _m: std::marker::PhantomData }
+        Self {
+            _m: std::marker::PhantomData,
+        }
     }
 }
 
 impl<V: VoxelType> Default for VoxelPlugin<V> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<V: VoxelType> Plugin for VoxelPlugin<V> {

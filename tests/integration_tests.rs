@@ -2,17 +2,28 @@
 //!
 //! Tests pure logic without spinning up a Bevy App (no display required).
 
-use bevy::math::Vec3;
-use bevy::mesh::{Indices, Mesh};
-use bevy::mesh::VertexAttributeValues;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use voxel_framework::chunk::{Chunk, CHUNK_SIZE};
-use voxel_framework::generator::ChunkGenerator;
+use bevy::math::{IVec3, Vec3};
+use bevy::mesh::VertexAttributeValues;
+use bevy::mesh::{Indices, Mesh};
+use bevy::prelude::{App, IntoScheduleConfigs, MinimalPlugins, Resource, Update};
+
+use voxel_framework::chunk::persistence::{chunk_filename, save_chunk};
+use voxel_framework::chunk::{CHUNK_SIZE, Chunk};
 use voxel_framework::generator::asteroid::{AsteroidConfig, AsteroidGenerator};
-use voxel_framework::mesh::generate_chunk_mesh;
+use voxel_framework::generator::{ChunkGenerator, GeneratorPlugin};
 use voxel_framework::mesh::lod::{compute_lod, lod_to_step};
+use voxel_framework::mesh::{
+    ChunkNeighbors, generate_chunk_mesh, generate_chunk_mesh_with_neighbors,
+};
 use voxel_framework::noise::fbm;
 use voxel_framework::voxel::DefaultVoxel;
+use voxel_framework::world::{
+    ChunkLoadRequest, ChunkManager, ChunkModified, PersistenceConfig, ViewerPosition, WorldPlugin,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -52,6 +63,34 @@ fn solid_count(chunk: &Chunk<DefaultVoxel>) -> usize {
         .count()
 }
 
+#[derive(Resource, Default)]
+struct ObservedLoadRequests(Vec<IVec3>);
+
+fn record_load_requests(
+    mut reader: bevy::ecs::message::MessageReader<ChunkLoadRequest>,
+    mut observed: bevy::prelude::ResMut<ObservedLoadRequests>,
+) {
+    observed.0.extend(reader.read().map(|request| request.0));
+}
+
+struct CountingGenerator {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ChunkGenerator<DefaultVoxel> for CountingGenerator {
+    fn generate(&self, _coord: IVec3, chunk: &mut Chunk<DefaultVoxel>) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        chunk.set(0, 0, 0, DefaultVoxel::IronOre);
+    }
+}
+
+fn unique_temp_chunk_dir(test_name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "voxel_framework_{test_name}_{}",
+        std::process::id()
+    ))
+}
+
 // ── 1. Chunk + Voxel roundtrip ────────────────────────────────────────────────
 
 #[test]
@@ -73,8 +112,14 @@ fn chunk_fill_and_read() {
 #[test]
 fn chunk_is_fully_solid_after_fill() {
     let chunk = fill_chunk(DefaultVoxel::Rock);
-    assert!(chunk.is_fully_solid(), "fully filled chunk must report is_fully_solid");
-    assert!(!chunk.is_empty(), "fully filled chunk must not report is_empty");
+    assert!(
+        chunk.is_fully_solid(),
+        "fully filled chunk must report is_fully_solid"
+    );
+    assert!(
+        !chunk.is_empty(),
+        "fully filled chunk must not report is_empty"
+    );
 }
 
 #[test]
@@ -219,9 +264,8 @@ fn asteroid_generator_different_coords_can_differ() {
 
     // They should not be identical — at least one voxel must differ.
     let identical = (0..CHUNK_SIZE).all(|x| {
-        (0..CHUNK_SIZE).all(|y| {
-            (0..CHUNK_SIZE).all(|z| chunk_near.get(x, y, z) == chunk_far.get(x, y, z))
-        })
+        (0..CHUNK_SIZE)
+            .all(|y| (0..CHUNK_SIZE).all(|z| chunk_near.get(x, y, z) == chunk_far.get(x, y, z)))
     });
     assert!(
         !identical,
@@ -305,4 +349,157 @@ fn lod_1_at_and_beyond_200_units() {
 
     let lod_far = compute_lod(Vec3::new(500.0, 0.0, 0.0), Vec3::ZERO);
     assert_eq!(lod_far, 1, "distance 500 should map to LOD 1");
+}
+
+// ── 6. Runtime plugin contracts ──────────────────────────────────────────────
+
+#[test]
+fn world_and_generator_plugins_can_run_in_minimal_app_without_panic() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(WorldPlugin);
+    app.add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
+
+    // No renderer, window, audio, GPU, or real-time plugins are involved here.
+    // This verifies the base runtime systems can be registered and ticked in a
+    // headless ECS app.
+    app.update();
+}
+
+#[test]
+fn streaming_requests_new_viewer_region_once_and_marks_pending() {
+    let mut app = App::new();
+    app.insert_resource(ChunkManager::new(14.0, 32.0));
+    app.init_resource::<ObservedLoadRequests>();
+    app.add_plugins(WorldPlugin);
+    app.add_systems(
+        Update,
+        record_load_requests.after(voxel_framework::world::systems::streaming_system),
+    );
+
+    app.update();
+    {
+        let observed = app.world().resource::<ObservedLoadRequests>();
+        assert!(
+            observed.0.contains(&IVec3::ZERO),
+            "initial stream around origin should include origin chunk; observed {:?}",
+            observed.0
+        );
+    }
+    assert!(
+        app.world()
+            .resource::<ChunkManager>()
+            .is_pending(IVec3::ZERO)
+    );
+
+    // Running the same frame again must not duplicate the pending request.
+    let initial_request_count = app.world().resource::<ObservedLoadRequests>().0.len();
+    app.update();
+    assert_eq!(
+        app.world().resource::<ObservedLoadRequests>().0.len(),
+        initial_request_count,
+        "a second update at the same viewer position must not duplicate pending requests"
+    );
+
+    app.world_mut().resource_mut::<ViewerPosition>().position = Vec3::new(16.0, 0.0, 0.0);
+    app.update();
+
+    let observed = &app.world().resource::<ObservedLoadRequests>().0;
+    assert!(
+        observed.iter().any(|coord| coord.x == 1),
+        "moving the viewer one chunk over should request at least one +X chunk; observed {observed:?}"
+    );
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|&&coord| coord == IVec3::ZERO)
+            .count(),
+        1,
+        "pending origin chunk must not be requested twice"
+    );
+}
+
+#[test]
+fn generator_plugin_loads_persisted_chunk_before_calling_generator() {
+    let coord = IVec3::new(7, -2, 3);
+    let save_dir = unique_temp_chunk_dir("persisted_chunk_wins");
+    let _ = std::fs::remove_dir_all(&save_dir);
+    std::fs::create_dir_all(&save_dir).expect("create temp chunk dir");
+
+    let mut saved_chunk = Chunk::<DefaultVoxel>::new();
+    saved_chunk.set(0, 0, 0, DefaultVoxel::RareMineral);
+    save_chunk(&saved_chunk, save_dir.join(chunk_filename(coord))).expect("save test chunk");
+
+    let generator_calls = Arc::new(AtomicUsize::new(0));
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(WorldPlugin);
+    app.insert_resource(PersistenceConfig {
+        save_dir: save_dir.to_string_lossy().into_owned(),
+        auto_save: false,
+    });
+    app.insert_resource(
+        voxel_framework::generator::GeneratorResource::<DefaultVoxel> {
+            generator: Arc::new(CountingGenerator {
+                calls: generator_calls.clone(),
+            }),
+        },
+    );
+    app.add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
+
+    app.world_mut().write_message(ChunkLoadRequest(coord));
+    app.update();
+
+    assert_eq!(
+        generator_calls.load(Ordering::SeqCst),
+        0,
+        "disk-backed chunks should be loaded synchronously before generator fallback"
+    );
+
+    let manager = app.world().resource::<ChunkManager>();
+    let entity = manager
+        .get_entity(coord)
+        .expect("persisted chunk should be registered as loaded");
+    let loaded = app
+        .world()
+        .entity(entity)
+        .get::<Chunk<DefaultVoxel>>()
+        .expect("loaded entity should contain chunk data");
+    assert_eq!(loaded.get(0, 0, 0), DefaultVoxel::RareMineral);
+
+    let modified = app
+        .world()
+        .resource::<bevy::ecs::message::Messages<ChunkModified>>();
+    assert_eq!(
+        modified.len(),
+        1,
+        "loading a persisted chunk should notify mesh/persistence consumers"
+    );
+
+    let _ = std::fs::remove_dir_all(&save_dir);
+}
+
+#[test]
+fn neighbor_mesh_culls_border_face_against_solid_adjacent_chunk() {
+    let mut chunk = Chunk::<DefaultVoxel>::new();
+    chunk.set(CHUNK_SIZE - 1, 0, 0, DefaultVoxel::Rock);
+
+    let mut right_neighbor = Chunk::<DefaultVoxel>::new();
+    right_neighbor.set(0, 0, 0, DefaultVoxel::Rock);
+
+    let mut neighbors = ChunkNeighbors::<DefaultVoxel>::default();
+    // Current +X face sees the right neighbor's -X border.
+    neighbors.faces[2] = Some(right_neighbor.border_slice(3));
+
+    let isolated_mesh = generate_chunk_mesh(&chunk, 1);
+    let seam_free_mesh = generate_chunk_mesh_with_neighbors(&chunk, &neighbors, 1);
+
+    assert_eq!(vertex_count(&isolated_mesh), 24);
+    assert_eq!(index_count(&isolated_mesh), 36);
+    assert_eq!(
+        vertex_count(&seam_free_mesh),
+        20,
+        "one solid neighbor should cull exactly one single-voxel border face"
+    );
+    assert_eq!(index_count(&seam_free_mesh), 30);
 }

@@ -135,11 +135,21 @@ impl Default for LightingConfig {
     }
 }
 
-fn default_world_name() -> String { "world".to_string() }
-fn default_example() -> String { "basic_world".to_string() }
-fn default_seed() -> u64 { 42 }
-fn default_load_distance() -> f32 { 150.0 }
-fn default_unload_distance() -> f32 { 200.0 }
+fn default_world_name() -> String {
+    "world".to_string()
+}
+fn default_example() -> String {
+    "basic_world".to_string()
+}
+fn default_seed() -> u64 {
+    42
+}
+fn default_load_distance() -> f32 {
+    150.0
+}
+fn default_unload_distance() -> f32 {
+    200.0
+}
 
 /// Top-level world configuration loaded from `world.toml`.
 ///
@@ -396,7 +406,9 @@ fn load_world_config(
 
     let config = WorldConfig::from_file("world.toml")
         .inspect_err(|e| {
-            eprintln!("voxel-framework: world.toml not found or invalid ({e}), using default WorldConfig");
+            eprintln!(
+                "voxel-framework: world.toml not found or invalid ({e}), using default WorldConfig"
+            );
         })
         .unwrap_or_default();
 

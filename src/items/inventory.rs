@@ -12,8 +12,8 @@
 
 use std::hash::Hash;
 
-use bevy::prelude::*;
 use crate::voxel::{DefaultTerrainVoxel, VoxelType};
+use bevy::prelude::*;
 
 // ─── Container trait ─────────────────────────────────────────────────────────
 
@@ -102,9 +102,7 @@ pub trait Container<I: ItemType> {
 ///     fn is_empty(&self) -> bool { matches!(self, MyItem::Empty) }
 /// }
 /// ```
-pub trait ItemType:
-    Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash + 'static
-{
+pub trait ItemType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash + 'static {
     /// Human-readable display name for this item (e.g. `"Iron Ore"`).
     ///
     /// Used by UI widgets such as the pickup notification overlay.
@@ -246,7 +244,10 @@ impl<I: ItemType> Inventory<I> {
                     break;
                 }
                 if slot.is_none() {
-                    *slot = Some(InventorySlot { item, count: remaining });
+                    *slot = Some(InventorySlot {
+                        item,
+                        count: remaining,
+                    });
                     remaining = 0;
                 }
             }
@@ -451,15 +452,7 @@ pub struct ItemPickedUp<I: ItemType> {
 /// inv.add(DefaultItem::Crystal, 3);
 /// ```
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
 pub enum DefaultItem {
     /// Empty slot sentinel — not a real item; returned by [`Default`].
@@ -514,29 +507,29 @@ pub enum DefaultItem {
 impl ItemType for DefaultItem {
     fn name(&self) -> &'static str {
         match self {
-            DefaultItem::Empty          => "Empty",
-            DefaultItem::Dirt           => "Dirt",
-            DefaultItem::Sand           => "Sand",
-            DefaultItem::Wood           => "Wood",
-            DefaultItem::Gravel         => "Gravel",
-            DefaultItem::Snow           => "Snow",
-            DefaultItem::CoalOre        => "Coal Ore",
-            DefaultItem::IronOre        => "Iron Ore",
-            DefaultItem::IronOreItem    => "Iron Ore",
-            DefaultItem::Cobblestone    => "Cobblestone",
-            DefaultItem::Sandstone      => "Sandstone",
-            DefaultItem::Planks         => "Planks",
-            DefaultItem::Brick          => "Brick",
-            DefaultItem::Coal           => "Coal",
-            DefaultItem::IronIngot      => "Iron Ingot",
-            DefaultItem::Log            => "Log",
-            DefaultItem::Snowball       => "Snowball",
-            DefaultItem::RockFragment   => "Rock Fragment",
-            DefaultItem::Crystal        => "Crystal",
-            DefaultItem::RareMineral    => "Rare Mineral",
-            DefaultItem::WoodenPickaxe  => "Wooden Pickaxe",
-            DefaultItem::StonePickaxe   => "Stone Pickaxe",
-            DefaultItem::IronPickaxe    => "Iron Pickaxe",
+            DefaultItem::Empty => "Empty",
+            DefaultItem::Dirt => "Dirt",
+            DefaultItem::Sand => "Sand",
+            DefaultItem::Wood => "Wood",
+            DefaultItem::Gravel => "Gravel",
+            DefaultItem::Snow => "Snow",
+            DefaultItem::CoalOre => "Coal Ore",
+            DefaultItem::IronOre => "Iron Ore",
+            DefaultItem::IronOreItem => "Iron Ore",
+            DefaultItem::Cobblestone => "Cobblestone",
+            DefaultItem::Sandstone => "Sandstone",
+            DefaultItem::Planks => "Planks",
+            DefaultItem::Brick => "Brick",
+            DefaultItem::Coal => "Coal",
+            DefaultItem::IronIngot => "Iron Ingot",
+            DefaultItem::Log => "Log",
+            DefaultItem::Snowball => "Snowball",
+            DefaultItem::RockFragment => "Rock Fragment",
+            DefaultItem::Crystal => "Crystal",
+            DefaultItem::RareMineral => "Rare Mineral",
+            DefaultItem::WoodenPickaxe => "Wooden Pickaxe",
+            DefaultItem::StonePickaxe => "Stone Pickaxe",
+            DefaultItem::IronPickaxe => "Iron Pickaxe",
         }
     }
 
@@ -557,58 +550,58 @@ impl ItemType for DefaultItem {
             | DefaultItem::Planks
             | DefaultItem::Brick => DefaultTerrainVoxel::from_byte(self.to_byte()).color(),
             // Processed / dropped items — explicit colors.
-            DefaultItem::Coal           => [0.15, 0.15, 0.15, 1.0],
-            DefaultItem::IronIngot      => [0.75, 0.65, 0.55, 1.0],
-            DefaultItem::Log            => [0.40, 0.28, 0.12, 1.0],
-            DefaultItem::Snowball       => [0.92, 0.95, 1.00, 1.0],
-            DefaultItem::RockFragment   => [0.35, 0.30, 0.28, 1.0],
-            DefaultItem::Crystal        => [0.40, 0.50, 0.80, 1.0],
-            DefaultItem::RareMineral    => [0.20, 0.85, 0.60, 1.0],
+            DefaultItem::Coal => [0.15, 0.15, 0.15, 1.0],
+            DefaultItem::IronIngot => [0.75, 0.65, 0.55, 1.0],
+            DefaultItem::Log => [0.40, 0.28, 0.12, 1.0],
+            DefaultItem::Snowball => [0.92, 0.95, 1.00, 1.0],
+            DefaultItem::RockFragment => [0.35, 0.30, 0.28, 1.0],
+            DefaultItem::Crystal => [0.40, 0.50, 0.80, 1.0],
+            DefaultItem::RareMineral => [0.20, 0.85, 0.60, 1.0],
             // Tools.
-            DefaultItem::WoodenPickaxe  => [0.55, 0.35, 0.20, 1.0],
-            DefaultItem::StonePickaxe   => [0.50, 0.50, 0.50, 1.0],
-            DefaultItem::IronPickaxe    => [0.70, 0.75, 0.80, 1.0],
+            DefaultItem::WoodenPickaxe => [0.55, 0.35, 0.20, 1.0],
+            DefaultItem::StonePickaxe => [0.50, 0.50, 0.50, 1.0],
+            DefaultItem::IronPickaxe => [0.70, 0.75, 0.80, 1.0],
         }
     }
 
     fn to_byte(&self) -> u8 {
         match self {
-            DefaultItem::Empty          => 0,
+            DefaultItem::Empty => 0,
             // Block-items: bytes match DefaultTerrainVoxel::to_byte()
-            DefaultItem::Dirt           => 2,
-            DefaultItem::Sand           => 4,
-            DefaultItem::Wood           => 5,
-            DefaultItem::Gravel         => 7,
-            DefaultItem::Snow           => 8,
-            DefaultItem::CoalOre        => 10,
-            DefaultItem::IronOre        => 11,
-            DefaultItem::IronOreItem    => 11, // deprecated alias; collapses to IronOre byte
-            DefaultItem::Cobblestone    => 12,
-            DefaultItem::Sandstone      => 13,
-            DefaultItem::Planks         => 14,
-            DefaultItem::Brick          => 15,
+            DefaultItem::Dirt => 2,
+            DefaultItem::Sand => 4,
+            DefaultItem::Wood => 5,
+            DefaultItem::Gravel => 7,
+            DefaultItem::Snow => 8,
+            DefaultItem::CoalOre => 10,
+            DefaultItem::IronOre => 11,
+            DefaultItem::IronOreItem => 11, // deprecated alias; collapses to IronOre byte
+            DefaultItem::Cobblestone => 12,
+            DefaultItem::Sandstone => 13,
+            DefaultItem::Planks => 14,
+            DefaultItem::Brick => 15,
             // Processed / dropped items
-            DefaultItem::Coal           => 16,
-            DefaultItem::IronIngot      => 17,
-            DefaultItem::Log            => 18,
-            DefaultItem::Snowball       => 19,
-            DefaultItem::RockFragment   => 20,
-            DefaultItem::Crystal        => 21,
-            DefaultItem::RareMineral    => 22,
-            DefaultItem::WoodenPickaxe  => 23,
-            DefaultItem::StonePickaxe   => 24,
-            DefaultItem::IronPickaxe    => 25,
+            DefaultItem::Coal => 16,
+            DefaultItem::IronIngot => 17,
+            DefaultItem::Log => 18,
+            DefaultItem::Snowball => 19,
+            DefaultItem::RockFragment => 20,
+            DefaultItem::Crystal => 21,
+            DefaultItem::RareMineral => 22,
+            DefaultItem::WoodenPickaxe => 23,
+            DefaultItem::StonePickaxe => 24,
+            DefaultItem::IronPickaxe => 25,
         }
     }
 
     fn from_byte(b: u8) -> Self {
         match b {
             // Block-items (bytes 2–15 mirror DefaultTerrainVoxel)
-            2  => DefaultItem::Dirt,
-            4  => DefaultItem::Sand,
-            5  => DefaultItem::Wood,
-            7  => DefaultItem::Gravel,
-            8  => DefaultItem::Snow,
+            2 => DefaultItem::Dirt,
+            4 => DefaultItem::Sand,
+            5 => DefaultItem::Wood,
+            7 => DefaultItem::Gravel,
+            8 => DefaultItem::Snow,
             10 => DefaultItem::CoalOre,
             11 => DefaultItem::IronOre,
             12 => DefaultItem::Cobblestone,
@@ -638,8 +631,8 @@ impl ItemType for DefaultItem {
     fn tool_level(&self) -> u8 {
         match self {
             DefaultItem::WoodenPickaxe => 1,
-            DefaultItem::StonePickaxe  => 1,
-            DefaultItem::IronPickaxe   => 2,
+            DefaultItem::StonePickaxe => 1,
+            DefaultItem::IronPickaxe => 2,
             _ => 0,
         }
     }
@@ -647,8 +640,8 @@ impl ItemType for DefaultItem {
     fn tool_speed(&self) -> f32 {
         match self {
             DefaultItem::WoodenPickaxe => 1.0,
-            DefaultItem::StonePickaxe  => 2.0,
-            DefaultItem::IronPickaxe   => 4.0,
+            DefaultItem::StonePickaxe => 2.0,
+            DefaultItem::IronPickaxe => 4.0,
             _ => 1.0,
         }
     }

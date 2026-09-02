@@ -30,8 +30,8 @@
 
 use bevy::math::{IVec3, Vec3};
 
-use crate::chunk::Chunk;
 use crate::chunk::CHUNK_SIZE;
+use crate::chunk::Chunk;
 use crate::noise::{fbm, hash3};
 use crate::voxel::DefaultVoxel;
 
@@ -334,8 +334,8 @@ impl ChunkGenerator<DefaultVoxel> for AsteroidGenerator {
         for lx in 0..CHUNK_SIZE {
             for ly in 0..CHUNK_SIZE {
                 for lz in 0..CHUNK_SIZE {
-                    let world_pos = chunk_world
-                        + Vec3::new(lx as f32 + 0.5, ly as f32 + 0.5, lz as f32 + 0.5);
+                    let world_pos =
+                        chunk_world + Vec3::new(lx as f32 + 0.5, ly as f32 + 0.5, lz as f32 + 0.5);
 
                     for asteroid in &self.asteroids {
                         let dx = world_pos.x - asteroid.center.x;
@@ -462,8 +462,7 @@ mod tests {
 
         let solid_count = (0..CHUNK_SIZE)
             .flat_map(|x| {
-                (0..CHUNK_SIZE)
-                    .flat_map(move |y| (0..CHUNK_SIZE).map(move |z| (x, y, z)))
+                (0..CHUNK_SIZE).flat_map(move |y| (0..CHUNK_SIZE).map(move |z| (x, y, z)))
             })
             .filter(|&(x, y, z)| chunk.is_solid_at(x, y, z))
             .count();

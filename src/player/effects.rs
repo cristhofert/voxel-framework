@@ -135,7 +135,9 @@ pub struct ActiveEffects<E: StatusEffect> {
 
 impl<E: StatusEffect> Default for ActiveEffects<E> {
     fn default() -> Self {
-        Self { effects: Vec::new() }
+        Self {
+            effects: Vec::new(),
+        }
     }
 }
 
@@ -150,7 +152,11 @@ impl<E: StatusEffect> ActiveEffects<E> {
             existing.amplifier = existing.amplifier.max(amplifier);
             existing.remaining_secs = existing.remaining_secs.max(duration_secs);
         } else {
-            self.effects.push(ActiveEffect { effect, amplifier, remaining_secs: duration_secs });
+            self.effects.push(ActiveEffect {
+                effect,
+                amplifier,
+                remaining_secs: duration_secs,
+            });
         }
     }
 
@@ -169,13 +175,13 @@ impl<E: StatusEffect> ActiveEffects<E> {
         let mut out = EffectModifiers::default();
         for a in &self.effects {
             let m = a.effect.modifiers(a.amplifier);
-            out.speed_mult        *= m.speed_mult;
-            out.jump_mult         *= m.jump_mult;
-            out.gravity_mult      *= m.gravity_mult;
+            out.speed_mult *= m.speed_mult;
+            out.jump_mult *= m.jump_mult;
+            out.gravity_mult *= m.gravity_mult;
             out.mining_speed_mult *= m.mining_speed_mult;
-            out.damage_resistance  = (out.damage_resistance + m.damage_resistance).min(1.0);
-            out.regen_per_sec     += m.regen_per_sec;
-            out.damage_per_sec    += m.damage_per_sec;
+            out.damage_resistance = (out.damage_resistance + m.damage_resistance).min(1.0);
+            out.regen_per_sec += m.regen_per_sec;
+            out.damage_per_sec += m.damage_per_sec;
         }
         out
     }
@@ -198,10 +204,7 @@ pub struct AppliedEffectModifiers(pub EffectModifiers);
 /// Advances effect timers and removes expired effects.
 ///
 /// Added automatically by [`StatusEffectsPlugin`].
-pub fn tick_effects<E: StatusEffect>(
-    mut effects: ResMut<ActiveEffects<E>>,
-    time: Res<Time>,
-) {
+pub fn tick_effects<E: StatusEffect>(mut effects: ResMut<ActiveEffects<E>>, time: Res<Time>) {
     let dt = time.delta_secs();
     effects.effects.retain_mut(|a| {
         a.remaining_secs -= dt;
@@ -279,7 +282,9 @@ pub struct StatusEffectsPlugin<E: StatusEffect> {
 impl<E: StatusEffect> StatusEffectsPlugin<E> {
     /// Creates a new [`StatusEffectsPlugin`] for effect type `E`.
     pub fn new() -> Self {
-        Self { _marker: std::marker::PhantomData }
+        Self {
+            _marker: std::marker::PhantomData,
+        }
     }
 }
 
@@ -293,11 +298,14 @@ impl<E: StatusEffect> Plugin for StatusEffectsPlugin<E> {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveEffects<E>>();
         app.init_resource::<AppliedEffectModifiers>();
-        app.add_systems(Update, (
-            update_applied_modifiers::<E>,
-            tick_effects::<E>,
-            apply_health_effects::<E>,
-        ));
+        app.add_systems(
+            Update,
+            (
+                update_applied_modifiers::<E>,
+                tick_effects::<E>,
+                apply_health_effects::<E>,
+            ),
+        );
     }
 }
 
@@ -317,8 +325,8 @@ mod tests {
     impl StatusEffect for TestEffect {
         fn name(&self) -> &'static str {
             match self {
-                Self::Speed      => "Speed",
-                Self::Poison     => "Poison",
+                Self::Speed => "Speed",
+                Self::Poison => "Poison",
                 Self::Resistance => "Resistance",
             }
         }
@@ -326,9 +334,18 @@ mod tests {
         fn modifiers(&self, amplifier: u8) -> EffectModifiers {
             let lvl = (amplifier + 1) as f32;
             match self {
-                Self::Speed      => EffectModifiers { speed_mult: 1.0 + 0.2 * lvl, ..Default::default() },
-                Self::Poison     => EffectModifiers { damage_per_sec: 1.0 * lvl, ..Default::default() },
-                Self::Resistance => EffectModifiers { damage_resistance: 0.2 * lvl, ..Default::default() },
+                Self::Speed => EffectModifiers {
+                    speed_mult: 1.0 + 0.2 * lvl,
+                    ..Default::default()
+                },
+                Self::Poison => EffectModifiers {
+                    damage_per_sec: 1.0 * lvl,
+                    ..Default::default()
+                },
+                Self::Resistance => EffectModifiers {
+                    damage_resistance: 0.2 * lvl,
+                    ..Default::default()
+                },
             }
         }
 
@@ -368,7 +385,7 @@ mod tests {
         ae.apply(TestEffect::Speed, 1, 10.0);
         ae.apply(TestEffect::Speed, 0, 20.0); // lower amplifier, longer duration
         assert_eq!(ae.effects.len(), 1);
-        assert_eq!(ae.effects[0].amplifier, 1);          // kept higher
+        assert_eq!(ae.effects[0].amplifier, 1); // kept higher
         assert!((ae.effects[0].remaining_secs - 20.0).abs() < f32::EPSILON); // kept longer
     }
 
@@ -433,7 +450,7 @@ mod tests {
     fn combined_modifiers_poison_additive() {
         let mut ae: ActiveEffects<TestEffect> = ActiveEffects::default();
         ae.apply(TestEffect::Poison, 0, 10.0); // 1.0 dps
-        ae.apply(TestEffect::Speed, 0, 10.0);  // different effect
+        ae.apply(TestEffect::Speed, 0, 10.0); // different effect
         let m = ae.combined_modifiers();
         assert!((m.damage_per_sec - 1.0).abs() < 1e-5);
         assert!((m.speed_mult - 1.2).abs() < 1e-5);

@@ -44,7 +44,7 @@
 
 use bevy::prelude::*;
 
-use crate::chunk::{Chunk, ChunkCoord, CHUNK_SIZE, VOXEL_SIZE, world_to_chunk_coord};
+use crate::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, VOXEL_SIZE, world_to_chunk_coord};
 use crate::voxel::VoxelType;
 
 use super::ChunkManager;
@@ -152,18 +152,54 @@ pub fn raycast<V: VoxelType>(
     let step_z = if dir.z >= 0.0 { 1i32 } else { -1i32 };
 
     // tDelta: how far along the ray (in t units) to cross one voxel on each axis
-    let delta_x = if dir.x.abs() > f32::EPSILON { VOXEL_SIZE / dir.x.abs() } else { f32::MAX };
-    let delta_y = if dir.y.abs() > f32::EPSILON { VOXEL_SIZE / dir.y.abs() } else { f32::MAX };
-    let delta_z = if dir.z.abs() > f32::EPSILON { VOXEL_SIZE / dir.z.abs() } else { f32::MAX };
+    let delta_x = if dir.x.abs() > f32::EPSILON {
+        VOXEL_SIZE / dir.x.abs()
+    } else {
+        f32::MAX
+    };
+    let delta_y = if dir.y.abs() > f32::EPSILON {
+        VOXEL_SIZE / dir.y.abs()
+    } else {
+        f32::MAX
+    };
+    let delta_z = if dir.z.abs() > f32::EPSILON {
+        VOXEL_SIZE / dir.z.abs()
+    } else {
+        f32::MAX
+    };
 
     // tMax: distance along ray to the next voxel boundary on each axis
-    let next_x = if step_x > 0 { vx as f32 + 1.0 } else { vx as f32 };
-    let next_y = if step_y > 0 { vy as f32 + 1.0 } else { vy as f32 };
-    let next_z = if step_z > 0 { vz as f32 + 1.0 } else { vz as f32 };
+    let next_x = if step_x > 0 {
+        vx as f32 + 1.0
+    } else {
+        vx as f32
+    };
+    let next_y = if step_y > 0 {
+        vy as f32 + 1.0
+    } else {
+        vy as f32
+    };
+    let next_z = if step_z > 0 {
+        vz as f32 + 1.0
+    } else {
+        vz as f32
+    };
 
-    let mut t_max_x = if dir.x.abs() > f32::EPSILON { (next_x - origin.x) / dir.x } else { f32::MAX };
-    let mut t_max_y = if dir.y.abs() > f32::EPSILON { (next_y - origin.y) / dir.y } else { f32::MAX };
-    let mut t_max_z = if dir.z.abs() > f32::EPSILON { (next_z - origin.z) / dir.z } else { f32::MAX };
+    let mut t_max_x = if dir.x.abs() > f32::EPSILON {
+        (next_x - origin.x) / dir.x
+    } else {
+        f32::MAX
+    };
+    let mut t_max_y = if dir.y.abs() > f32::EPSILON {
+        (next_y - origin.y) / dir.y
+    } else {
+        f32::MAX
+    };
+    let mut t_max_z = if dir.z.abs() > f32::EPSILON {
+        (next_z - origin.z) / dir.z
+    } else {
+        f32::MAX
+    };
 
     // Check the initial voxel before any stepping
     {
@@ -264,9 +300,7 @@ mod tests {
 
     /// Build a minimal Bevy World, spawn a chunk entity, register it in a
     /// ChunkManager, and return (world, manager).
-    fn setup_world_with_chunk(
-        fill: impl Fn(&mut Chunk<DefaultVoxel>),
-    ) -> (World, ChunkManager) {
+    fn setup_world_with_chunk(fill: impl Fn(&mut Chunk<DefaultVoxel>)) -> (World, ChunkManager) {
         let mut world = World::new();
         let mut chunk = Chunk::<DefaultVoxel>::new();
         fill(&mut chunk);

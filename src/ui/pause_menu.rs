@@ -62,8 +62,7 @@ use crate::world::{ChunkManager, WorldConfig};
 /// `embedded://{crate_name}/{path relative to the crate's `src/` dir}`, where
 /// the crate name uses underscores. See [`PauseMenuPlugin`] for how this font
 /// becomes the default value of [`PauseMenuConfig::font`].
-pub const EMBEDDED_NOTO_SANS_PATH: &str =
-    "embedded://voxel_framework/ui/NotoSans-Regular.ttf";
+pub const EMBEDDED_NOTO_SANS_PATH: &str = "embedded://voxel_framework/ui/NotoSans-Regular.ttf";
 
 /// Asset path of the NotoSansSymbols2 font embedded into the framework binary.
 ///
@@ -118,29 +117,43 @@ pub enum PauseMenuState {
 
 // ─── Styling constants ────────────────────────────────────────────────────────
 
-const BTN_NORMAL:  Color = Color::srgb(0.15, 0.15, 0.20);
+const BTN_NORMAL: Color = Color::srgb(0.15, 0.15, 0.20);
 const BTN_HOVERED: Color = Color::srgb(0.25, 0.25, 0.35);
 const BTN_PRESSED: Color = Color::srgb(0.35, 0.35, 0.50);
-const OVERLAY:     Color = Color::srgba(0.0, 0.0, 0.0, 0.78);
+const OVERLAY: Color = Color::srgba(0.0, 0.0, 0.0, 0.78);
 
 // ─── Markers ─────────────────────────────────────────────────────────────────
 
-#[derive(Component)] struct PauseMenuRoot;
-#[derive(Component)] struct SettingsMenuRoot;
-#[derive(Component)] struct FovLabel;
-#[derive(Component)] struct VolumeLabel;
-#[derive(Component)] struct RenderDistLabel;
-#[derive(Component)] struct SensitivityLabel;
+#[derive(Component)]
+struct PauseMenuRoot;
+#[derive(Component)]
+struct SettingsMenuRoot;
+#[derive(Component)]
+struct FovLabel;
+#[derive(Component)]
+struct VolumeLabel;
+#[derive(Component)]
+struct RenderDistLabel;
+#[derive(Component)]
+struct SensitivityLabel;
 
 #[derive(Component)]
-enum PauseButton { Resume, Settings, Quit }
+enum PauseButton {
+    Resume,
+    Settings,
+    Quit,
+}
 
 #[derive(Component)]
 enum SettingsButton {
-    FovInc, FovDec,
-    VolumeInc, VolumeDec,
-    RenderDistInc, RenderDistDec,
-    SensitivityInc, SensitivityDec,
+    FovInc,
+    FovDec,
+    VolumeInc,
+    VolumeDec,
+    RenderDistInc,
+    RenderDistDec,
+    SensitivityInc,
+    SensitivityDec,
     Back,
 }
 
@@ -280,18 +293,29 @@ impl Plugin for PauseMenuPlugin {
         app.add_systems(Startup, load_default_font);
 
         // Playing — toggle on Escape
-        app.add_systems(Update, toggle_pause.run_if(in_state(PauseMenuState::Playing)));
+        app.add_systems(
+            Update,
+            toggle_pause.run_if(in_state(PauseMenuState::Playing)),
+        );
 
         // Paused
-        app.add_systems(OnEnter(PauseMenuState::Paused), (spawn_pause_menu, release_cursor));
-        app.add_systems(OnExit(PauseMenuState::Paused),  despawn_pause_menu);
-        app.add_systems(Update, (handle_pause_buttons, escape_to_resume)
-            .run_if(in_state(PauseMenuState::Paused)));
+        app.add_systems(
+            OnEnter(PauseMenuState::Paused),
+            (spawn_pause_menu, release_cursor),
+        );
+        app.add_systems(OnExit(PauseMenuState::Paused), despawn_pause_menu);
+        app.add_systems(
+            Update,
+            (handle_pause_buttons, escape_to_resume).run_if(in_state(PauseMenuState::Paused)),
+        );
 
         // Settings
         app.add_systems(OnEnter(PauseMenuState::Settings), spawn_settings_menu);
-        app.add_systems(OnExit(PauseMenuState::Settings),  despawn_settings_menu);
-        app.add_systems(Update, handle_settings_buttons.run_if(in_state(PauseMenuState::Settings)));
+        app.add_systems(OnExit(PauseMenuState::Settings), despawn_settings_menu);
+        app.add_systems(
+            Update,
+            handle_settings_buttons.run_if(in_state(PauseMenuState::Settings)),
+        );
     }
 }
 
@@ -352,7 +376,10 @@ fn toggle_pause(
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         next.set(PauseMenuState::Paused);
-        sfx.write(SfxRequest { event: SfxEvent::PauseOpen, position: None });
+        sfx.write(SfxRequest {
+            event: SfxEvent::PauseOpen,
+            position: None,
+        });
     }
 }
 
@@ -369,7 +396,10 @@ fn escape_to_resume(
     if keys.just_pressed(KeyCode::Escape) {
         next.set(PauseMenuState::Playing);
         lock_cursor(&mut windows);
-        sfx.write(SfxRequest { event: SfxEvent::PauseClose, position: None });
+        sfx.write(SfxRequest {
+            event: SfxEvent::PauseClose,
+            position: None,
+        });
     }
 }
 
@@ -399,7 +429,11 @@ fn spawn_btn<C: Component>(
         .with_children(|b| {
             b.spawn((
                 Text::new(label),
-                TextFont { font, font_size: 20.0, ..default() },
+                TextFont {
+                    font,
+                    font_size: 20.0,
+                    ..default()
+                },
                 TextColor(Color::WHITE),
             ));
         });
@@ -428,17 +462,47 @@ fn overlay_node() -> (Node, BackgroundColor) {
 /// Settings, and Quit. Runs via `OnEnter(Paused)`.
 fn spawn_pause_menu(mut commands: Commands, config: Res<PauseMenuConfig>) {
     let (node, bg) = overlay_node();
-    commands.spawn((PauseMenuRoot, node, bg)).with_children(|p| {
-        p.spawn((
-            Text::new("PAUSED"),
-            TextFont { font: config.font.clone(), font_size: 52.0, ..default() },
-            TextColor(Color::WHITE),
-            Node { margin: UiRect::bottom(Val::Px(28.0)), ..default() },
-        ));
-        spawn_btn(p, "Resume",   PauseButton::Resume,   280.0, 52.0, config.font.clone());
-        spawn_btn(p, "Settings", PauseButton::Settings, 280.0, 52.0, config.font.clone());
-        spawn_btn(p, "Quit",     PauseButton::Quit,     280.0, 52.0, config.font.clone());
-    });
+    commands
+        .spawn((PauseMenuRoot, node, bg))
+        .with_children(|p| {
+            p.spawn((
+                Text::new("PAUSED"),
+                TextFont {
+                    font: config.font.clone(),
+                    font_size: 52.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    margin: UiRect::bottom(Val::Px(28.0)),
+                    ..default()
+                },
+            ));
+            spawn_btn(
+                p,
+                "Resume",
+                PauseButton::Resume,
+                280.0,
+                52.0,
+                config.font.clone(),
+            );
+            spawn_btn(
+                p,
+                "Settings",
+                PauseButton::Settings,
+                280.0,
+                52.0,
+                config.font.clone(),
+            );
+            spawn_btn(
+                p,
+                "Quit",
+                PauseButton::Quit,
+                280.0,
+                52.0,
+                config.font.clone(),
+            );
+        });
 }
 
 /// Despawns the pause menu overlay when leaving [`PauseMenuState::Paused`].
@@ -446,7 +510,9 @@ fn spawn_pause_menu(mut commands: Commands, config: Res<PauseMenuConfig>) {
 /// Runs via `OnExit(Paused)`, which fires for both `Paused → Playing` and
 /// `Paused → Settings` transitions.
 fn despawn_pause_menu(mut commands: Commands, q: Query<Entity, With<PauseMenuRoot>>) {
-    for e in &q { commands.entity(e).despawn(); }
+    for e in &q {
+        commands.entity(e).despawn();
+    }
 }
 
 /// Handles hover/press styling and click actions for pause menu buttons.
@@ -455,8 +521,10 @@ fn despawn_pause_menu(mut commands: Commands, q: Query<Entity, With<PauseMenuRoo
 /// colors on hover and press, then on `Pressed` dispatches: Resume → `Playing`
 /// (re-locks cursor), Settings → `Settings`, Quit → [`AppExit`].
 fn handle_pause_buttons(
-    mut q: Query<(&Interaction, &mut BackgroundColor, &PauseButton),
-                 (Changed<Interaction>, With<Button>)>,
+    mut q: Query<
+        (&Interaction, &mut BackgroundColor, &PauseButton),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut next: ResMut<NextState<PauseMenuState>>,
     mut windows: Query<&mut bevy::window::CursorOptions>,
     mut app_exit: MessageWriter<AppExit>,
@@ -466,17 +534,24 @@ fn handle_pause_buttons(
         *bg = BackgroundColor(match interaction {
             Interaction::Hovered => BTN_HOVERED,
             Interaction::Pressed => BTN_PRESSED,
-            Interaction::None    => BTN_NORMAL,
+            Interaction::None => BTN_NORMAL,
         });
-        if *interaction != Interaction::Pressed { continue; }
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
         match action {
             PauseButton::Resume => {
                 next.set(PauseMenuState::Playing);
                 lock_cursor(&mut windows);
-                sfx.write(SfxRequest { event: SfxEvent::PauseClose, position: None });
+                sfx.write(SfxRequest {
+                    event: SfxEvent::PauseClose,
+                    position: None,
+                });
             }
             PauseButton::Settings => next.set(PauseMenuState::Settings),
-            PauseButton::Quit     => { app_exit.write(AppExit::Success); }
+            PauseButton::Quit => {
+                app_exit.write(AppExit::Success);
+            }
         }
     }
 }
@@ -500,7 +575,13 @@ fn spawn_settings_menu(
     let fov_deg = camera_q
         .single()
         .ok()
-        .and_then(|p| if let Projection::Perspective(pp) = p { Some(pp.fov.to_degrees()) } else { None })
+        .and_then(|p| {
+            if let Projection::Perspective(pp) = p {
+                Some(pp.fov.to_degrees())
+            } else {
+                None
+            }
+        })
         .unwrap_or(90.0);
     let volume_pct = sfx_config.volume * 100.0;
     let render_dist_chunks = world_config
@@ -508,42 +589,93 @@ fn spawn_settings_menu(
         .map(|wc| ((wc.load_distance / 16.0).round() as i32).clamp(4, 32) as i32)
         .unwrap_or(10);
     // Round to nearest even
-    let render_dist_chunks = if render_dist_chunks % 2 == 0 { render_dist_chunks } else { render_dist_chunks + 1 };
+    let render_dist_chunks = if render_dist_chunks % 2 == 0 {
+        render_dist_chunks
+    } else {
+        render_dist_chunks + 1
+    };
     let sensitivity_pct = player_config
         .as_ref()
         .map(|pc| ((pc.sensitivity * 100.0).round() as i32).clamp(10, 100))
         .unwrap_or(100);
 
     let (node, bg) = overlay_node();
-    commands.spawn((SettingsMenuRoot, node, bg)).with_children(|p| {
-        p.spawn((
-            Text::new("SETTINGS"),
-            TextFont { font: config.font.clone(), font_size: 42.0, ..default() },
-            TextColor(Color::WHITE),
-            Node { margin: UiRect::bottom(Val::Px(20.0)), ..default() },
-        ));
+    commands
+        .spawn((SettingsMenuRoot, node, bg))
+        .with_children(|p| {
+            p.spawn((
+                Text::new("SETTINGS"),
+                TextFont {
+                    font: config.font.clone(),
+                    font_size: 42.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    margin: UiRect::bottom(Val::Px(20.0)),
+                    ..default()
+                },
+            ));
 
-        spawn_slider_row(p, "Field of View", format!("{fov_deg:.0}°"), FovLabel,
-            SettingsButton::FovDec, SettingsButton::FovInc,
-            config.font.clone(), config.symbol_font.clone());
+            spawn_slider_row(
+                p,
+                "Field of View",
+                format!("{fov_deg:.0}°"),
+                FovLabel,
+                SettingsButton::FovDec,
+                SettingsButton::FovInc,
+                config.font.clone(),
+                config.symbol_font.clone(),
+            );
 
-        spawn_slider_row(p, "SFX Volume", format!("{volume_pct:.0}%"), VolumeLabel,
-            SettingsButton::VolumeDec, SettingsButton::VolumeInc,
-            config.font.clone(), config.symbol_font.clone());
+            spawn_slider_row(
+                p,
+                "SFX Volume",
+                format!("{volume_pct:.0}%"),
+                VolumeLabel,
+                SettingsButton::VolumeDec,
+                SettingsButton::VolumeInc,
+                config.font.clone(),
+                config.symbol_font.clone(),
+            );
 
-        spawn_slider_row(p, "Render Distance", format!("{render_dist_chunks} chunks"), RenderDistLabel,
-            SettingsButton::RenderDistDec, SettingsButton::RenderDistInc,
-            config.font.clone(), config.symbol_font.clone());
+            spawn_slider_row(
+                p,
+                "Render Distance",
+                format!("{render_dist_chunks} chunks"),
+                RenderDistLabel,
+                SettingsButton::RenderDistDec,
+                SettingsButton::RenderDistInc,
+                config.font.clone(),
+                config.symbol_font.clone(),
+            );
 
-        spawn_slider_row(p, "Sensitivity", format!("{sensitivity_pct:.0}%"), SensitivityLabel,
-            SettingsButton::SensitivityDec, SettingsButton::SensitivityInc,
-            config.font.clone(), config.symbol_font.clone());
+            spawn_slider_row(
+                p,
+                "Sensitivity",
+                format!("{sensitivity_pct:.0}%"),
+                SensitivityLabel,
+                SettingsButton::SensitivityDec,
+                SettingsButton::SensitivityInc,
+                config.font.clone(),
+                config.symbol_font.clone(),
+            );
 
-        p.spawn(Node { margin: UiRect::top(Val::Px(20.0)), ..default() })
+            p.spawn(Node {
+                margin: UiRect::top(Val::Px(20.0)),
+                ..default()
+            })
             .with_children(|row| {
-                spawn_btn(row, "< Back", SettingsButton::Back, 200.0, 50.0, config.font.clone());
+                spawn_btn(
+                    row,
+                    "< Back",
+                    SettingsButton::Back,
+                    200.0,
+                    50.0,
+                    config.font.clone(),
+                );
             });
-    });
+        });
 }
 
 fn spawn_slider_row<L: Component, D: Component, I: Component>(
@@ -566,17 +698,32 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
         .with_children(|row| {
             row.spawn((
                 Text::new(label),
-                TextFont { font: font.clone(), font_size: 20.0, ..default() },
+                TextFont {
+                    font: font.clone(),
+                    font_size: 20.0,
+                    ..default()
+                },
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
-                Node { width: Val::Px(200.0), ..default() },
+                Node {
+                    width: Val::Px(200.0),
+                    ..default()
+                },
             ));
             spawn_btn(row, "\u{25C0}", dec, 44.0, 44.0, symbol_font.clone());
             row.spawn((
                 value_marker,
                 Text::new(value),
-                TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                TextFont {
+                    font: font.clone(),
+                    font_size: 22.0,
+                    ..default()
+                },
                 TextColor(Color::WHITE),
-                Node { width: Val::Px(80.0), justify_content: JustifyContent::Center, ..default() },
+                Node {
+                    width: Val::Px(80.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
             ));
             spawn_btn(row, "\u{25B6}", inc, 44.0, 44.0, symbol_font);
         });
@@ -587,7 +734,9 @@ fn spawn_slider_row<L: Component, D: Component, I: Component>(
 /// Runs via `OnExit(Settings)`. The only exit transition is `Settings → Paused`
 /// via the Back button.
 fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsMenuRoot>>) {
-    for e in &q { commands.entity(e).despawn(); }
+    for e in &q {
+        commands.entity(e).despawn();
+    }
 }
 
 /// Handles hover/press styling and click actions for settings menu buttons.
@@ -605,17 +754,51 @@ fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsM
 /// - `Back`: emits [`SaveSettingsRequest`] and transitions to [`PauseMenuState::Paused`].
 #[allow(clippy::too_many_arguments)]
 fn handle_settings_buttons(
-    mut q: Query<(&Interaction, &mut BackgroundColor, &SettingsButton),
-                 (Changed<Interaction>, With<Button>)>,
+    mut q: Query<
+        (&Interaction, &mut BackgroundColor, &SettingsButton),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut sfx_config: ResMut<SfxConfig>,
     mut world_config: Option<ResMut<WorldConfig>>,
     mut chunk_manager: Option<ResMut<ChunkManager>>,
     mut player_config: Option<ResMut<PlayerConfig>>,
     mut next: ResMut<NextState<PauseMenuState>>,
-    mut fov_label: Query<&mut Text, (With<FovLabel>, Without<VolumeLabel>, Without<RenderDistLabel>, Without<SensitivityLabel>)>,
-    mut vol_label: Query<&mut Text, (With<VolumeLabel>, Without<FovLabel>, Without<RenderDistLabel>, Without<SensitivityLabel>)>,
-    mut rdist_label: Query<&mut Text, (With<RenderDistLabel>, Without<FovLabel>, Without<VolumeLabel>, Without<SensitivityLabel>)>,
-    mut sens_label: Query<&mut Text, (With<SensitivityLabel>, Without<FovLabel>, Without<VolumeLabel>, Without<RenderDistLabel>)>,
+    mut fov_label: Query<
+        &mut Text,
+        (
+            With<FovLabel>,
+            Without<VolumeLabel>,
+            Without<RenderDistLabel>,
+            Without<SensitivityLabel>,
+        ),
+    >,
+    mut vol_label: Query<
+        &mut Text,
+        (
+            With<VolumeLabel>,
+            Without<FovLabel>,
+            Without<RenderDistLabel>,
+            Without<SensitivityLabel>,
+        ),
+    >,
+    mut rdist_label: Query<
+        &mut Text,
+        (
+            With<RenderDistLabel>,
+            Without<FovLabel>,
+            Without<VolumeLabel>,
+            Without<SensitivityLabel>,
+        ),
+    >,
+    mut sens_label: Query<
+        &mut Text,
+        (
+            With<SensitivityLabel>,
+            Without<FovLabel>,
+            Without<VolumeLabel>,
+            Without<RenderDistLabel>,
+        ),
+    >,
     mut camera_q: Query<&mut Projection, With<Camera3d>>,
     mut save_writer: MessageWriter<SaveSettingsRequest>,
 ) {
@@ -623,15 +806,21 @@ fn handle_settings_buttons(
         *bg = BackgroundColor(match interaction {
             Interaction::Hovered => BTN_HOVERED,
             Interaction::Pressed => BTN_PRESSED,
-            Interaction::None    => BTN_NORMAL,
+            Interaction::None => BTN_NORMAL,
         });
-        if *interaction != Interaction::Pressed { continue; }
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
 
         match action {
             SettingsButton::FovInc | SettingsButton::FovDec => {
                 if let Ok(mut proj) = camera_q.single_mut() {
                     if let Projection::Perspective(ref mut pp) = *proj {
-                        let delta = if matches!(action, SettingsButton::FovInc) { 5.0 } else { -5.0 };
+                        let delta = if matches!(action, SettingsButton::FovInc) {
+                            5.0
+                        } else {
+                            -5.0
+                        };
                         let new_fov = (pp.fov.to_degrees() + delta).clamp(50.0, 120.0);
                         pp.fov = new_fov.to_radians();
                         if let Ok(mut t) = fov_label.single_mut() {
@@ -641,7 +830,11 @@ fn handle_settings_buttons(
                 }
             }
             SettingsButton::VolumeInc | SettingsButton::VolumeDec => {
-                let delta = if matches!(action, SettingsButton::VolumeInc) { 0.1 } else { -0.1 };
+                let delta = if matches!(action, SettingsButton::VolumeInc) {
+                    0.1
+                } else {
+                    -0.1
+                };
                 sfx_config.volume = (sfx_config.volume + delta).clamp(0.0, 1.0);
                 let pct = sfx_config.volume * 100.0;
                 if let Ok(mut t) = vol_label.single_mut() {
@@ -652,8 +845,16 @@ fn handle_settings_buttons(
                 if let Some(ref mut wc) = world_config {
                     // Current value in chunks (rounded to nearest even)
                     let current = ((wc.load_distance / 16.0).round() as i32).clamp(4, 32);
-                    let current = if current % 2 == 0 { current } else { current + 1 };
-                    let delta: i32 = if matches!(action, SettingsButton::RenderDistInc) { 2 } else { -2 };
+                    let current = if current % 2 == 0 {
+                        current
+                    } else {
+                        current + 1
+                    };
+                    let delta: i32 = if matches!(action, SettingsButton::RenderDistInc) {
+                        2
+                    } else {
+                        -2
+                    };
                     let new_chunks = (current + delta).clamp(4, 32);
                     wc.load_distance = new_chunks as f32 * 16.0;
                     wc.unload_distance = wc.load_distance + 32.0;
@@ -669,7 +870,11 @@ fn handle_settings_buttons(
             SettingsButton::SensitivityInc | SettingsButton::SensitivityDec => {
                 if let Some(ref mut pc) = player_config {
                     let current_pct = (pc.sensitivity * 100.0).round() as i32;
-                    let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) { 1 } else { -1 };
+                    let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) {
+                        1
+                    } else {
+                        -1
+                    };
                     let new_pct = (current_pct + delta).clamp(10, 100);
                     pc.sensitivity = new_pct as f32 / 100.0;
                     if let Ok(mut t) = sens_label.single_mut() {

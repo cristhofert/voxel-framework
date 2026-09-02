@@ -252,9 +252,7 @@ impl<V: VoxelType> MultiGeneratorPlugin<V> {
     pub fn with_fallback(self, fallback: Box<dyn ChunkGenerator<V>>) -> Self {
         {
             let mut guard = self.multi.lock().expect("MultiGeneratorPlugin mutex");
-            let multi = guard
-                .take()
-                .expect("MultiGeneratorPlugin already consumed");
+            let multi = guard.take().expect("MultiGeneratorPlugin already consumed");
             *guard = Some(multi.with_fallback(fallback));
         }
         self

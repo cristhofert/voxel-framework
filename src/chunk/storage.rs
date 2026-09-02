@@ -83,13 +83,13 @@ pub struct Chunk<V: VoxelType> {
 /// OR-ed with the upper bits of an existing state byte without clobbering them.
 pub fn face_to_state(normal: bevy::math::IVec3) -> u8 {
     match (normal.x, normal.y, normal.z) {
-        (1,  0,  0) => 0,
-        (-1, 0,  0) => 1,
-        (0,  1,  0) => 2,
-        (0, -1,  0) => 3,
-        (0,  0,  1) => 4,
-        (0,  0, -1) => 5,
-        _           => 6,
+        (1, 0, 0) => 0,
+        (-1, 0, 0) => 1,
+        (0, 1, 0) => 2,
+        (0, -1, 0) => 3,
+        (0, 0, 1) => 4,
+        (0, 0, -1) => 5,
+        _ => 6,
     }
 }
 

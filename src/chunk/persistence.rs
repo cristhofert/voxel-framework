@@ -20,8 +20,8 @@ use std::path::Path;
 
 use bevy::math::IVec3;
 
-use super::{CHUNK_SIZE, CHUNK_VOLUME};
 use super::storage::Chunk;
+use super::{CHUNK_SIZE, CHUNK_VOLUME};
 use crate::voxel::VoxelType;
 
 /// Saves a chunk to a binary file.
@@ -187,18 +187,9 @@ mod tests {
 
     #[test]
     fn chunk_filename_formatting() {
-        assert_eq!(
-            chunk_filename(IVec3::new(1, 2, 3)),
-            "chunk_1_2_3.bin"
-        );
-        assert_eq!(
-            chunk_filename(IVec3::new(-5, 0, 10)),
-            "chunk_-5_0_10.bin"
-        );
-        assert_eq!(
-            chunk_filename(IVec3::new(0, 0, 0)),
-            "chunk_0_0_0.bin"
-        );
+        assert_eq!(chunk_filename(IVec3::new(1, 2, 3)), "chunk_1_2_3.bin");
+        assert_eq!(chunk_filename(IVec3::new(-5, 0, 10)), "chunk_-5_0_10.bin");
+        assert_eq!(chunk_filename(IVec3::new(0, 0, 0)), "chunk_0_0_0.bin");
         assert_eq!(
             chunk_filename(IVec3::new(-100, -200, -300)),
             "chunk_-100_-200_-300.bin"

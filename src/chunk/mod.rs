@@ -62,8 +62,8 @@
 //! [`persistence`] sub-module, which serializes each voxel with
 //! [`crate::voxel::VoxelType::to_byte`] / [`crate::voxel::VoxelType::from_byte`].
 
-mod storage;
 pub mod persistence;
+mod storage;
 
 pub use storage::{Chunk, face_to_state};
 
@@ -245,10 +245,7 @@ mod tests {
 
     #[test]
     fn world_to_chunk_coord_at_origin() {
-        assert_eq!(
-            world_to_chunk_coord(Vec3::ZERO),
-            IVec3::new(0, 0, 0)
-        );
+        assert_eq!(world_to_chunk_coord(Vec3::ZERO), IVec3::new(0, 0, 0));
     }
 
     #[test]

@@ -191,10 +191,7 @@ impl<V: VoxelType> Default for OcclusionPlugin<V> {
 
 impl<V: VoxelType> Plugin for OcclusionPlugin<V> {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            occlusion_update_system::<V>.after(GeneratorSystems),
-        );
+        app.add_systems(Update, occlusion_update_system::<V>.after(GeneratorSystems));
     }
 }
 

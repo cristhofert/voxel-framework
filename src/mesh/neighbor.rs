@@ -23,11 +23,11 @@
 
 use bevy::mesh::Mesh;
 
-use crate::chunk::{Chunk, CHUNK_SIZE};
+use crate::chunk::{CHUNK_SIZE, Chunk};
 use crate::voxel::VoxelType;
 
 use super::ChunkNeighbors;
-use super::greedy::{build_mesh, super_voxel, FaceDir};
+use super::greedy::{FaceDir, build_mesh, super_voxel};
 
 /// Generates a seam-free [`Mesh`] for a chunk by culling border faces against
 /// adjacent chunk data supplied in `neighbors`.

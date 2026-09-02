@@ -59,13 +59,16 @@
 //! systems into a Bevy app.
 
 mod greedy;
-mod neighbor;
 pub mod lod;
+mod neighbor;
 pub mod systems;
 
-pub use greedy::{generate_chunk_mesh, ATTRIBUTE_TEXTURE_LAYER};
+pub use greedy::{ATTRIBUTE_TEXTURE_LAYER, generate_chunk_mesh};
 pub use neighbor::generate_chunk_mesh_with_neighbors;
-pub use systems::{chunk_mesh_system, chunk_despawn_system, flush_neighbor_remesh_system, lod_update_system, PendingNeighborRemesh};
+pub use systems::{
+    PendingNeighborRemesh, chunk_despawn_system, chunk_mesh_system, flush_neighbor_remesh_system,
+    lod_update_system,
+};
 
 use bevy::prelude::*;
 
@@ -129,8 +132,7 @@ impl<V: VoxelType> Plugin for MeshPlugin<V> {
             (
                 systems::lod_update_system::<V>,
                 systems::chunk_mesh_system::<V>.after(GeneratorSystems),
-                systems::flush_neighbor_remesh_system
-                    .after(systems::chunk_mesh_system::<V>),
+                systems::flush_neighbor_remesh_system.after(systems::chunk_mesh_system::<V>),
                 systems::chunk_despawn_system::<V>,
             ),
         );
