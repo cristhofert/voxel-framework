@@ -1,6 +1,6 @@
 [package]
 name = "voxel-framework"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 description = "A reusable voxel engine framework built on Bevy"
@@ -12,6 +12,22 @@ documentation = "https://docs.rs/voxel-framework"
 readme = "README.md"
 keywords = ["voxel", "bevy", "gamedev", "voxel-engine", "procedural"]
 categories = ["game-development", "rendering", "graphics"]
+# Keep the crates.io package focused on library source, docs, examples, and
+# runtime assets needed by docs.rs/examples; exclude local agent/CI/spec/state.
+exclude = [
+    ".codex",
+    ".codex/**",
+    ".claude/**",
+    ".atl/**",
+    ".github/**",
+    "openspec/**",
+    "Cargo.toml.orig",
+    "worlds/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/sdd/**",
+    "llms.txt",
+]
 
 # Build docs.rs pages with every feature so the full public API renders.
 [package.metadata.docs.rs]

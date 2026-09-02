@@ -31,7 +31,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
 
-use crate::chunk::{Chunk, CHUNK_SIZE, VOXEL_SIZE};
+use crate::chunk::{CHUNK_SIZE, Chunk, VOXEL_SIZE};
 use crate::voxel::VoxelType;
 
 /// Custom mesh vertex attribute carrying the texture array layer index.
@@ -39,11 +39,8 @@ use crate::voxel::VoxelType;
 /// Each vertex stores a `u32` that selects which layer of the GPU texture
 /// array the `ChunkMaterial` shader samples when rendering that vertex.
 /// The value comes from [`crate::voxel::VoxelType::texture_layer`].
-pub const ATTRIBUTE_TEXTURE_LAYER: MeshVertexAttribute = MeshVertexAttribute::new(
-    "Vertex_TextureLayer",
-    988540919,
-    VertexFormat::Uint32,
-);
+pub const ATTRIBUTE_TEXTURE_LAYER: MeshVertexAttribute =
+    MeshVertexAttribute::new("Vertex_TextureLayer", 988540919, VertexFormat::Uint32);
 
 /// Face direction descriptor used by the greedy mesher.
 ///
@@ -295,13 +292,16 @@ pub(crate) fn build_mesh<V: VoxelType>(
         }
     }
 
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
-        .with_inserted_attribute(ATTRIBUTE_TEXTURE_LAYER, texture_layers)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_attribute(ATTRIBUTE_TEXTURE_LAYER, texture_layers)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Builds the 2D visibility mask for a single slice.
@@ -411,8 +411,23 @@ fn greedy_merge<V: VoxelType>(
 
             // Emit the quad.
             emit_quad(
-                chunk, face, face_index, d, u, v, width, height, step, voxel, state,
-                positions, normals, uvs, colors, texture_layers, indices,
+                chunk,
+                face,
+                face_index,
+                d,
+                u,
+                v,
+                width,
+                height,
+                step,
+                voxel,
+                state,
+                positions,
+                normals,
+                uvs,
+                colors,
+                texture_layers,
+                indices,
             );
 
             u += width;
@@ -548,7 +563,7 @@ fn emit_quad<V: VoxelType>(
     let ao_depth: usize = if face.positive {
         (d + 1) * step
     } else {
-        d * step.wrapping_sub(1)  // wrapping so step=0 case yields usize::MAX → out-of-bounds
+        d * step.wrapping_sub(1) // wrapping so step=0 case yields usize::MAX → out-of-bounds
     };
     // Clamp out-of-bounds depth to a sentinel that ao_neighbor_solid will reject.
     let ao_depth = if !face.positive && d == 0 {
@@ -571,18 +586,24 @@ fn emit_quad<V: VoxelType>(
     //
     // The vertex_ao helper uses wrapping_sub so corner (u,v)=(0,0) correctly
     // treats the missing neighbors as air without a bounds check.
-    let ao_v0 = vertex_ao(chunk, face, ao_depth, u * step,             v * step);
-    let ao_v1 = vertex_ao(chunk, face, ao_depth, (u + width) * step,   v * step);
-    let ao_v2 = vertex_ao(chunk, face, ao_depth, (u + width) * step,   (v + height) * step);
-    let ao_v3 = vertex_ao(chunk, face, ao_depth, u * step,             (v + height) * step);
+    let ao_v0 = vertex_ao(chunk, face, ao_depth, u * step, v * step);
+    let ao_v1 = vertex_ao(chunk, face, ao_depth, (u + width) * step, v * step);
+    let ao_v2 = vertex_ao(
+        chunk,
+        face,
+        ao_depth,
+        (u + width) * step,
+        (v + height) * step,
+    );
+    let ao_v3 = vertex_ao(chunk, face, ao_depth, u * step, (v + height) * step);
 
     // Build the 4 corner positions in chunk-local space.
     // Corners in (u, v) order: (u_start, v_start), (u_end, v_start), (u_end, v_end), (u_start, v_end)
     let corners = [
         (u_start, v_start, ao_v0),
-        (u_end,   v_start, ao_v1),
-        (u_end,   v_end,   ao_v2),
-        (u_start, v_end,   ao_v3),
+        (u_end, v_start, ao_v1),
+        (u_end, v_end, ao_v2),
+        (u_start, v_end, ao_v3),
     ];
 
     let base_idx = positions.len() as u32;
@@ -592,9 +613,18 @@ fn emit_quad<V: VoxelType>(
     // apply the baked AO.
     let srgb = voxel.color();
     let to_linear = |c: f32| -> f32 {
-        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     };
-    let base_color = [to_linear(srgb[0]), to_linear(srgb[1]), to_linear(srgb[2]), srgb[3]];
+    let base_color = [
+        to_linear(srgb[0]),
+        to_linear(srgb[1]),
+        to_linear(srgb[2]),
+        srgb[3],
+    ];
 
     // Texture layer for this face — same for all 4 vertices.
     // Uses texture_layer_for_state so that voxels with different placement
@@ -709,8 +739,8 @@ fn emit_quad<V: VoxelType>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::mesh::VertexAttributeValues;
     use crate::voxel::DefaultVoxel;
+    use bevy::mesh::VertexAttributeValues;
 
     /// Helper to extract vertex count from a mesh.
     fn vertex_count(mesh: &Mesh) -> usize {
@@ -732,7 +762,11 @@ mod tests {
     fn empty_chunk_produces_empty_mesh() {
         let chunk = Chunk::<DefaultVoxel>::new();
         let mesh = generate_chunk_mesh(&chunk, 1);
-        assert_eq!(vertex_count(&mesh), 0, "empty chunk should produce 0 vertices");
+        assert_eq!(
+            vertex_count(&mesh),
+            0,
+            "empty chunk should produce 0 vertices"
+        );
     }
 
     #[test]

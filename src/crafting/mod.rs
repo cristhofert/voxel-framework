@@ -221,10 +221,7 @@ fn spawn_crafting_menu(mut commands: Commands) {
     ));
 }
 
-fn toggle_crafting_menu(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut state: ResMut<CraftingMenuState>,
-) {
+fn toggle_crafting_menu(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<CraftingMenuState>) {
     if keys.just_pressed(KeyCode::KeyC) {
         state.visible = !state.visible;
         if state.visible {
@@ -279,13 +276,18 @@ fn rebuild_crafting_menu<I: ItemType>(
     // Header.
     let header = commands
         .spawn((
-            CraftingRecipeRow { recipe_index: usize::MAX },
+            CraftingRecipeRow {
+                recipe_index: usize::MAX,
+            },
             Node {
                 padding: UiRect::bottom(Val::Px(6.0)),
                 ..default()
             },
             Text::new("-- Crafting (C to close) --"),
-            TextFont { font_size: 15.0, ..default() },
+            TextFont {
+                font_size: 15.0,
+                ..default()
+            },
             TextColor(Color::WHITE),
         ))
         .id();
@@ -294,9 +296,14 @@ fn rebuild_crafting_menu<I: ItemType>(
     if registry.recipes.is_empty() {
         let empty = commands
             .spawn((
-                CraftingRecipeRow { recipe_index: usize::MAX },
+                CraftingRecipeRow {
+                    recipe_index: usize::MAX,
+                },
                 Text::new("No recipes registered."),
-                TextFont { font_size: 13.0, ..default() },
+                TextFont {
+                    font_size: 13.0,
+                    ..default()
+                },
                 TextColor(Color::srgb(0.55, 0.55, 0.55)),
             ))
             .id();
@@ -332,7 +339,10 @@ fn rebuild_crafting_menu<I: ItemType>(
                 },
                 BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.90)),
                 Text::new(label),
-                TextFont { font_size: 12.0, ..default() },
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
                 TextColor(Color::srgb(0.70, 0.70, 0.70)),
             ))
             .id();
@@ -342,13 +352,18 @@ fn rebuild_crafting_menu<I: ItemType>(
     // Footer hint.
     let footer = commands
         .spawn((
-            CraftingRecipeRow { recipe_index: usize::MAX },
+            CraftingRecipeRow {
+                recipe_index: usize::MAX,
+            },
             Node {
                 padding: UiRect::top(Val::Px(6.0)),
                 ..default()
             },
             Text::new("Green = craftable  |  click to craft"),
-            TextFont { font_size: 11.0, ..default() },
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.45, 0.45, 0.45)),
         ))
         .id();
@@ -380,7 +395,7 @@ fn update_crafting_row_colors<I: ItemType>(
         let hovered = matches!(interaction, Interaction::Hovered | Interaction::Pressed);
 
         *bg = match (craftable, hovered) {
-            (true, true)  => BackgroundColor(Color::srgba(0.18, 0.50, 0.18, 0.95)),
+            (true, true) => BackgroundColor(Color::srgba(0.18, 0.50, 0.18, 0.95)),
             (true, false) => BackgroundColor(Color::srgba(0.10, 0.28, 0.10, 0.90)),
             (false, true) => BackgroundColor(Color::srgba(0.25, 0.25, 0.25, 0.90)),
             (false, false) => BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.90)),
@@ -435,7 +450,9 @@ impl<I: ItemType> CraftingPlugin<I> {
 }
 
 impl<I: ItemType> Default for CraftingPlugin<I> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<I: ItemType> Plugin for CraftingPlugin<I> {
@@ -481,7 +498,9 @@ impl<I: ItemType> CraftingUiPlugin<I> {
 }
 
 impl<I: ItemType> Default for CraftingUiPlugin<I> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<I: ItemType> Plugin for CraftingUiPlugin<I> {
@@ -513,16 +532,31 @@ mod tests {
         let mut r = CraftingRegistry::default();
         r.add(CraftingRecipe {
             name: "Crystal from Ore",
-            ingredients: vec![CraftingIngredient { item: DefaultItem::IronOre, count: 4 }],
-            outputs: vec![CraftingIngredient { item: DefaultItem::Crystal, count: 1 }],
+            ingredients: vec![CraftingIngredient {
+                item: DefaultItem::IronOre,
+                count: 4,
+            }],
+            outputs: vec![CraftingIngredient {
+                item: DefaultItem::Crystal,
+                count: 1,
+            }],
         });
         r.add(CraftingRecipe {
             name: "Rare from Ore+Crystal",
             ingredients: vec![
-                CraftingIngredient { item: DefaultItem::IronOre, count: 2 },
-                CraftingIngredient { item: DefaultItem::Crystal, count: 1 },
+                CraftingIngredient {
+                    item: DefaultItem::IronOre,
+                    count: 2,
+                },
+                CraftingIngredient {
+                    item: DefaultItem::Crystal,
+                    count: 1,
+                },
             ],
-            outputs: vec![CraftingIngredient { item: DefaultItem::RareMineral, count: 1 }],
+            outputs: vec![CraftingIngredient {
+                item: DefaultItem::RareMineral,
+                count: 1,
+            }],
         });
         r
     }

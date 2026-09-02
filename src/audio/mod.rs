@@ -397,7 +397,11 @@ mod tests {
         let mut cfg = SfxConfig::new();
         cfg.register(
             SfxEvent::BlockPlace,
-            vec!["sounds/place1.ogg", "sounds/place2.ogg", "sounds/place3.ogg"],
+            vec![
+                "sounds/place1.ogg",
+                "sounds/place2.ogg",
+                "sounds/place3.ogg",
+            ],
         );
         cfg
     }
@@ -415,7 +419,10 @@ mod tests {
         let cfg = config_with_paths();
         // 3 paths; seed 5 → 5 % 3 = 2 → "sounds/place3.ogg"
         let path = cfg.pick_path(&SfxEvent::BlockPlace, 5);
-        assert!(path.is_some(), "seed > paths.len() must still return a valid path");
+        assert!(
+            path.is_some(),
+            "seed > paths.len() must still return a valid path"
+        );
         assert_eq!(path.unwrap(), "sounds/place3.ogg");
     }
 

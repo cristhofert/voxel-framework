@@ -159,8 +159,7 @@ fn position_seed(world_pos: Vec3, index: u32) -> u32 {
     let ix = (world_pos.x * 1000.0) as i32 as u32;
     let iy = (world_pos.y * 1000.0) as i32 as u32;
     let iz = (world_pos.z * 1000.0) as i32 as u32;
-    let h = ix
-        .wrapping_mul(2654435761)
+    let h = ix.wrapping_mul(2654435761)
         ^ iy.wrapping_mul(2246822519)
         ^ iz.wrapping_mul(3266489917)
         ^ index.wrapping_mul(1013904223);
@@ -185,7 +184,8 @@ fn fragment_direction(world_pos: Vec3, index: u32, count: u32) -> Vec3 {
         0.5
     };
     // Elevation angle in [10°, 80°] degrees from horizontal
-    let elevation = std::f32::consts::FRAC_PI_8 + t * (std::f32::consts::FRAC_PI_2 - std::f32::consts::FRAC_PI_4);
+    let elevation = std::f32::consts::FRAC_PI_8
+        + t * (std::f32::consts::FRAC_PI_2 - std::f32::consts::FRAC_PI_4);
 
     // Azimuth: golden angle spiral + small random jitter
     let azimuth = index as f32 * GOLDEN_ANGLE + pseudo_rand(seed_a) * 0.3;

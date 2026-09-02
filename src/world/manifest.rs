@@ -18,8 +18,8 @@ use crate::items::drops::DropTable;
 use crate::items::inventory::ItemType;
 use crate::player::PlayerConfig;
 use crate::voxel::VoxelType;
-use crate::world::persistence::WorldDataDir;
 use crate::world::config::WorldConfig;
+use crate::world::persistence::WorldDataDir;
 
 // ─── Palette entry types ──────────────────────────────────────────────────────
 
@@ -102,8 +102,7 @@ impl WorldManifest {
     pub fn read(world_dir: &Path) -> std::io::Result<Self> {
         let path = world_dir.join("world.json");
         let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        serde_json::from_str(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 }
 
@@ -307,7 +306,13 @@ fn write_manifest_system<V: VoxelType, I: ItemType>(
     };
 
     match manifest.write(world_dir) {
-        Ok(()) => eprintln!("voxel-framework: world manifest written to {:?}", manifest_path),
-        Err(e) => eprintln!("voxel-framework: failed to write world manifest to {:?}: {e}", manifest_path),
+        Ok(()) => eprintln!(
+            "voxel-framework: world manifest written to {:?}",
+            manifest_path
+        ),
+        Err(e) => eprintln!(
+            "voxel-framework: failed to write world manifest to {:?}: {e}",
+            manifest_path
+        ),
     }
 }

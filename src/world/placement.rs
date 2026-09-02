@@ -361,13 +361,17 @@ pub struct PlacementInputPlugin<V: VoxelType> {
 impl<V: VoxelType> PlacementInputPlugin<V> {
     /// Creates a new [`PlacementInputPlugin`] for voxel type `V`.
     pub fn new() -> Self {
-        Self { _m: std::marker::PhantomData }
+        Self {
+            _m: std::marker::PhantomData,
+        }
     }
 }
 
 #[cfg(feature = "items")]
 impl<V: VoxelType> Default for PlacementInputPlugin<V> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(feature = "items")]
@@ -405,14 +409,12 @@ pub fn placement_input_system<V: VoxelType>(
         return;
     };
 
-    let origin    = cam_tf.translation();
+    let origin = cam_tf.translation();
     let direction = cam_tf.forward().as_vec3();
 
     // `transmute_lens` gives a read-only view without a second conflicting query.
     let mut lens = chunks.transmute_lens::<&crate::chunk::Chunk<V>>();
-    let Some(hit) = super::raycast::raycast(
-        origin, direction, 6.0, &manager, &lens.query(),
-    ) else {
+    let Some(hit) = super::raycast::raycast(origin, direction, 6.0, &manager, &lens.query()) else {
         return;
     };
 
@@ -474,7 +476,9 @@ mod tests {
     #[test]
     fn test_tick_advances_cooldown() {
         let config = default_config();
-        let mut state = PlacementState { cooldown_elapsed: 0.0 };
+        let mut state = PlacementState {
+            cooldown_elapsed: 0.0,
+        };
         tick_placement(0.10, &mut state, &config);
         assert!((state.cooldown_elapsed - 0.10).abs() < f32::EPSILON);
     }
@@ -482,7 +486,9 @@ mod tests {
     #[test]
     fn test_tick_clamps_to_cooldown_max() {
         let config = default_config();
-        let mut state = PlacementState { cooldown_elapsed: 0.20 };
+        let mut state = PlacementState {
+            cooldown_elapsed: 0.20,
+        };
         // Adding 0.20 would give 0.40, but max is 0.25.
         tick_placement(0.20, &mut state, &config);
         assert_eq!(state.cooldown_elapsed, config.cooldown);

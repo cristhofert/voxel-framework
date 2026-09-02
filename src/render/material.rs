@@ -15,8 +15,8 @@ use bevy::asset::RenderAssetUsages;
 use bevy::math::bounding::Aabb3d;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MeshPipelineKey};
-use bevy::render::alpha::AlphaMode;
 use bevy::prelude::*;
+use bevy::render::alpha::AlphaMode;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
@@ -263,7 +263,9 @@ pub fn upgrade_to_texture_material(
     if handle.custom.is_some() {
         return;
     }
-    let Some(tex) = texture_array else { return; };
+    let Some(tex) = texture_array else {
+        return;
+    };
 
     let mat = ChunkMaterial {
         texture_array: tex.handle.clone(),
@@ -273,12 +275,16 @@ pub fn upgrade_to_texture_material(
 
     // Swap the material on every already-rendered chunk.
     for entity in &rendered_chunks {
-        commands.entity(entity)
+        commands
+            .entity(entity)
             .remove::<MeshMaterial3d<StandardMaterial>>()
             .insert(MeshMaterial3d(mat_handle.clone()));
     }
 
-    eprintln!("voxel texture array active — {} chunk(s) upgraded to ChunkMaterial", rendered_chunks.iter().count());
+    eprintln!(
+        "voxel texture array active — {} chunk(s) upgraded to ChunkMaterial",
+        rendered_chunks.iter().count()
+    );
 }
 
 // ─── build_texture_array ─────────────────────────────────────────────────────
@@ -297,7 +303,10 @@ pub fn upgrade_to_texture_material(
 ///
 /// Panics if `images` is empty or if images have different sizes / formats.
 pub fn build_texture_array(images: &[Image]) -> Image {
-    assert!(!images.is_empty(), "build_texture_array: must provide at least one image");
+    assert!(
+        !images.is_empty(),
+        "build_texture_array: must provide at least one image"
+    );
     let first = &images[0];
     let width = first.width();
     let height = first.height();
@@ -308,7 +317,10 @@ pub fn build_texture_array(images: &[Image]) -> Image {
     for (i, img) in images.iter().enumerate() {
         assert_eq!(img.width(), width, "image {i} width mismatch");
         assert_eq!(img.height(), height, "image {i} height mismatch");
-        assert_eq!(img.texture_descriptor.format, format, "image {i} format mismatch");
+        assert_eq!(
+            img.texture_descriptor.format, format,
+            "image {i} format mismatch"
+        );
     }
 
     // Concatenate raw pixel data from all layers.
@@ -319,7 +331,9 @@ pub fn build_texture_array(images: &[Image]) -> Image {
         }
     }
 
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureViewDescriptor, TextureViewDimension};
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureViewDescriptor, TextureViewDimension,
+    };
 
     let size = Extent3d {
         width,

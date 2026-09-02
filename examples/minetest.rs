@@ -13,15 +13,15 @@
 //!   F7 — Poison effect  |  F8 — Jump Boost effect
 //!   P — Haste effect
 
-use std::sync::Arc;
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::asset::RenderAssetUsages;
-use voxel_framework::prelude::*;
+use std::sync::Arc;
 use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
-use voxel_framework::items::{DefaultItem, ItemCollector};
 use voxel_framework::items::inventory::{ContainerComponent, PrimaryContainer};
+use voxel_framework::items::{DefaultItem, ItemCollector};
 use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
+use voxel_framework::prelude::*;
 
 // ─── Status effects ──────────────────────────────────────────────────────────
 
@@ -41,28 +41,52 @@ enum MinetestEffect {
 impl StatusEffect for MinetestEffect {
     fn name(&self) -> &'static str {
         match self {
-            Self::Speed         => "Speed",
-            Self::Slowness      => "Slowness",
-            Self::JumpBoost     => "Jump Boost",
-            Self::Haste         => "Haste",
+            Self::Speed => "Speed",
+            Self::Slowness => "Slowness",
+            Self::JumpBoost => "Jump Boost",
+            Self::Haste => "Haste",
             Self::MiningFatigue => "Mining Fatigue",
-            Self::Regeneration  => "Regeneration",
-            Self::Poison        => "Poison",
-            Self::Resistance    => "Resistance",
+            Self::Regeneration => "Regeneration",
+            Self::Poison => "Poison",
+            Self::Resistance => "Resistance",
         }
     }
 
     fn modifiers(&self, amplifier: u8) -> EffectModifiers {
         let lvl = (amplifier + 1) as f32;
         match self {
-            Self::Speed        => EffectModifiers { speed_mult: 1.0 + 0.2 * lvl, ..Default::default() },
-            Self::Slowness     => EffectModifiers { speed_mult: 1.0 / (1.0 + 0.15 * lvl), ..Default::default() },
-            Self::JumpBoost    => EffectModifiers { jump_mult: 1.0 + 0.2 * lvl, ..Default::default() },
-            Self::Haste        => EffectModifiers { mining_speed_mult: 1.0 + 0.2 * lvl, ..Default::default() },
-            Self::MiningFatigue => EffectModifiers { mining_speed_mult: 1.0 / (1.0 + 0.3 * lvl), ..Default::default() },
-            Self::Regeneration => EffectModifiers { regen_per_sec: 1.0 * lvl, ..Default::default() },
-            Self::Poison       => EffectModifiers { damage_per_sec: 1.0 * lvl, ..Default::default() },
-            Self::Resistance   => EffectModifiers { damage_resistance: 0.2 * lvl, ..Default::default() },
+            Self::Speed => EffectModifiers {
+                speed_mult: 1.0 + 0.2 * lvl,
+                ..Default::default()
+            },
+            Self::Slowness => EffectModifiers {
+                speed_mult: 1.0 / (1.0 + 0.15 * lvl),
+                ..Default::default()
+            },
+            Self::JumpBoost => EffectModifiers {
+                jump_mult: 1.0 + 0.2 * lvl,
+                ..Default::default()
+            },
+            Self::Haste => EffectModifiers {
+                mining_speed_mult: 1.0 + 0.2 * lvl,
+                ..Default::default()
+            },
+            Self::MiningFatigue => EffectModifiers {
+                mining_speed_mult: 1.0 / (1.0 + 0.3 * lvl),
+                ..Default::default()
+            },
+            Self::Regeneration => EffectModifiers {
+                regen_per_sec: 1.0 * lvl,
+                ..Default::default()
+            },
+            Self::Poison => EffectModifiers {
+                damage_per_sec: 1.0 * lvl,
+                ..Default::default()
+            },
+            Self::Resistance => EffectModifiers {
+                damage_resistance: 0.2 * lvl,
+                ..Default::default()
+            },
         }
     }
 
@@ -72,14 +96,14 @@ impl StatusEffect for MinetestEffect {
 
     fn color(&self) -> [f32; 4] {
         match self {
-            Self::Speed         => [0.4, 0.8, 1.0, 1.0],
-            Self::Slowness      => [0.5, 0.5, 0.7, 1.0],
-            Self::JumpBoost     => [0.5, 1.0, 0.5, 1.0],
-            Self::Haste         => [0.9, 0.7, 0.2, 1.0],
+            Self::Speed => [0.4, 0.8, 1.0, 1.0],
+            Self::Slowness => [0.5, 0.5, 0.7, 1.0],
+            Self::JumpBoost => [0.5, 1.0, 0.5, 1.0],
+            Self::Haste => [0.9, 0.7, 0.2, 1.0],
             Self::MiningFatigue => [0.3, 0.2, 0.5, 1.0],
-            Self::Regeneration  => [0.6, 1.0, 0.6, 1.0],
-            Self::Poison        => [0.4, 0.6, 0.1, 1.0],
-            Self::Resistance    => [0.6, 0.4, 0.8, 1.0],
+            Self::Regeneration => [0.6, 1.0, 0.6, 1.0],
+            Self::Poison => [0.4, 0.6, 0.1, 1.0],
+            Self::Resistance => [0.6, 0.4, 0.8, 1.0],
         }
     }
 }
@@ -116,13 +140,15 @@ struct LookedAtBlock {
 #[derive(Component)]
 struct BlockInfoText;
 
-
 /// Spawns the block-info HUD text — always visible, top-left below the F3 overlay.
 fn spawn_block_info_ui(mut commands: Commands) {
     commands.spawn((
         BlockInfoText,
         Text::new(""),
-        TextFont { font_size: 14.0, ..default() },
+        TextFont {
+            font_size: 14.0,
+            ..default()
+        },
         TextColor(Color::WHITE),
         Node {
             position_type: PositionType::Absolute,
@@ -144,24 +170,28 @@ fn update_block_info(
     mut looked_at: ResMut<LookedAtBlock>,
     mut text_q: Query<&mut Text, With<BlockInfoText>>,
 ) {
-    let Ok(cam_tf) = camera_q.single() else { return };
-    let origin    = cam_tf.translation();
+    let Ok(cam_tf) = camera_q.single() else {
+        return;
+    };
+    let origin = cam_tf.translation();
     let direction = cam_tf.forward().as_vec3();
 
     let hit = raycast(origin, direction, 8.0, &manager, &chunks);
 
     looked_at.voxel = hit.as_ref().and_then(|h| {
         let entity = manager.get_entity(h.chunk_coord)?;
-        let chunk  = chunks.get(entity).ok()?;
+        let chunk = chunks.get(entity).ok()?;
         let (x, y, z) = h.local;
         let v = chunk.get(x, y, z);
         // World-grid position of the hit voxel
-        let world_grid = h.chunk_coord * CHUNK_SIZE as i32
-            + IVec3::new(x as i32, y as i32, z as i32);
+        let world_grid =
+            h.chunk_coord * CHUNK_SIZE as i32 + IVec3::new(x as i32, y as i32, z as i32);
         Some((v, world_grid))
     });
 
-    let Ok(mut text) = text_q.single_mut() else { return };
+    let Ok(mut text) = text_q.single_mut() else {
+        return;
+    };
 
     *text = match &looked_at.voxel {
         Some((v, pos)) => Text::new(format!(
@@ -169,7 +199,9 @@ fn update_block_info(
             v.name(),
             v.hardness(),
             v.mining_level(),
-            pos.x, pos.y, pos.z,
+            pos.x,
+            pos.y,
+            pos.z,
         )),
         None => Text::new("Mirando: —"),
     };
@@ -184,7 +216,8 @@ fn update_block_info(
 /// 3. [`WorldConfig::default`] with `world_name` set — if neither file exists.
 fn load_world_config(default_name: &str) -> WorldConfig {
     let args: Vec<String> = std::env::args().collect();
-    let name = args.windows(2)
+    let name = args
+        .windows(2)
         .find(|w| w[0] == "--world")
         .map(|w| w[1].clone())
         .unwrap_or_else(|| default_name.to_string());
@@ -199,7 +232,10 @@ fn load_world_config(default_name: &str) -> WorldConfig {
     let toml_path = format!("examples/{}.toml", name);
     WorldConfig::from_file(&toml_path)
         .inspect_err(|e| eprintln!("No se pudo cargar '{toml_path}': {e}. Usando defaults."))
-        .unwrap_or_else(|_| WorldConfig { world_name: name, ..WorldConfig::default() })
+        .unwrap_or_else(|_| WorldConfig {
+            world_name: name,
+            ..WorldConfig::default()
+        })
 }
 
 fn main() {
@@ -208,7 +244,10 @@ fn main() {
     let mut player_config = PlayerConfig {
         spawn_position: Vec3::new(8.0, 60.0, 8.0),
         speed: 6.0,
-        mode: PlayerMode::Grounded { gravity: 20.0, jump_speed: 8.0 },
+        mode: PlayerMode::Grounded {
+            gravity: 20.0,
+            jump_speed: 8.0,
+        },
         ..default()
     };
 
@@ -228,9 +267,13 @@ fn main() {
         // ── Engine (terrain voxel type) ──────────────────────────────────────
         .add_plugins(VoxelPlugin::<DefaultTerrainVoxel>::new())
         .add_plugins(GeneratorPlugin::<DefaultTerrainVoxel>::new())
-        .add_plugins(PersistencePlugin::<DefaultTerrainVoxel>::with_world(&world_config.world_name))
+        .add_plugins(PersistencePlugin::<DefaultTerrainVoxel>::with_world(
+            &world_config.world_name,
+        ))
         // ── Player (grounded with gravity) ───────────────────────────────────
-        .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::with_world(&world_config.world_name))
+        .add_plugins(PlayerPlugin::<DefaultTerrainVoxel>::with_world(
+            &world_config.world_name,
+        ))
         // ── Mining & placement input (batteries-included) ────────────────────
         .add_plugins(MiningInputPlugin::<DefaultTerrainVoxel, DefaultItem>::new())
         .add_plugins(DropsPlugin::<DefaultItem>::new())
@@ -249,7 +292,9 @@ fn main() {
         // ── Audio (real bevy_audio playback) ────────────────────────────────
         .add_plugins(DefaultAudioPlugin)
         // ── World manifest (writes world.json on first run) ──────────────────
-        .add_plugins(WorldManifestPlugin::<DefaultTerrainVoxel, DefaultItem>::new("DefaultTerrainVoxel"))
+        .add_plugins(
+            WorldManifestPlugin::<DefaultTerrainVoxel, DefaultItem>::new("DefaultTerrainVoxel"),
+        )
         // ── Status effects ────────────────────────────────────────────────────
         .add_plugins(StatusEffectsPlugin::<MinetestEffect>::new())
         // ── Pause menu ───────────────────────────────────────────────────────
@@ -268,14 +313,31 @@ fn main() {
         .insert_resource(world_config)
         // ── Block-info overlay (looked-at block) ─────────────────────────────
         .init_resource::<LookedAtBlock>()
-        .add_systems(Startup, (spawn_player_container, setup_crafting, setup_drops, setup_audio, setup_mobs, spawn_block_info_ui, setup_textures, spawn_inventory_ui, spawn_effects_hud))
-        .add_systems(Update, (
-            update_block_info,
-            assemble_texture_array,
-            toggle_inventory_ui,
-            update_inventory_ui,
-            debug_apply_effects,
-        ).run_if(in_state(PauseMenuState::Playing)))
+        .add_systems(
+            Startup,
+            (
+                spawn_player_container,
+                setup_crafting,
+                setup_drops,
+                setup_audio,
+                setup_mobs,
+                spawn_block_info_ui,
+                setup_textures,
+                spawn_inventory_ui,
+                spawn_effects_hud,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                update_block_info,
+                assemble_texture_array,
+                toggle_inventory_ui,
+                update_inventory_ui,
+                debug_apply_effects,
+            )
+                .run_if(in_state(PauseMenuState::Playing)),
+        )
         .add_systems(Update, (update_effects_hud, handle_save_settings))
         .run();
 }
@@ -320,21 +382,42 @@ fn setup_crafting(
     // Sample recipes.
     registry.add(CraftingRecipe {
         name: "Crystal Shard",
-        ingredients: vec![CraftingIngredient { item: DefaultItem::IronOre, count: 4 }],
-        outputs: vec![CraftingIngredient { item: DefaultItem::Crystal, count: 1 }],
+        ingredients: vec![CraftingIngredient {
+            item: DefaultItem::IronOre,
+            count: 4,
+        }],
+        outputs: vec![CraftingIngredient {
+            item: DefaultItem::Crystal,
+            count: 1,
+        }],
     });
     registry.add(CraftingRecipe {
         name: "Rare Mineral",
         ingredients: vec![
-            CraftingIngredient { item: DefaultItem::IronOre, count: 2 },
-            CraftingIngredient { item: DefaultItem::Crystal, count: 1 },
+            CraftingIngredient {
+                item: DefaultItem::IronOre,
+                count: 2,
+            },
+            CraftingIngredient {
+                item: DefaultItem::Crystal,
+                count: 1,
+            },
         ],
-        outputs: vec![CraftingIngredient { item: DefaultItem::RareMineral, count: 1 }],
+        outputs: vec![CraftingIngredient {
+            item: DefaultItem::RareMineral,
+            count: 1,
+        }],
     });
     registry.add(CraftingRecipe {
         name: "Rock Fragments",
-        ingredients: vec![CraftingIngredient { item: DefaultItem::RareMineral, count: 1 }],
-        outputs: vec![CraftingIngredient { item: DefaultItem::RockFragment, count: 3 }],
+        ingredients: vec![CraftingIngredient {
+            item: DefaultItem::RareMineral,
+            count: 1,
+        }],
+        outputs: vec![CraftingIngredient {
+            item: DefaultItem::RockFragment,
+            count: 3,
+        }],
     });
 
     // Seed starting tools and a small rock stash so the player can mine and
@@ -376,25 +459,35 @@ fn setup_drops(mut drop_table: ResMut<DropTable<DefaultItem>>) {
 /// Place `.ogg` files under `assets/minetest/audio/` to hear in-game audio.
 /// Missing files are silently ignored by Bevy's asset server.
 fn setup_audio(mut cfg: ResMut<SfxConfig>) {
-    cfg.register(SfxEvent::MiningComplete, vec![
-        "minetest/audio/impactMining_000.ogg",
-        "minetest/audio/impactMining_001.ogg",
-        "minetest/audio/impactMining_002.ogg",
-        "minetest/audio/impactMining_003.ogg",
-        "minetest/audio/impactMining_004.ogg",
-    ]);
-    cfg.register(SfxEvent::BlockPlace, vec![
-        "minetest/audio/impactGeneric_light_000.ogg",
-        "minetest/audio/impactGeneric_light_001.ogg",
-        "minetest/audio/impactGeneric_light_002.ogg",
-    ]);
+    cfg.register(
+        SfxEvent::MiningComplete,
+        vec![
+            "minetest/audio/impactMining_000.ogg",
+            "minetest/audio/impactMining_001.ogg",
+            "minetest/audio/impactMining_002.ogg",
+            "minetest/audio/impactMining_003.ogg",
+            "minetest/audio/impactMining_004.ogg",
+        ],
+    );
+    cfg.register(
+        SfxEvent::BlockPlace,
+        vec![
+            "minetest/audio/impactGeneric_light_000.ogg",
+            "minetest/audio/impactGeneric_light_001.ogg",
+            "minetest/audio/impactGeneric_light_002.ogg",
+        ],
+    );
     cfg.register(SfxEvent::ItemPickup, vec!["minetest/audio/click1.ogg"]);
-    cfg.register(SfxEvent::Footstep(0), vec![  // generic / stone
-        "minetest/audio/impactGeneric_light_000.ogg",
-        "minetest/audio/impactGeneric_light_001.ogg",
-        "minetest/audio/impactGeneric_light_002.ogg",
-        "minetest/audio/impactTin_medium_002.ogg",
-    ]);
+    cfg.register(
+        SfxEvent::Footstep(0),
+        vec![
+            // generic / stone
+            "minetest/audio/impactGeneric_light_000.ogg",
+            "minetest/audio/impactGeneric_light_001.ogg",
+            "minetest/audio/impactGeneric_light_002.ogg",
+            "minetest/audio/impactTin_medium_002.ogg",
+        ],
+    );
 }
 
 /// Spawns a few mob enemies near the player spawn point.
@@ -415,7 +508,9 @@ fn setup_mobs(
         spawn_mob(
             Vec3::new(8.0 + dx as f32, 65.0, 8.0 + dz as f32),
             config.clone(),
-            &mut commands, &mut meshes, &mut materials,
+            &mut commands,
+            &mut meshes,
+            &mut materials,
         );
     }
 }
@@ -431,11 +526,13 @@ fn setup_textures(
     // `PauseMenuConfig` insert is needed here.
 
     // Layer 0: Air placeholder — mid-grey 16×16 tile.
-    let grey_pixel: Vec<u8> = (0..16 * 16)
-        .flat_map(|_| [128u8, 128, 128, 255])
-        .collect();
+    let grey_pixel: Vec<u8> = (0..16 * 16).flat_map(|_| [128u8, 128, 128, 255]).collect();
     let placeholder = Image::new(
-        Extent3d { width: 16, height: 16, depth_or_array_layers: 1 },
+        Extent3d {
+            width: 16,
+            height: 16,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         grey_pixel,
         TextureFormat::Rgba8UnormSrgb,
@@ -444,20 +541,28 @@ fn setup_textures(
     let placeholder_handle = images.add(placeholder);
 
     // Layers 1–9: actual block textures.
-    let grass  = asset_server.load("minetest/textures/grass_block_top.png");
-    let dirt   = asset_server.load("minetest/textures/dirt.png");
-    let stone  = asset_server.load("minetest/textures/stone.png");
-    let sand   = asset_server.load("minetest/textures/sand.png");
-    let wood   = asset_server.load("minetest/textures/oak_log.png");
+    let grass = asset_server.load("minetest/textures/grass_block_top.png");
+    let dirt = asset_server.load("minetest/textures/dirt.png");
+    let stone = asset_server.load("minetest/textures/stone.png");
+    let sand = asset_server.load("minetest/textures/sand.png");
+    let wood = asset_server.load("minetest/textures/oak_log.png");
     let leaves = asset_server.load("minetest/textures/oak_leaves.png");
     let gravel = asset_server.load("minetest/textures/gravel.png");
-    let snow   = asset_server.load("minetest/textures/snow.png");
-    let water  = asset_server.load("minetest/textures/water_still.png");
+    let snow = asset_server.load("minetest/textures/snow.png");
+    let water = asset_server.load("minetest/textures/water_still.png");
 
     commands.insert_resource(PendingTextures {
         handles: vec![
             placeholder_handle,
-            grass, dirt, stone, sand, wood, leaves, gravel, snow, water,
+            grass,
+            dirt,
+            stone,
+            sand,
+            wood,
+            leaves,
+            gravel,
+            snow,
+            water,
         ],
         assembled: false,
     });
@@ -481,7 +586,9 @@ fn assemble_texture_array(
 
     let mut layer_images: Vec<Image> = Vec::new();
     for handle in &pending.handles {
-        let Some(img) = images.get(handle) else { return; };
+        let Some(img) = images.get(handle) else {
+            return;
+        };
         let normalised = normalise_to_rgba32(img);
         layer_images.push(normalised);
     }
@@ -489,10 +596,15 @@ fn assemble_texture_array(
     let array_image = build_texture_array(&layer_images);
     let array_handle = images.add(array_image);
 
-    commands.insert_resource(ChunkTextureArray { handle: array_handle });
+    commands.insert_resource(ChunkTextureArray {
+        handle: array_handle,
+    });
     pending.assembled = true;
 
-    info!("voxel texture array assembled ({} layers)", layer_images.len());
+    info!(
+        "voxel texture array assembled ({} layers)",
+        layer_images.len()
+    );
 }
 
 /// Converts any [`Image`] to 16×16 `Rgba8UnormSrgb` format.
@@ -507,14 +619,16 @@ fn normalise_to_rgba32(img: &Image) -> Image {
 
     let rgba: Vec<u8> = match fmt {
         TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm => src_data.to_vec(),
-        TextureFormat::R8Unorm => {
-            src_data.iter().flat_map(|&r| [r, r, r, 255u8]).collect()
-        }
-        TextureFormat::Rg8Unorm => {
-            src_data.chunks(2).flat_map(|p| [p[0], p[1], 0u8, 255u8]).collect()
-        }
+        TextureFormat::R8Unorm => src_data.iter().flat_map(|&r| [r, r, r, 255u8]).collect(),
+        TextureFormat::Rg8Unorm => src_data
+            .chunks(2)
+            .flat_map(|p| [p[0], p[1], 0u8, 255u8])
+            .collect(),
         _ => {
-            warn!("normalise_to_rgba32: unsupported format {:?}, filling with magenta", fmt);
+            warn!(
+                "normalise_to_rgba32: unsupported format {:?}, filling with magenta",
+                fmt
+            );
             vec![255u8, 0, 255, 255].repeat((w * h) as usize)
         }
     };
@@ -539,7 +653,11 @@ fn normalise_to_rgba32(img: &Image) -> Image {
     };
 
     Image::new(
-        Extent3d { width: TARGET_W, height: TARGET_H, depth_or_array_layers: 1 },
+        Extent3d {
+            width: TARGET_W,
+            height: TARGET_H,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         scaled,
         TextureFormat::Rgba8UnormSrgb,
@@ -585,7 +703,9 @@ fn update_effects_hud(
         commands.entity(entity).despawn();
     }
 
-    let Ok((root_entity, mut root_vis)) = root_q.single_mut() else { return };
+    let Ok((root_entity, mut root_vis)) = root_q.single_mut() else {
+        return;
+    };
 
     // 2. Hide when no active effects.
     if effects.effects.is_empty() {
@@ -599,53 +719,68 @@ fn update_effects_hud(
     // 4. Spawn one row per active effect.
     for active in effects.effects.iter() {
         let c = active.effect.color();
-        let first_char = active.effect.name().chars().next().unwrap_or('?').to_string();
+        let first_char = active
+            .effect
+            .name()
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_string();
         let secs_text = format!("{:.0}s", active.remaining_secs);
 
         // Icon square (28×28) with first letter centred inside.
-        let icon = commands.spawn((
-            Node {
-                width: Val::Px(28.0),
-                height: Val::Px(28.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(c[0], c[1], c[2], c[3])),
-        ))
-        .with_children(|icon_root| {
-            icon_root.spawn((
-                Text::new(first_char),
-                TextFont { font_size: 16.0, ..default() },
-                TextColor(Color::WHITE),
-            ));
-        })
-        .id();
+        let icon = commands
+            .spawn((
+                Node {
+                    width: Val::Px(28.0),
+                    height: Val::Px(28.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(c[0], c[1], c[2], c[3])),
+            ))
+            .with_children(|icon_root| {
+                icon_root.spawn((
+                    Text::new(first_char),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            })
+            .id();
 
         // Duration label.
-        let label = commands.spawn((
-            Text::new(secs_text),
-            TextFont { font_size: 14.0, ..default() },
-            TextColor(Color::WHITE),
-            Node {
-                margin: UiRect::left(Val::Px(6.0)),
-                align_self: AlignSelf::Center,
-                ..default()
-            },
-        ))
-        .id();
+        let label = commands
+            .spawn((
+                Text::new(secs_text),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    margin: UiRect::left(Val::Px(6.0)),
+                    align_self: AlignSelf::Center,
+                    ..default()
+                },
+            ))
+            .id();
 
         // Row (horizontal flex).
-        let row = commands.spawn((
-            EffectHudRow,
-            Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        ))
-        .add_children(&[icon, label])
-        .id();
+        let row = commands
+            .spawn((
+                EffectHudRow,
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+            ))
+            .add_children(&[icon, label])
+            .id();
 
         commands.entity(root_entity).add_child(row);
     }
@@ -710,15 +845,24 @@ fn spawn_inventory_ui(mut commands: Commands) {
             // Title
             root.spawn((
                 Text::new("Inventario"),
-                TextFont { font_size: 20.0, ..default() },
+                TextFont {
+                    font_size: 20.0,
+                    ..default()
+                },
                 TextColor(Color::WHITE),
-                Node { margin: UiRect::bottom(Val::Px(12.0)), ..default() },
+                Node {
+                    margin: UiRect::bottom(Val::Px(12.0)),
+                    ..default()
+                },
             ));
 
             // Grid container
             root.spawn(Node {
                 display: Display::Grid,
-                grid_template_columns: vec![RepeatedGridTrack::px(GridTrackRepetition::Count(COLS as u16), SLOT_SIZE)],
+                grid_template_columns: vec![RepeatedGridTrack::px(
+                    GridTrackRepetition::Count(COLS as u16),
+                    SLOT_SIZE,
+                )],
                 column_gap: Val::Px(GAP),
                 row_gap: Val::Px(GAP),
                 ..default()
@@ -737,7 +881,10 @@ fn spawn_inventory_ui(mut commands: Commands) {
                     .with_children(|slot| {
                         slot.spawn((
                             Text::new(""),
-                            TextFont { font_size: 11.0, ..default() },
+                            TextFont {
+                                font_size: 11.0,
+                                ..default()
+                            },
                             TextColor(Color::WHITE),
                             Node {
                                 position_type: PositionType::Absolute,
@@ -774,7 +921,9 @@ fn update_inventory_ui(
     mut slot_q: Query<(&InventorySlotNode, &mut BackgroundColor, &Children)>,
     mut text_q: Query<&mut Text>,
 ) {
-    let Ok(container) = container_q.single() else { return };
+    let Ok(container) = container_q.single() else {
+        return;
+    };
 
     for (slot_node, mut bg, children) in &mut slot_q {
         let item_slot = container.0.slots.get(slot_node.0).and_then(|s| s.as_ref());

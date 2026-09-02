@@ -33,7 +33,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 
 use crate::chunk::{Chunk, ChunkCoord, ChunkCoordComp};
 use crate::voxel::VoxelType;
-use crate::world::{ChunkLoadRequest, ChunkManager, ChunkModified, PersistenceConfig, try_load_chunk};
+use crate::world::{
+    ChunkLoadRequest, ChunkManager, ChunkModified, PersistenceConfig, try_load_chunk,
+};
 
 use super::GeneratorResource;
 
@@ -91,9 +93,7 @@ pub fn chunk_request_system<V: VoxelType>(
             && let Some(chunk) = try_load_chunk::<V>(coord, &cfg.save_dir)
         {
             // Disk hit — spawn entity directly without an async task.
-            let entity = commands
-                .spawn((chunk, ChunkCoordComp(coord)))
-                .id();
+            let entity = commands.spawn((chunk, ChunkCoordComp(coord))).id();
             manager.register(coord, entity);
             modified_writer.write(ChunkModified(coord));
             continue;

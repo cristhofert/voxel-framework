@@ -156,7 +156,9 @@ pub fn hotbar_input_system(
     }
 
     if hotbar.selected != previous {
-        changed_writer.write(HotbarSelectionChanged { slot: hotbar.selected });
+        changed_writer.write(HotbarSelectionChanged {
+            slot: hotbar.selected,
+        });
     }
 }
 

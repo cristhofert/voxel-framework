@@ -51,7 +51,9 @@ impl WorldDataDir {
         Self(format!("./worlds/{}", world_name))
     }
     /// Returns the directory path as a string slice.
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 // ─── PersistenceConfig ────────────────────────────────────────────────────────
@@ -235,9 +237,16 @@ impl<V: VoxelType> Default for PersistencePlugin<V> {
 
 impl<V: VoxelType> Plugin for PersistencePlugin<V> {
     fn build(&self, app: &mut App) {
-        let name = if self.world_name.is_empty() { "world" } else { &self.world_name };
+        let name = if self.world_name.is_empty() {
+            "world"
+        } else {
+            &self.world_name
+        };
         let save_dir = format!("./worlds/{}/chunks", name);
-        app.insert_resource(PersistenceConfig { save_dir, auto_save: true });
+        app.insert_resource(PersistenceConfig {
+            save_dir,
+            auto_save: true,
+        });
         app.add_systems(Update, chunk_autosave_system::<V>);
     }
 }

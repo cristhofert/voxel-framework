@@ -11,7 +11,7 @@
 //! |--------|-----------------|
 //! | [`CrosshairPlugin`] | Center-screen crosshair rendered as four `Node` quads |
 //! | [`LoadingScreenPlugin`] | Full-screen overlay with progress bar while the world loads |
-//! | [`HotbarUiPlugin`] | Bottom-center row of inventory slots |
+//! | `HotbarUiPlugin` *(feature `items`)* | Bottom-center row of inventory slots |
 //! | [`PickupNotificationPlugin`] | Timed top-right pop-up text on item pickup |
 //!
 //! # Choosing between [`UiPlugin`] and individual plugins
@@ -32,7 +32,7 @@
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
-//! use voxel_framework::ui::{CrosshairPlugin, CrosshairConfig, HotbarUiPlugin};
+//! use voxel_framework::ui::{CrosshairPlugin, CrosshairConfig};
 //!
 //! App::new()
 //!     .insert_resource(CrosshairConfig {
@@ -40,8 +40,9 @@
 //!         size: 14.0,
 //!         ..Default::default()
 //!     })
-//!     .add_plugins(CrosshairPlugin)
-//!     .add_plugins(HotbarUiPlugin);
+//!     .add_plugins(CrosshairPlugin);
+//!
+//! // With the default `items` feature enabled, you can also add `HotbarUiPlugin`.
 //! ```
 //!
 //! # Pause menu
@@ -495,11 +496,7 @@ struct HotbarUiRoot;
 struct HotbarSlot(usize);
 
 #[cfg(feature = "items")]
-fn spawn_hotbar_ui(
-    mut commands: Commands,
-    config: Res<HotbarUiConfig>,
-    hotbar: Res<HotbarState>,
-) {
+fn spawn_hotbar_ui(mut commands: Commands, config: Res<HotbarUiConfig>, hotbar: Res<HotbarState>) {
     if !config.visible {
         return;
     }
@@ -749,19 +746,14 @@ fn on_item_picked_up<I: ItemType>(
         let label = format!("+{count} {name}");
         let notification = commands
             .spawn((
-                NotificationTimer(Timer::from_seconds(
-                    config.duration_secs,
-                    TimerMode::Once,
-                )),
+                NotificationTimer(Timer::from_seconds(config.duration_secs, TimerMode::Once)),
                 Text::new(label),
                 TextFont {
                     font_size: 18.0,
                     ..default()
                 },
                 TextColor(tc),
-                Node {
-                    ..default()
-                },
+                Node { ..default() },
             ))
             .id();
         commands.entity(container).add_child(notification);
@@ -839,10 +831,7 @@ impl<I: ItemType> Plugin for PickupNotificationPlugin<I> {
         // Ensure the message is registered even if DropsPlugin<I> is not used.
         app.add_message::<ItemPickedUp<I>>();
         app.add_systems(Startup, spawn_notification_container);
-        app.add_systems(
-            Update,
-            (on_item_picked_up::<I>, tick_notifications),
-        );
+        app.add_systems(Update, (on_item_picked_up::<I>, tick_notifications));
     }
 }
 
@@ -851,10 +840,10 @@ pub use pause_menu::{PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSetti
 
 // ─── Debug Overlay ────────────────────────────────────────────────────────────
 
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use crate::chunk::world_to_chunk_coord;
-use crate::world::ChunkManager;
 use crate::player::Player;
+use crate::world::ChunkManager;
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 
 /// Tracks whether the debug overlay (F3) is currently visible.
 #[derive(Resource, Default)]
@@ -895,12 +884,7 @@ fn spawn_debug_overlay(mut commands: Commands) {
             };
             let color = TextColor(Color::WHITE);
             for i in 0..4 {
-                root.spawn((
-                    DebugLine(i),
-                    Text::new(""),
-                    style.clone(),
-                    color,
-                ));
+                root.spawn((DebugLine(i), Text::new(""), style.clone(), color));
             }
         });
 }

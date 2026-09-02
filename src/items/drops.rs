@@ -92,7 +92,9 @@ impl<I: ItemType> DropTable<I> {
     /// Yields `(voxel_byte, item, min_count, max_count)` for each registration.
     /// Identity-fallback entries (not explicitly registered) are not included.
     pub fn iter_entries(&self) -> impl Iterator<Item = (u8, I, u32, u32)> + '_ {
-        self.entries.iter().map(|(&voxel_byte, &(item, min, max))| (voxel_byte, item, min, max))
+        self.entries
+            .iter()
+            .map(|(&voxel_byte, &(item, min, max))| (voxel_byte, item, min, max))
     }
 
     /// Returns the drop for `voxel_byte`, using `seed` for deterministic count
@@ -108,8 +110,10 @@ impl<I: ItemType> DropTable<I> {
                 min
             } else {
                 let range = (max - min + 1) as u64;
-                min + (seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) % range)
-                    as u32
+                min + (seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407)
+                    % range) as u32
             };
             return Some((item, count));
         }

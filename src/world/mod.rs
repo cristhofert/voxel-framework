@@ -85,6 +85,7 @@
 
 pub mod collision;
 pub mod config;
+pub mod daycycle;
 pub mod loading;
 #[cfg(feature = "crafting")]
 pub mod manifest;
@@ -94,33 +95,33 @@ pub mod persistence;
 pub mod placement;
 pub mod raycast;
 pub mod systems;
-pub mod daycycle;
 pub mod voxel_ops;
 
-pub use daycycle::{DayCycleConfig, DayCyclePlugin, SunLight};
 pub use collision::{
     capsule_overlaps_voxels, resolve_capsule_collision, resolve_sphere_collision,
     sphere_overlaps_voxels,
 };
 pub use config::{WorldConfig, WorldConfigPlugin};
+pub use daycycle::{DayCycleConfig, DayCyclePlugin, SunLight};
 pub use loading::{LoadingPlugin, LoadingProgress, WorldLoadingState, WorldReady};
-pub use occlusion::{OcclusionPlugin, is_chunk_occluded};
-pub use persistence::{PersistenceConfig, PersistencePlugin, WorldDataDir, chunk_autosave_system, try_load_chunk};
-pub use raycast::{RaycastHit, raycast};
-pub use mining::{
-    tick_mining, stop_mining, mining_input_system,
-    MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken,
-};
 #[cfg(feature = "items")]
 pub use mining::MiningInputPlugin;
+pub use mining::{
+    MiningConfig, MiningPlugin, MiningProgress, MiningState, VoxelBroken, mining_input_system,
+    stop_mining, tick_mining,
+};
+pub use occlusion::{OcclusionPlugin, is_chunk_occluded};
+pub use persistence::{
+    PersistenceConfig, PersistencePlugin, WorldDataDir, chunk_autosave_system, try_load_chunk,
+};
 pub use placement::{
-    try_place_voxel, tick_placement,
-    PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced,
+    PlacementConfig, PlacementPlugin, PlacementState, VoxelPlaced, tick_placement, try_place_voxel,
 };
 #[cfg(feature = "items")]
-pub use placement::{placement_input_system, PlacementInputPlugin};
+pub use placement::{PlacementInputPlugin, placement_input_system};
+pub use raycast::{RaycastHit, raycast};
 pub use systems::ViewerPosition;
-pub use voxel_ops::{get_voxel_at, set_voxel_at, get_state_at, set_state_at};
+pub use voxel_ops::{get_state_at, get_voxel_at, set_state_at, set_voxel_at};
 
 use std::collections::{HashMap, HashSet};
 
@@ -314,7 +315,9 @@ impl ChunkManager {
 
     /// Returns an iterator over all loaded chunk coordinates and their entities.
     pub fn iter_loaded(&self) -> impl Iterator<Item = (IVec3, Entity)> + '_ {
-        self.loaded_chunks.iter().map(|(&coord, &entity)| (coord, entity))
+        self.loaded_chunks
+            .iter()
+            .map(|(&coord, &entity)| (coord, entity))
     }
 
     /// Returns the number of fully loaded chunks.

@@ -53,7 +53,10 @@ pub fn save_spawn_position(pos: Vec3, data_dir: &str) {
     };
     let path = format!("{}/player_data.json", data_dir);
     if let Err(e) = std::fs::create_dir_all(data_dir) {
-        eprintln!("[warn] Failed to create world data directory '{}': {}", data_dir, e);
+        eprintln!(
+            "[warn] Failed to create world data directory '{}': {}",
+            data_dir, e
+        );
         return;
     }
     match serde_json::to_string(&data) {

@@ -23,7 +23,7 @@
 
 use bevy::prelude::*;
 
-use crate::chunk::{ChunkCoord, CHUNK_SIZE};
+use crate::chunk::{CHUNK_SIZE, ChunkCoord};
 
 use super::{ChunkLoadRequest, ChunkManager, ChunkUnloadRequest};
 

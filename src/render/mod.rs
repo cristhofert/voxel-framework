@@ -12,14 +12,14 @@ use crate::voxel::VoxelType;
 
 pub mod material;
 
-pub use material::build_texture_array;
-pub use material::chunk_aabb;
-pub use material::upgrade_to_texture_material;
 pub use material::ChunkMaterial;
 pub use material::ChunkMaterialConfig;
 pub use material::ChunkMaterialHandle;
 pub use material::ChunkRendered;
 pub use material::ChunkTextureArray;
+pub use material::build_texture_array;
+pub use material::chunk_aabb;
+pub use material::upgrade_to_texture_material;
 
 /// Plugin that sets up shared rendering resources for voxel chunks.
 ///

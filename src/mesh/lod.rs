@@ -60,11 +60,7 @@ pub const LOD0_MAX_DISTANCE: f32 = 200.0;
 #[inline]
 pub fn compute_lod(chunk_world_pos: Vec3, viewer_pos: Vec3) -> u8 {
     let dist = chunk_world_pos.distance(viewer_pos);
-    if dist < LOD0_MAX_DISTANCE {
-        0
-    } else {
-        1
-    }
+    if dist < LOD0_MAX_DISTANCE { 0 } else { 1 }
 }
 
 /// Computes the LOD level with a hysteresis dead band to prevent rapid

@@ -1,0 +1,97 @@
+name: Rust CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - 'codex/**'
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: rust-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: default all targets
+            command: cargo check --all-targets
+          - mode: no default features
+            command: cargo check --no-default-features
+          - mode: all features all targets
+            command: cargo check --all-features --all-targets
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo check
+        run: ${{ matrix.command }}
+
+  test:
+    name: Test (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: default
+            command: cargo test
+          - mode: no default features
+            command: cargo test --no-default-features
+          - mode: all features
+            command: cargo test --all-features
+          - mode: examples
+            command: cargo test --examples
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo test
+        run: ${{ matrix.command }}
+
+  docs-and-package:
+    name: Docs and package audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check docs
+        run: cargo doc --no-deps --all-features
+
+      - name: List package contents
+        run: cargo package --list
+
+      - name: Verify package can be created without building
+        run: cargo package --no-verify

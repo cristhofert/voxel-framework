@@ -69,17 +69,20 @@ App::new()
 
 ## Quick Start
 
-Add the dependency to your `Cargo.toml`. The crate is distributed via this repository — choose the form that fits your workflow:
+Add the dependency to your `Cargo.toml`. Use crates.io for released versions, or pin the repository when you need an unreleased commit/tag:
 
 ```toml
 [dependencies]
-# Option A — local clone side-by-side (development):
+# Option A — released crate (recommended for consumers):
+voxel-framework = "0.4"
+
+# Option B — local clone side-by-side (development):
 voxel-framework = { path = "../voxel-framework" }
 
-# Option B — from git, pinned to a stable tag (recommended for consumers):
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.3.0" }
+# Option C — from git, pinned to a stable tag:
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.4.0" }
 
-# Option C — follow the dev branch (bleeding-edge):
+# Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
 
 bevy = "0.18"
@@ -246,17 +249,17 @@ App::new()
 
 ### Overriding PersistenceConfig
 
-`PersistenceConfig` controls the save directory and whether auto-save is active. Insert it before or after the plugin to override the defaults:
+`PersistenceConfig` controls the save directory and whether auto-save is active. `PersistencePlugin` installs its defaults when it is added, so insert your override after the plugin:
 
 ```rust
 use voxel_framework::world::PersistenceConfig;
 
 App::new()
+    .add_plugins(PersistencePlugin::<DefaultVoxel>::new())
     .insert_resource(PersistenceConfig {
         save_dir: "./saves/chunks".to_string(),
         auto_save: true,
-    })
-    .add_plugins(PersistencePlugin::<DefaultVoxel>::new());
+    });
 ```
 
 | Field | Default | Description |
@@ -373,7 +376,7 @@ fn my_placement_system(
     tick_placement(time.delta_secs(), &mut state, &config);
 
     // Call once on button press:
-    try_place_voxel(target_chunk, target_local, DefaultVoxel::Rock,
+    try_place_voxel(target_chunk, target_local, DefaultVoxel::Rock, face_normal,
         &mut state, &config, &manager, &mut chunks,
         &mut placed, &mut modified);
 }
@@ -553,6 +556,14 @@ pub enum MyVoxel {
 }
 
 impl VoxelType for MyVoxel {
+    fn name(&self) -> &'static str {
+        match self {
+            MyVoxel::Air => "Air",
+            MyVoxel::Dirt => "Dirt",
+            MyVoxel::Stone => "Stone",
+        }
+    }
+
     fn is_solid(&self) -> bool {
         !matches!(self, MyVoxel::Air)
     }
