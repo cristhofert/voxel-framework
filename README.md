@@ -23,6 +23,49 @@
 - Block placement API — cooldown tracking and `VoxelPlaced` events
 - Loading progress — `LoadingProgress` messages and a `WorldReady` event for loading screens
 
+## Release Status & Stability
+
+`voxel-framework` 0.4 is an early public release of a Bevy-first voxel game
+framework. It is intended to be usable by real consumer crates, examples, and
+experiments, but it is not a 1.0 stability promise yet.
+
+Compatibility target:
+
+| Area | Current status |
+|---|---|
+| Crate version | `0.4.x` |
+| Bevy version | `0.18` |
+| Rust version | MSRV `1.85` |
+| Stability | Public API can still change across `0.x` minor releases |
+| Distribution | crates.io for released versions; git tags for pinned source installs |
+
+Before each release, the project validates formatting, feature combinations,
+doctests, integration tests, documentation, package contents, and `cargo publish
+--dry-run`. The CI workflow in `.github/workflows/rust.yml` mirrors those
+release gates without using `cargo build`.
+
+## Known Limitations
+
+- This is a framework/library, not a complete editor or standalone game. Your
+  game crate still owns window setup, input choices, game state, and custom UX.
+- The bundled examples are graphical Bevy apps and require a working display to
+  run interactively. Headless tests cover pure logic and selected runtime
+  contracts, but they do not replace manual playtesting.
+- `ViewerPosition` must be kept in sync with your camera/player every frame; it
+  drives chunk streaming. If it never changes, no new chunks stream in.
+- `ChunkGenerator::generate` runs on background threads. Generators must be
+  deterministic, owned, and `Send + Sync`; they must not access the Bevy
+  `World`, `Commands`, `Res`, or `Query`.
+- Mining and placement expose reusable state machines and helper functions. You
+  still decide when to call them from your own input systems unless you opt into
+  the provided input-adapter plugins.
+- Persistence is disk-backed chunk persistence for local worlds. The binary
+  format is suitable for `0.x` projects but should not be treated as a permanent
+  1.0 save-file compatibility guarantee yet.
+- Multiplayer, networking, world editing tools, and advanced asset pipelines are
+  outside the current release scope.
+
+
 ## Plugin Architecture
 
 `voxel-framework` is a flat catalog of composable Bevy plugins grouped by
@@ -89,6 +132,19 @@ bevy = "0.18"
 ```
 
 > To run the bundled examples, clone the repository — the demo `assets/` live in the repo and are not pulled in automatically when depending via git.
+
+### Choosing the right starting point
+
+| I want to... | Start with | Notes |
+|---|---|---|
+| See a working voxel world fast | `cargo run --example basic_world` | Best first smoke test after cloning the repo |
+| Build a prototype with defaults | `VoxelPlugin<V>` + `GeneratorPlugin<V>` | Includes core runtime plus default UI/audio/visual helpers |
+| Build my own game UI/audio | `VoxelCorePlugin<V>` + `GeneratorPlugin<V>` | Keeps rendering, streaming, meshing, mining and placement primitives |
+| Add procedural generation | `GeneratorPlugin<V>` + `GeneratorResource<V>` | Your generator implements `ChunkGenerator<V>` |
+| Save modified chunks | `PersistencePlugin<V>::with_world("world")` | Writes under `./worlds/{world}/chunks` |
+| Drive loading screens | `LoadingPlugin` / `WorldReady` / `LoadingProgress` | Bundled by the convenience plugins |
+| Mine or place blocks manually | `MiningPlugin` / `PlacementPlugin` | Call `tick_mining`, `stop_mining`, `try_place_voxel`, and `tick_placement` from your systems |
+| Use included item/hotbar UX | default features or `--features items` | Enables inventory, hotbar, drops, and related UI |
 
 Minimal `main.rs` that spawns an asteroid world with config and persistence:
 
@@ -669,6 +725,26 @@ fn main() {
     bevy::prelude::App::new()/* ... */.run();
 }
 ```
+
+## For AI Assistants and Code Agents
+
+This repository includes compact orientation files for tools like ChatGPT,
+Codex, Claude, and other code agents:
+
+- [`llms.txt`](llms.txt) is the shortest high-signal summary: what the crate is,
+  which files to read first, and the runtime contracts that matter.
+- [`AGENTS.md`](AGENTS.md) explains how to build a game *with*
+  `voxel-framework`: core abstractions, plugin choices, feature flags, commands,
+  and common gotchas.
+- [`docs/architecture.md`](docs/architecture.md) is the deeper architecture
+  reference for plugin categories, runtime flow, persistence, interaction flow,
+  and extension seams.
+- Rustdoc remains the source of truth for public API signatures and examples.
+
+If you pass this project to an AI assistant, start with `llms.txt`, then
+`README.md`, then `AGENTS.md`, and only then dive into `src/lib.rs` / rustdoc.
+That order gives the model the product intent before the implementation detail.
+
 
 ## License
 
