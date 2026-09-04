@@ -10,6 +10,16 @@ non-obvious runtime contracts. For the deep API, read the rustdoc
 
 ---
 
+## Stability & scope
+
+`voxel-framework` 0.4 is an early public release intended for real Bevy
+consumer crates, examples, and experiments. It targets Bevy 0.18 and Rust MSRV
+1.85. Treat it as useful but pre-1.0: public APIs and the local persistence
+format may still change across 0.x minor releases.
+
+It is not a standalone game/editor, and it does not currently include
+multiplayer/networking or long-term 1.0 save compatibility guarantees.
+
 ## What this is
 
 `voxel-framework` is a **reusable Bevy 0.18 library**, not a game. There is no

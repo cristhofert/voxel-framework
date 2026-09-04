@@ -12,8 +12,8 @@ documentation = "https://docs.rs/voxel-framework"
 readme = "README.md"
 keywords = ["voxel", "bevy", "gamedev", "voxel-engine", "procedural"]
 categories = ["game-development", "rendering", "graphics"]
-# Keep the crates.io package focused on library source, docs, examples, and
-# runtime assets needed by docs.rs/examples; exclude local agent/CI/spec/state.
+# Keep the crates.io package focused on public library source, docs, examples,
+# runtime assets, and AI-consumption guides; exclude local workflow/spec/state.
 exclude = [
     ".codex",
     ".codex/**",
@@ -23,10 +23,8 @@ exclude = [
     "openspec/**",
     "Cargo.toml.orig",
     "worlds/**",
-    "AGENTS.md",
     "CLAUDE.md",
     "docs/sdd/**",
-    "llms.txt",
 ]
 
 # Build docs.rs pages with every feature so the full public API renders.

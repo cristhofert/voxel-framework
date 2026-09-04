@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-09-03
+## [0.4.0] - 2026-09-04
 
 ### Added
+
+- Documented 0.4 stability expectations, known limitations, and AI-assistant entrypoints.
 - `RollMode::Snap` for animated 90° Q/E roll, configurable duration and easing
   via `PlayerConfig`. Default remains `RollMode::Continuous` (no behavior change
   for existing consumers).
