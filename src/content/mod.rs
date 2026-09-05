@@ -50,7 +50,7 @@ use bevy::prelude::{App, Plugin, Resource};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "items")]
-use crate::items::{DefaultItem, ItemType};
+use crate::items::{DefaultItem, DropTable, DropTableEntry, ItemType};
 use crate::voxel::{DefaultVoxel, VoxelType};
 
 /// Stable identifier for author-defined content.
@@ -1013,6 +1013,12 @@ impl<I: ItemType> BlockDropDefinition<I> {
     pub fn attributes(&self) -> &HashMap<String, ContentValue> {
         &self.attributes
     }
+
+    /// Converts this author-defined drop into the runtime drop-table entry used
+    /// by [`crate::items::DropsPlugin`].
+    pub fn to_drop_table_entry(&self) -> DropTableEntry<I> {
+        DropTableEntry::with_chance(self.item, self.count.min, self.count.max, self.chance)
+    }
 }
 
 /// Errors returned by block-drop registry validation helpers.
@@ -1137,6 +1143,47 @@ impl<I: ItemType> BlockDropRegistry<I> {
                     });
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Builds a runtime [`DropTable`] from author-defined block-drop content.
+    ///
+    /// The registry is keyed by author-facing block ids. The runtime drop
+    /// pipeline is keyed by voxel bytes, so this method resolves each block id
+    /// through the provided [`BlockRegistry`] and writes the corresponding
+    /// voxel-byte entries into a fresh [`DropTable`].
+    pub fn to_drop_table<V: VoxelType>(
+        &self,
+        blocks: &BlockRegistry<V>,
+    ) -> Result<DropTable<I>, BlockDropRegistryError<I>> {
+        let mut table = DropTable::new();
+        self.apply_to_drop_table(blocks, &mut table)?;
+        Ok(table)
+    }
+
+    /// Applies author-defined block drops to an existing runtime [`DropTable`].
+    ///
+    /// Entries for voxel bytes present in this registry are replaced, making
+    /// the operation idempotent. Entries for unrelated voxel bytes are left
+    /// untouched so game code can still mix hand-written runtime drops with
+    /// content-defined drops.
+    pub fn apply_to_drop_table<V: VoxelType>(
+        &self,
+        blocks: &BlockRegistry<V>,
+        table: &mut DropTable<I>,
+    ) -> Result<(), BlockDropRegistryError<I>> {
+        for (block_id, drops) in &self.drops_by_block_id {
+            let Some(block) = blocks.get(block_id.as_str()) else {
+                return Err(BlockDropRegistryError::UnknownBlockId {
+                    id: block_id.clone(),
+                });
+            };
+
+            table.replace_entries(
+                block.voxel().to_byte(),
+                drops.iter().map(BlockDropDefinition::to_drop_table_entry),
+            );
         }
         Ok(())
     }
@@ -1433,6 +1480,90 @@ mod tests {
         assert!(matches!(
             drops.validate_items(&items),
             Err(BlockDropRegistryError::UnknownItem { .. })
+        ));
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn block_drop_registry_builds_runtime_drop_table() {
+        let mut blocks = BlockRegistry::<DefaultTerrainVoxel>::default();
+        blocks
+            .register(BlockDefinition::new(
+                "moon_regolith",
+                DefaultTerrainVoxel::Sand,
+            ))
+            .expect("block should register");
+
+        let mut drops = BlockDropRegistry::<DefaultItem>::default();
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::new(DefaultItem::Sand, DropCount::range(1, 3)),
+        );
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::fixed(DefaultItem::Crystal, 1).with_chance(1.0),
+        );
+
+        let table = drops
+            .to_drop_table(&blocks)
+            .expect("content drops should resolve through blocks");
+        let runtime_drops = table.get_drops(DefaultTerrainVoxel::Sand.to_byte(), 42);
+
+        assert_eq!(runtime_drops.len(), 2);
+        assert_eq!(runtime_drops[0].0, DefaultItem::Sand);
+        assert!((1..=3).contains(&runtime_drops[0].1));
+        assert_eq!(runtime_drops[1], (DefaultItem::Crystal, 1));
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn block_drop_registry_applies_to_existing_drop_table_idempotently() {
+        let mut blocks = BlockRegistry::<DefaultTerrainVoxel>::default();
+        blocks
+            .register(BlockDefinition::new(
+                "moon_regolith",
+                DefaultTerrainVoxel::Sand,
+            ))
+            .expect("block should register");
+
+        let mut drops = BlockDropRegistry::<DefaultItem>::default();
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::fixed(DefaultItem::Sand, 1),
+        );
+
+        let mut table = DropTable::<DefaultItem>::new();
+        table.register(1, DefaultItem::Dirt, 1, 1);
+
+        drops
+            .apply_to_drop_table(&blocks, &mut table)
+            .expect("first apply should resolve");
+        drops
+            .apply_to_drop_table(&blocks, &mut table)
+            .expect("second apply should replace rather than duplicate");
+
+        let runtime_drops = table.get_drops(DefaultTerrainVoxel::Sand.to_byte(), 0);
+        assert_eq!(runtime_drops, vec![(DefaultItem::Sand, 1)]);
+        assert_eq!(
+            table.get_drops(1, 0),
+            vec![(DefaultItem::Dirt, 1)],
+            "unrelated hand-written runtime drops should remain untouched"
+        );
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn block_drop_registry_to_drop_table_reports_missing_blocks() {
+        let blocks = BlockRegistry::<DefaultTerrainVoxel>::default();
+        let mut drops = BlockDropRegistry::<DefaultItem>::default();
+        drops.register_drop(
+            "missing_block",
+            BlockDropDefinition::fixed(DefaultItem::Sand, 1),
+        );
+
+        assert!(matches!(
+            drops.to_drop_table(&blocks),
+            Err(BlockDropRegistryError::UnknownBlockId { .. })
         ));
     }
 

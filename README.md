@@ -246,6 +246,9 @@ helpers and block-drop validation:
   ids that were never registered.
 - `BlockDropRegistry::validate_items(&items)` catches drops that produce item
   values that were never registered.
+- `BlockDropRegistry::apply_to_drop_table(&blocks, &mut drop_table)` bridges
+  author-defined block ids into the runtime voxel-byte `DropTable` consumed by
+  `DropsPlugin`.
 
 The framework only separates two concerns:
 
@@ -307,11 +310,22 @@ fn register_items_and_drops(
     drops.validate_items(&items).expect("drops should use registered items");
 }
 
+fn bridge_content_drops_to_runtime(
+    blocks: Res<BlockRegistry<DefaultTerrainVoxel>>,
+    drops: Res<BlockDropRegistry<DefaultItem>>,
+    mut drop_table: ResMut<DropTable<DefaultItem>>,
+) {
+    drops
+        .apply_to_drop_table(&blocks, &mut drop_table)
+        .expect("drops should reference registered blocks");
+}
+
 App::new()
     .add_plugins(MinimalPlugins)
     .add_plugins(ItemContentPlugin::<DefaultItem>::new())
     .add_plugins(BlockDropContentPlugin::<DefaultItem>::new())
-    .add_systems(Startup, register_items_and_drops);
+    .add_plugins(DropsPlugin::<DefaultItem>::new())
+    .add_systems(Startup, (register_items_and_drops, bridge_content_drops_to_runtime).chain());
 ```
 
 Run the headless content example:

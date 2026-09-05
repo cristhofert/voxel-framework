@@ -27,6 +27,9 @@ fn main() {
     drops
         .validate_items(items)
         .expect("drop definitions should reference registered items");
+    let runtime_drop_table = drops
+        .to_drop_table(blocks)
+        .expect("content drops should convert to runtime drops");
 
     for block in blocks.iter() {
         println!(
@@ -53,6 +56,17 @@ fn main() {
             drop.item(),
             drop.count().min,
             drop.count().max
+        );
+    }
+
+    for (voxel_byte, entry) in runtime_drop_table.iter_drop_entries() {
+        println!(
+            "runtime voxel byte {} drops {:?} x{}..{} @ {:.0}%",
+            voxel_byte,
+            entry.item,
+            entry.min_count,
+            entry.max_count,
+            entry.chance * 100.0
         );
     }
 }

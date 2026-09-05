@@ -40,14 +40,50 @@ use super::inventory::{ContainerComponent, ItemPickedUp, ItemType, PrimaryContai
 
 // ─── DropTable ────────────────────────────────────────────────────────────────
 
+/// One runtime drop entry for a voxel byte.
+///
+/// This is the runtime counterpart of
+/// [`crate::content::BlockDropDefinition`]. It is intentionally keyed by voxel
+/// byte because [`DropsPlugin`] reacts to [`crate::world::VoxelBroken`] events,
+/// and those events carry the destroyed voxel byte.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropTableEntry<I: ItemType> {
+    /// Item produced by this entry.
+    pub item: I,
+    /// Minimum count, inclusive.
+    pub min_count: u32,
+    /// Maximum count, inclusive.
+    pub max_count: u32,
+    /// Probability in `0.0..=1.0`.
+    pub chance: f32,
+}
+
+impl<I: ItemType> DropTableEntry<I> {
+    /// Creates a guaranteed drop entry.
+    pub fn new(item: I, min_count: u32, max_count: u32) -> Self {
+        Self::with_chance(item, min_count, max_count, 1.0)
+    }
+
+    /// Creates a drop entry with an explicit probability.
+    pub fn with_chance(item: I, min_count: u32, max_count: u32, chance: f32) -> Self {
+        Self {
+            item,
+            min_count: min_count.min(max_count),
+            max_count: min_count.max(max_count),
+            chance: chance.clamp(0.0, 1.0),
+        }
+    }
+}
+
 /// Mapping from voxel byte IDs to item drop definitions.
 ///
 /// Each entry associates a voxel byte value (the `u8` returned by
 /// [`crate::voxel::VoxelType::to_byte`]) with an item type and a drop-count
-/// range `[min, max]`.  When a matching voxel is broken, `spawn_drops_system`
-/// queries this table and selects a count within the range using a
-/// deterministic LCG seeded from the voxel's world position.  If `min == max`
-/// the count is always fixed.
+/// range `[min, max]`. Runtime entries may also carry a chance, and a voxel may
+/// have multiple entries. When a matching voxel is broken,
+/// `spawn_drops_system` queries this table and selects counts/chance outcomes
+/// using deterministic pseudo-random values seeded from the voxel's world
+/// position. If `min == max` the count is always fixed.
 ///
 /// [`DropTable`] is initialized empty; register entries before the first
 /// [`crate::world::VoxelBroken`] message is processed.  It is available as a
@@ -63,11 +99,14 @@ use super::inventory::{ContainerComponent, ItemPickedUp, ItemType, PrimaryContai
 /// table.register(1, DefaultItem::RockFragment, 1, 3);
 /// // Voxel byte 2 always drops exactly 1 iron ore.
 /// table.register(2, DefaultItem::IronOre, 1, 1);
+/// // Voxel byte 3 can produce multiple runtime entries.
+/// table.add_entry(3, voxel_framework::items::DropTableEntry::new(DefaultItem::Cobblestone, 1, 1));
+/// table.add_entry(3, voxel_framework::items::DropTableEntry::with_chance(DefaultItem::Coal, 1, 2, 0.25));
 /// ```
 #[derive(Resource, Debug, Clone)]
 pub struct DropTable<I: ItemType> {
-    /// Internal map: `voxel_byte` → `(item, count_min, count_max)`.
-    entries: HashMap<u8, (I, u32, u32)>,
+    /// Internal map: `voxel_byte` → runtime drop entries.
+    entries: HashMap<u8, Vec<DropTableEntry<I>>>,
 }
 
 impl<I: ItemType> DropTable<I> {
@@ -83,8 +122,46 @@ impl<I: ItemType> DropTable<I> {
     /// When a voxel with `voxel_byte` is broken, between `min` and `max` items
     /// (inclusive) of `item` will be dropped. If `min == max` the count is
     /// always fixed.
+    ///
+    /// This replaces any previous runtime entries for the voxel byte, preserving
+    /// the historical one-entry behavior of [`DropTable::register`]. Use
+    /// [`DropTable::add_entry`] when a voxel should produce multiple drops.
     pub fn register(&mut self, voxel_byte: u8, item: I, min: u32, max: u32) {
-        self.entries.insert(voxel_byte, (item, min, max));
+        self.replace_entries(voxel_byte, [DropTableEntry::new(item, min, max)]);
+    }
+
+    /// Registers a single probabilistic drop for the given voxel byte.
+    ///
+    /// Like [`DropTable::register`], this replaces any previous entries for the
+    /// voxel byte.
+    pub fn register_with_chance(
+        &mut self,
+        voxel_byte: u8,
+        item: I,
+        min: u32,
+        max: u32,
+        chance: f32,
+    ) {
+        self.replace_entries(
+            voxel_byte,
+            [DropTableEntry::with_chance(item, min, max, chance)],
+        );
+    }
+
+    /// Appends one runtime entry without removing existing entries for the same
+    /// voxel byte.
+    pub fn add_entry(&mut self, voxel_byte: u8, entry: DropTableEntry<I>) {
+        self.entries.entry(voxel_byte).or_default().push(entry);
+    }
+
+    /// Replaces all runtime entries for one voxel byte.
+    pub fn replace_entries(
+        &mut self,
+        voxel_byte: u8,
+        entries: impl IntoIterator<Item = DropTableEntry<I>>,
+    ) {
+        self.entries
+            .insert(voxel_byte, entries.into_iter().collect());
     }
 
     /// Iterates over all explicitly registered drop entries.
@@ -92,9 +169,16 @@ impl<I: ItemType> DropTable<I> {
     /// Yields `(voxel_byte, item, min_count, max_count)` for each registration.
     /// Identity-fallback entries (not explicitly registered) are not included.
     pub fn iter_entries(&self) -> impl Iterator<Item = (u8, I, u32, u32)> + '_ {
+        self.iter_drop_entries()
+            .map(|(voxel_byte, entry)| (voxel_byte, entry.item, entry.min_count, entry.max_count))
+    }
+
+    /// Iterates over all explicitly registered runtime drop entries, including
+    /// chance metadata.
+    pub fn iter_drop_entries(&self) -> impl Iterator<Item = (u8, &DropTableEntry<I>)> + '_ {
         self.entries
             .iter()
-            .map(|(&voxel_byte, &(item, min, max))| (voxel_byte, item, min, max))
+            .flat_map(|(&voxel_byte, entries)| entries.iter().map(move |entry| (voxel_byte, entry)))
     }
 
     /// Returns the drop for `voxel_byte`, using `seed` for deterministic count
@@ -105,27 +189,61 @@ impl<I: ItemType> DropTable<I> {
     /// with count 1. If the resulting item is the empty sentinel (i.e.
     /// `item.to_byte() == 0`), returns `None` — meaning no drop.
     pub fn get_drop(&self, voxel_byte: u8, seed: u64) -> Option<(I, u32)> {
-        if let Some(&(item, min, max)) = self.entries.get(&voxel_byte) {
-            let count = if min == max {
-                min
-            } else {
-                let range = (max - min + 1) as u64;
-                min + (seed
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407)
-                    % range) as u32
-            };
-            return Some((item, count));
+        self.get_drops(voxel_byte, seed).into_iter().next()
+    }
+
+    /// Returns all drops produced for `voxel_byte` with deterministic chance
+    /// rolls and count selection.
+    pub fn get_drops(&self, voxel_byte: u8, seed: u64) -> Vec<(I, u32)> {
+        if let Some(entries) = self.entries.get(&voxel_byte) {
+            return entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| entry.roll(seed, index as u64))
+                .collect();
         }
 
         // Identity fallback: try mapping the voxel byte directly to an item.
         let item = I::from_byte(voxel_byte);
-        if item.to_byte() != 0 {
-            Some((item, 1))
+        if !item.is_empty() {
+            vec![(item, 1)]
         } else {
-            None
+            Vec::new()
         }
     }
+}
+
+impl<I: ItemType> DropTableEntry<I> {
+    fn roll(&self, seed: u64, salt: u64) -> Option<(I, u32)> {
+        if self.item.is_empty() || self.max_count == 0 || self.chance <= 0.0 {
+            return None;
+        }
+
+        let chance_roll = unit_interval(seed, salt);
+        if chance_roll > self.chance {
+            return None;
+        }
+
+        let count = if self.min_count == self.max_count {
+            self.min_count
+        } else {
+            let range = (self.max_count - self.min_count + 1) as u64;
+            self.min_count + (lcg(seed, salt.wrapping_add(1)) % range) as u32
+        };
+
+        (count > 0).then_some((self.item, count))
+    }
+}
+
+fn lcg(seed: u64, salt: u64) -> u64 {
+    seed.wrapping_add(salt.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407)
+}
+
+fn unit_interval(seed: u64, salt: u64) -> f32 {
+    let value = lcg(seed, salt) >> 40;
+    value as f32 / ((1u64 << 24) - 1) as f32
 }
 
 impl<I: ItemType> Default for DropTable<I> {
@@ -252,7 +370,7 @@ fn spawn_drops_system<I: ItemType>(
                 .wrapping_add(z)
         };
 
-        if let Some((item, count)) = drop_table.get_drop(event.voxel_byte, seed) {
+        for (item, count) in drop_table.get_drops(event.voxel_byte, seed) {
             commands.spawn(DroppedItem {
                 item,
                 count,
@@ -416,5 +534,56 @@ mod tests {
         let (item, count) = table.get_drop(11, 0).unwrap();
         assert_eq!(item, DefaultItem::IronOre);
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn drop_table_supports_multiple_runtime_entries() {
+        let mut table = DropTable::<DefaultItem>::new();
+        table.add_entry(3, DropTableEntry::new(DefaultItem::Cobblestone, 1, 1));
+        table.add_entry(3, DropTableEntry::new(DefaultItem::Coal, 2, 2));
+
+        let drops = table.get_drops(3, 123);
+        assert_eq!(drops.len(), 2);
+        assert_eq!(drops[0], (DefaultItem::Cobblestone, 1));
+        assert_eq!(drops[1], (DefaultItem::Coal, 2));
+    }
+
+    #[test]
+    fn register_preserves_single_entry_replacement_behavior() {
+        let mut table = DropTable::<DefaultItem>::new();
+        table.add_entry(3, DropTableEntry::new(DefaultItem::Cobblestone, 1, 1));
+        table.add_entry(3, DropTableEntry::new(DefaultItem::Coal, 1, 1));
+
+        table.register(3, DefaultItem::IronOre, 1, 1);
+
+        let drops = table.get_drops(3, 0);
+        assert_eq!(drops, vec![(DefaultItem::IronOre, 1)]);
+    }
+
+    #[test]
+    fn drop_table_entry_chance_can_disable_a_drop() {
+        let mut table = DropTable::<DefaultItem>::new();
+        table.add_entry(
+            3,
+            DropTableEntry::with_chance(DefaultItem::Cobblestone, 1, 1, 0.0),
+        );
+        table.add_entry(3, DropTableEntry::with_chance(DefaultItem::Coal, 1, 1, 1.0));
+
+        let drops = table.get_drops(3, 0);
+        assert_eq!(drops, vec![(DefaultItem::Coal, 1)]);
+    }
+
+    #[test]
+    fn iter_drop_entries_includes_chance_metadata() {
+        let mut table = DropTable::<DefaultItem>::new();
+        table.register_with_chance(3, DefaultItem::Cobblestone, 1, 2, 0.25);
+
+        let entries: Vec<_> = table.iter_drop_entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, 3);
+        assert_eq!(entries[0].1.item, DefaultItem::Cobblestone);
+        assert_eq!(entries[0].1.min_count, 1);
+        assert_eq!(entries[0].1.max_count, 2);
+        assert_eq!(entries[0].1.chance, 0.25);
     }
 }

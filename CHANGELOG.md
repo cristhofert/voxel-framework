@@ -20,12 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Content definitions now include typed attribute helpers, registry
   `require(...)` methods, and block-drop validation helpers so setup code can
   fail loudly when author-defined ids or item references are wrong.
+- `DropTable` now supports multiple runtime drop entries per voxel byte and
+  probabilistic drop entries, plus a bridge from author-defined
+  `BlockDropRegistry` definitions into the runtime table consumed by
+  `DropsPlugin`.
 
 ### Changed
 
 - `VoxelBroken` now carries the destroyed voxel's real `voxel_byte`, and
   `DropsPlugin` uses that value instead of deriving a pseudo-byte from local
   coordinates.
+- `world.json` drop override entries now include a `chance` field while
+  retaining backward-compatible deserialization for older entries that omit it.
 
 ## [0.4.0] - 2026-09-04
 
