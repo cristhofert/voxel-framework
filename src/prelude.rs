@@ -110,9 +110,9 @@ pub use crate::skybox::{SkyboxConfig, SkyboxMode, SkyboxPlugin, StarfieldConfig}
 pub use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
 #[cfg(feature = "items")]
 pub use crate::items::{
-    DefaultItem, DropTable, DroppedItem, DropsPlugin, HotbarPlugin, HotbarSelectionChanged,
-    HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp, ItemType, MagnetConfig,
-    load_inventory, save_inventory,
+    DefaultItem, DropTable, DropTableEntry, DroppedItem, DropsPlugin, HotbarPlugin,
+    HotbarSelectionChanged, HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp,
+    ItemType, MagnetConfig, load_inventory, save_inventory,
 };
 
 // UI system

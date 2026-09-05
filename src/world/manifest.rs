@@ -60,6 +60,12 @@ pub struct DropEntry {
     pub item_byte: u8,
     pub min_count: u32,
     pub max_count: u32,
+    #[serde(default = "default_drop_chance")]
+    pub chance: f32,
+}
+
+fn default_drop_chance() -> f32 {
+    1.0
 }
 
 // ─── WorldManifest ────────────────────────────────────────────────────────────
@@ -244,12 +250,13 @@ fn write_manifest_system<V: VoxelType, I: ItemType>(
     // ── Drop overrides ────────────────────────────────────────────────────────
     let drop_overrides: Vec<DropEntry> = match drop_table {
         Some(table) => table
-            .iter_entries()
-            .map(|(voxel_byte, item, min_count, max_count)| DropEntry {
+            .iter_drop_entries()
+            .map(|(voxel_byte, entry)| DropEntry {
                 voxel_byte,
-                item_byte: item.to_byte(),
-                min_count,
-                max_count,
+                item_byte: entry.item.to_byte(),
+                min_count: entry.min_count,
+                max_count: entry.max_count,
+                chance: entry.chance,
             })
             .collect(),
         None => Vec::new(),
