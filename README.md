@@ -355,6 +355,7 @@ metadata, tags, and deterministic snapshots.
 
 ```rust
 use bevy::prelude::*;
+use bevy::ecs::message::{MessageReader, MessageWriter};
 use voxel_framework::prelude::*;
 
 fn register_stats(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet>) {
@@ -363,7 +364,7 @@ fn register_stats(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet
             StatDefinition::new("oxygen", 100.0)
                 .named("Suit Oxygen")
                 .bounds(0.0, 100.0)
-                .tag("body")
+                .tag("space_suit")
                 .attribute("ui_hint", "bar")
                 .attribute("critical_threshold", 15.0),
         )
@@ -372,17 +373,28 @@ fn register_stats(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet
     values.ensure_registered(&registry);
 }
 
-fn space_tick(registry: Res<StatRegistry>, mut values: ResMut<StatSet>) {
-    values
-        .drain("oxygen", 1.5, &registry)
+fn space_tick(
+    registry: Res<StatRegistry>,
+    mut values: ResMut<StatSet>,
+    mut changed: MessageWriter<StatChanged>,
+) {
+    drain_stat("oxygen", 1.5, &registry, &mut values, &mut changed)
         .expect("oxygen should be registered");
+}
+
+fn react_to_stats(mut changed: MessageReader<StatChanged>) {
+    for event in changed.read() {
+        if event.id.as_str() == "oxygen" && event.current <= 15.0 {
+            println!("Low oxygen!");
+        }
+    }
 }
 
 App::new()
     .add_plugins(MinimalPlugins)
     .add_plugins(VoxelStatsPlugin)
     .add_systems(Startup, register_stats)
-    .add_systems(Update, space_tick);
+    .add_systems(Update, (space_tick, react_to_stats).chain());
 ```
 
 Run the headless stats example:
@@ -394,6 +406,14 @@ cargo run --example stats_definitions
 Like content snapshots, `StatRegistry::snapshot()` and `StatSet::snapshot()`
 return deterministic serializable data for docs, tooling, manifests, or AI
 inspection.
+
+Use `set_stat`, `add_stat`, `drain_stat`, and `fill_stat` when a Bevy system
+wants to emit a `StatChanged` message. They emit only when the clamped value
+actually changes. If you only need a plain data mutation, `StatSet::set`,
+`StatSet::add`, `StatSet::drain`, and `StatSet::fill` remain available and do
+not depend on Bevy message writers. If a reader must react in the same update as
+the writer, order it after the writer with `.chain()` or explicit Bevy system
+ordering.
 
 ## World Configuration
 
