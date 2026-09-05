@@ -69,6 +69,11 @@ fn main() {
             entry.chance * 100.0
         );
     }
+
+    println!(
+        "block content snapshot:\n{}",
+        serde_json::to_string_pretty(&blocks.snapshot()).expect("block snapshots should serialize")
+    );
 }
 
 fn register_blocks(mut blocks: ResMut<BlockRegistry<DefaultTerrainVoxel>>) {

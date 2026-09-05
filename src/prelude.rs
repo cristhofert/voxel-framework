@@ -10,13 +10,14 @@ pub use crate::voxel::{
 
 // Author-defined content
 pub use crate::content::{
-    BlockDefinition, BlockEngineProperties, BlockRegistry, ContentId, ContentRegistryError,
-    ContentValue, VoxelContentPlugin,
+    BlockContentSnapshot, BlockDefinition, BlockEngineProperties, BlockRegistry, ContentId,
+    ContentRegistryError, ContentValue, VoxelContentPlugin,
 };
 #[cfg(feature = "items")]
 pub use crate::content::{
-    BlockDropContentPlugin, BlockDropDefinition, BlockDropRegistry, BlockDropRegistryError,
-    DropCount, ItemContentPlugin, ItemDefinition, ItemRegistry, ItemRegistryError,
+    BlockDropContentPlugin, BlockDropContentSnapshot, BlockDropDefinition, BlockDropRegistry,
+    BlockDropRegistryError, DropCount, ItemContentPlugin, ItemContentSnapshot, ItemDefinition,
+    ItemRegistry, ItemRegistryError,
 };
 
 // Crafting
