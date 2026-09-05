@@ -249,6 +249,8 @@ helpers and block-drop validation:
 - `BlockDropRegistry::apply_to_drop_table(&blocks, &mut drop_table)` bridges
   author-defined block ids into the runtime voxel-byte `DropTable` consumed by
   `DropsPlugin`.
+- `snapshot()` on block, item, and drop registries returns deterministic
+  serializable data for docs, tooling, manifests, or AI inspection.
 
 The framework only separates two concerns:
 
@@ -333,6 +335,9 @@ Run the headless content example:
 ```sh
 cargo run --example content_definitions
 ```
+
+The example also prints a JSON block-content snapshot so you can see the exact
+author-defined content surface exposed to external tools.
 
 ## World Configuration
 

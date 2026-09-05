@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probabilistic drop entries, plus a bridge from author-defined
   `BlockDropRegistry` definitions into the runtime table consumed by
   `DropsPlugin`.
+- Block, item, and drop registries now expose deterministic serializable
+  `snapshot()` outputs for documentation, tooling, manifests, and AI
+  inspection.
 
 ### Changed
 

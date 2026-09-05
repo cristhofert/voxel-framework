@@ -41,7 +41,7 @@
 //!     .add_systems(Startup, register_blocks);
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -318,6 +318,27 @@ pub struct BlockDefinition<V: VoxelType> {
     tags: HashSet<String>,
 }
 
+/// Serializable snapshot of one author-defined block.
+///
+/// Snapshots are meant for tooling, documentation, save manifests, and AI
+/// inspection. They intentionally store the concrete voxel as its stable byte
+/// instead of requiring the voxel enum itself to implement `Serialize`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockContentSnapshot {
+    /// Stable author-defined id.
+    pub id: ContentId,
+    /// Display name intended for UI/docs.
+    pub display_name: String,
+    /// Stable byte returned by [`VoxelType::to_byte`].
+    pub voxel_byte: u8,
+    /// Engine-facing technical properties.
+    pub engine: BlockEngineProperties,
+    /// Author-defined attributes in deterministic key order.
+    pub attributes: BTreeMap<String, ContentValue>,
+    /// Author-defined tags in deterministic lexical order.
+    pub tags: Vec<String>,
+}
+
 impl<V: VoxelType> BlockDefinition<V> {
     /// Creates a block definition for the given id and voxel value.
     pub fn new(id: impl Into<ContentId>, voxel: V) -> Self {
@@ -431,6 +452,18 @@ impl<V: VoxelType> BlockDefinition<V> {
     /// Returns all author-defined tags.
     pub fn tags(&self) -> &HashSet<String> {
         &self.tags
+    }
+
+    /// Creates a serializable, deterministic snapshot of this block definition.
+    pub fn snapshot(&self) -> BlockContentSnapshot {
+        BlockContentSnapshot {
+            id: self.id.clone(),
+            display_name: self.display_name.clone(),
+            voxel_byte: self.voxel.to_byte(),
+            engine: self.engine,
+            attributes: ordered_attributes(&self.attributes),
+            tags: ordered_tags(&self.tags),
+        }
     }
 }
 
@@ -574,6 +607,13 @@ impl<V: VoxelType> BlockRegistry<V> {
     pub fn iter(&self) -> impl Iterator<Item = &BlockDefinition<V>> {
         self.blocks_by_id.values()
     }
+
+    /// Returns deterministic serializable snapshots of all registered blocks.
+    pub fn snapshot(&self) -> Vec<BlockContentSnapshot> {
+        let mut blocks: Vec<_> = self.iter().map(BlockDefinition::snapshot).collect();
+        blocks.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        blocks
+    }
 }
 
 // ─── Item content ────────────────────────────────────────────────────────────
@@ -592,6 +632,24 @@ pub struct ItemDefinition<I: ItemType> {
     color: [f32; 4],
     attributes: HashMap<String, ContentValue>,
     tags: HashSet<String>,
+}
+
+/// Serializable snapshot of one author-defined item.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemContentSnapshot {
+    /// Stable author-defined id.
+    pub id: ContentId,
+    /// Display name intended for UI/docs.
+    pub display_name: String,
+    /// Stable byte returned by [`ItemType::to_byte`].
+    pub item_byte: u8,
+    /// Fallback display color.
+    pub color: [f32; 4],
+    /// Author-defined attributes in deterministic key order.
+    pub attributes: BTreeMap<String, ContentValue>,
+    /// Author-defined tags in deterministic lexical order.
+    pub tags: Vec<String>,
 }
 
 #[cfg(feature = "items")]
@@ -708,6 +766,18 @@ impl<I: ItemType> ItemDefinition<I> {
     /// Returns all author-defined tags.
     pub fn tags(&self) -> &HashSet<String> {
         &self.tags
+    }
+
+    /// Creates a serializable, deterministic snapshot of this item definition.
+    pub fn snapshot(&self) -> ItemContentSnapshot {
+        ItemContentSnapshot {
+            id: self.id.clone(),
+            display_name: self.display_name.clone(),
+            item_byte: self.item.to_byte(),
+            color: self.color,
+            attributes: ordered_attributes(&self.attributes),
+            tags: ordered_tags(&self.tags),
+        }
     }
 }
 
@@ -842,6 +912,13 @@ impl<I: ItemType> ItemRegistry<I> {
     pub fn iter(&self) -> impl Iterator<Item = &ItemDefinition<I>> {
         self.items_by_id.values()
     }
+
+    /// Returns deterministic serializable snapshots of all registered items.
+    pub fn snapshot(&self) -> Vec<ItemContentSnapshot> {
+        let mut items: Vec<_> = self.iter().map(ItemDefinition::snapshot).collect();
+        items.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        items
+    }
 }
 
 /// Horizontal plugin that initializes author-defined item content.
@@ -920,6 +997,24 @@ pub struct BlockDropDefinition<I: ItemType> {
     count: DropCount,
     chance: f32,
     attributes: HashMap<String, ContentValue>,
+}
+
+/// Serializable snapshot of one author-defined block drop.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockDropContentSnapshot {
+    /// Block id this drop is attached to.
+    pub block_id: ContentId,
+    /// Stable byte returned by [`ItemType::to_byte`] for the dropped item.
+    pub item_byte: u8,
+    /// Minimum count, inclusive.
+    pub min_count: u32,
+    /// Maximum count, inclusive.
+    pub max_count: u32,
+    /// Probability in `0.0..=1.0`.
+    pub chance: f32,
+    /// Author-defined attributes in deterministic key order.
+    pub attributes: BTreeMap<String, ContentValue>,
 }
 
 #[cfg(feature = "items")]
@@ -1019,6 +1114,17 @@ impl<I: ItemType> BlockDropDefinition<I> {
     pub fn to_drop_table_entry(&self) -> DropTableEntry<I> {
         DropTableEntry::with_chance(self.item, self.count.min, self.count.max, self.chance)
     }
+
+    fn snapshot(&self, block_id: &ContentId) -> BlockDropContentSnapshot {
+        BlockDropContentSnapshot {
+            block_id: block_id.clone(),
+            item_byte: self.item.to_byte(),
+            min_count: self.count.min,
+            max_count: self.count.max,
+            chance: self.chance,
+            attributes: ordered_attributes(&self.attributes),
+        }
+    }
 }
 
 /// Errors returned by block-drop registry validation helpers.
@@ -1102,6 +1208,23 @@ impl<I: ItemType> BlockDropRegistry<I> {
         self.drops_by_block_id
             .iter()
             .map(|(id, drops)| (id, drops.as_slice()))
+    }
+
+    /// Returns deterministic serializable snapshots of all registered drops.
+    pub fn snapshot(&self) -> Vec<BlockDropContentSnapshot> {
+        let mut drops: Vec<_> = self
+            .iter()
+            .flat_map(|(block_id, drops)| drops.iter().map(|drop| drop.snapshot(block_id)))
+            .collect();
+        drops.sort_by(|left, right| {
+            left.block_id
+                .as_str()
+                .cmp(right.block_id.as_str())
+                .then(left.item_byte.cmp(&right.item_byte))
+                .then(left.min_count.cmp(&right.min_count))
+                .then(left.max_count.cmp(&right.max_count))
+        });
+        drops
     }
 
     /// Returns all drops registered for a voxel value by first resolving it
@@ -1258,6 +1381,21 @@ impl<V: VoxelType> Plugin for VoxelContentPlugin<V> {
     }
 }
 
+fn ordered_attributes(
+    attributes: &HashMap<String, ContentValue>,
+) -> BTreeMap<String, ContentValue> {
+    attributes
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn ordered_tags(tags: &HashSet<String>) -> Vec<String> {
+    let mut tags: Vec<_> = tags.iter().cloned().collect();
+    tags.sort();
+    tags
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::prelude::{App, MinimalPlugins};
@@ -1345,6 +1483,40 @@ mod tests {
     }
 
     #[test]
+    fn block_registry_snapshot_is_serializable_and_deterministic() {
+        let mut registry = BlockRegistry::<DefaultTerrainVoxel>::default();
+        registry
+            .register(
+                BlockDefinition::new("wood", DefaultTerrainVoxel::Wood)
+                    .tag("organic")
+                    .tag("solid")
+                    .attribute("hardness", 1.5)
+                    .attribute("flammable", true),
+            )
+            .expect("block should register");
+
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].id.as_str(), "wood");
+        assert_eq!(snapshot[0].voxel_byte, DefaultTerrainVoxel::Wood.to_byte());
+        assert_eq!(
+            snapshot[0].tags,
+            vec!["organic".to_owned(), "solid".to_owned()]
+        );
+        assert_eq!(
+            snapshot[0]
+                .attributes
+                .get("hardness")
+                .and_then(ContentValue::as_number),
+            Some(1.5)
+        );
+
+        let json = serde_json::to_string(&snapshot).expect("snapshot should serialize");
+        assert!(json.contains("\"id\":\"wood\""));
+        assert!(json.contains("\"voxel_byte\""));
+    }
+
+    #[test]
     fn content_plugin_initializes_empty_registry_without_defaults() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
@@ -1402,6 +1574,28 @@ mod tests {
             registry.require("missing"),
             Err(ItemRegistryError::MissingId { .. })
         ));
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn item_registry_snapshot_is_serializable_and_deterministic() {
+        let mut registry = ItemRegistry::<DefaultItem>::default();
+        registry
+            .register(
+                ItemDefinition::new("dream_glass_shard", DefaultItem::Crystal)
+                    .tag("ritual_material")
+                    .attribute("mana_conductivity", 12.0),
+            )
+            .expect("item should register");
+
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].id.as_str(), "dream_glass_shard");
+        assert_eq!(snapshot[0].item_byte, DefaultItem::Crystal.to_byte());
+        assert_eq!(snapshot[0].tags, vec!["ritual_material".to_owned()]);
+
+        let json = serde_json::to_string(&snapshot).expect("snapshot should serialize");
+        assert!(json.contains("\"item_byte\""));
     }
 
     #[cfg(feature = "items")]
@@ -1565,6 +1759,30 @@ mod tests {
             drops.to_drop_table(&blocks),
             Err(BlockDropRegistryError::UnknownBlockId { .. })
         ));
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn block_drop_registry_snapshot_is_serializable_and_deterministic() {
+        let mut drops = BlockDropRegistry::<DefaultItem>::default();
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::new(DefaultItem::Sand, DropCount::range(3, 1))
+                .with_chance(0.5)
+                .attribute("source", "surface_layer"),
+        );
+
+        let snapshot = drops.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].block_id.as_str(), "moon_regolith");
+        assert_eq!(snapshot[0].item_byte, DefaultItem::Sand.to_byte());
+        assert_eq!(snapshot[0].min_count, 1);
+        assert_eq!(snapshot[0].max_count, 3);
+        assert_eq!(snapshot[0].chance, 0.5);
+
+        let json = serde_json::to_string(&snapshot).expect("snapshot should serialize");
+        assert!(json.contains("\"block_id\":\"moon_regolith\""));
+        assert!(json.contains("\"chance\":0.5"));
     }
 
     #[cfg(feature = "items")]
