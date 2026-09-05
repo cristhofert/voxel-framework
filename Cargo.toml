@@ -70,6 +70,11 @@ path = "examples/basic_world.rs"
 required-features = ["items"]
 
 [[example]]
+name = "content_definitions"
+path = "examples/content_definitions.rs"
+required-features = ["items"]
+
+[[example]]
 name = "minetest"
 path = "examples/minetest.rs"
 required-features = ["items", "crafting", "mobs"]

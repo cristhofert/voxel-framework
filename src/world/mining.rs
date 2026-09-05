@@ -167,6 +167,12 @@ pub struct VoxelBroken {
     pub local: (usize, usize, usize),
     /// World-space center of the broken voxel.
     pub world_pos: Vec3,
+    /// Stable byte id of the voxel that was destroyed.
+    ///
+    /// Captured before the voxel is replaced with [`VoxelType::air`], so
+    /// content and drop systems can map the destroyed block to author-defined
+    /// item drops without guessing from position.
+    pub voxel_byte: u8,
 }
 
 /// Message sent every frame while a voxel is being mined.
@@ -215,9 +221,11 @@ fn break_voxel<V: VoxelType>(
     let Ok(mut chunk) = chunks.get_mut(entity) else {
         return;
     };
-    if !chunk.is_solid_at(local.0, local.1, local.2) {
+    let voxel = chunk.get(local.0, local.1, local.2);
+    if !voxel.is_solid() {
         return;
     }
+    let voxel_byte = voxel.to_byte();
     chunk.set(local.0, local.1, local.2, V::air());
     drop(chunk);
 
@@ -226,6 +234,7 @@ fn break_voxel<V: VoxelType>(
         chunk_coord,
         local,
         world_pos: wp,
+        voxel_byte,
     });
     modified.write(ChunkModified(chunk_coord));
     notify_border_neighbors(chunk_coord, local, modified);
@@ -405,9 +414,11 @@ pub fn tick_mining<V: VoxelType>(
 
     if state.progress >= 1.0 && state.effective_break_time < f32::MAX {
         // Destroy the voxel if the chunk is loaded.
+        let mut voxel_byte = V::air().to_byte();
         if let Some(entity) = manager.get_entity(target_chunk) {
             if let Ok(mut chunk) = chunks.get_mut(entity) {
                 let (x, y, z) = target_local;
+                voxel_byte = chunk.get(x, y, z).to_byte();
                 chunk.set(x, y, z, V::air());
             }
         }
@@ -416,6 +427,7 @@ pub fn tick_mining<V: VoxelType>(
             chunk_coord: target_chunk,
             local: target_local,
             world_pos,
+            voxel_byte,
         });
 
         modified.write(ChunkModified(target_chunk));

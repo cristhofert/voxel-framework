@@ -10,7 +10,9 @@ fn main() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(VoxelContentPlugin::<DefaultTerrainVoxel>::new())
-        .add_systems(Startup, register_blocks);
+        .add_plugins(ItemContentPlugin::<DefaultItem>::new())
+        .add_plugins(BlockDropContentPlugin::<DefaultItem>::new())
+        .add_systems(Startup, (register_blocks, register_items, register_drops));
 
     app.update();
 
@@ -21,6 +23,26 @@ fn main() {
             block.id(),
             block.display_name(),
             block.voxel()
+        );
+    }
+
+    let items = app.world().resource::<ItemRegistry<DefaultItem>>();
+    for item in items.iter() {
+        println!(
+            "{} -> {} ({:?})",
+            item.id(),
+            item.display_name(),
+            item.item()
+        );
+    }
+
+    let drops = app.world().resource::<BlockDropRegistry<DefaultItem>>();
+    for drop in drops.get("moon_regolith") {
+        println!(
+            "moon_regolith drops {:?} x{}..{}",
+            drop.item(),
+            drop.count().min,
+            drop.count().max
         );
     }
 }
@@ -53,4 +75,37 @@ fn register_blocks(mut blocks: ResMut<BlockRegistry<DefaultTerrainVoxel>>) {
                 .attribute("fragile", true),
         )
         .expect("block id and voxel value should be unique");
+}
+
+fn register_items(mut items: ResMut<ItemRegistry<DefaultItem>>) {
+    items
+        .register(
+            ItemDefinition::new("moon_regolith", DefaultItem::Sand)
+                .named("Moon Regolith")
+                .tag("building_material")
+                .attribute("mass", 0.4),
+        )
+        .expect("item id and item value should be unique");
+
+    items
+        .register(
+            ItemDefinition::new("dream_glass_shard", DefaultItem::Crystal)
+                .named("Dream Glass Shard")
+                .tag("ritual_material")
+                .attribute("mana_conductivity", 12.0),
+        )
+        .expect("item id and item value should be unique");
+}
+
+fn register_drops(mut drops: ResMut<BlockDropRegistry<DefaultItem>>) {
+    drops.register_drop(
+        "moon_regolith",
+        BlockDropDefinition::new(DefaultItem::Sand, DropCount::range(1, 3))
+            .attribute("source", "surface_layer"),
+    );
+
+    drops.register_drop(
+        "dream_glass",
+        BlockDropDefinition::fixed(DefaultItem::Crystal, 1).with_chance(0.35),
+    );
 }
