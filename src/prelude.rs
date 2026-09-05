@@ -13,6 +13,11 @@ pub use crate::content::{
     BlockDefinition, BlockEngineProperties, BlockRegistry, ContentId, ContentRegistryError,
     ContentValue, VoxelContentPlugin,
 };
+#[cfg(feature = "items")]
+pub use crate::content::{
+    BlockDropContentPlugin, BlockDropDefinition, BlockDropRegistry, DropCount, ItemContentPlugin,
+    ItemDefinition, ItemRegistry, ItemRegistryError,
+};
 
 // Crafting
 #[cfg(feature = "crafting")]

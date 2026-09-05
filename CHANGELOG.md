@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registry with `BlockDefinition`, `BlockRegistry`, `ContentId`,
   `ContentValue`, and `BlockEngineProperties`. This starts the 0.5 gameplay
   definition layer without shipping game presets or fixed gameplay categories.
+- With the `items` feature, `ItemContentPlugin<I>`,
+  `BlockDropContentPlugin<I>`, `ItemDefinition`, `ItemRegistry`,
+  `BlockDropDefinition`, `BlockDropRegistry`, and `DropCount` extend the same
+  author-defined content model to items and block drops.
+
+### Changed
+
+- `VoxelBroken` now carries the destroyed voxel's real `voxel_byte`, and
+  `DropsPlugin` uses that value instead of deriving a pseudo-byte from local
+  coordinates.
 
 ## [0.4.0] - 2026-09-04
 

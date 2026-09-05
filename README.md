@@ -229,10 +229,13 @@ cargo run --example basic_world
 
 ## Author-defined Content
 
-`VoxelContentPlugin<V>` initializes a `BlockRegistry<V>` resource. The registry
-does **not** create a game, ship space/survival presets, or impose a closed list
-of gameplay categories. It is a horizontal tool: the game author registers block
-definitions and decides what their gameplay attributes mean.
+`VoxelContentPlugin<V>` initializes a `BlockRegistry<V>` resource.
+With the `items` feature enabled, `ItemContentPlugin<I>` and
+`BlockDropContentPlugin<I>` also provide `ItemRegistry<I>` and
+`BlockDropRegistry<I>`. These registries do **not** create a game, ship
+space/survival presets, or impose a closed list of gameplay categories. They are
+horizontal tools: the game author registers content definitions and decides what
+their gameplay attributes mean.
 
 The framework only separates two concerns:
 
@@ -240,8 +243,8 @@ The framework only separates two concerns:
    whether a block emits mesh geometry, collides, has opacity, color, or texture
    layers.
 2. **Author-defined gameplay data** — arbitrary attributes and tags such as
-   hardness, rarity, mana conductivity, drops, faction, temperature, or tool
-   rules.
+   hardness, rarity, mana conductivity, drops, faction, temperature, item mass,
+   or tool rules.
 
 ```rust
 use bevy::prelude::*;
@@ -264,6 +267,39 @@ App::new()
     .add_plugins(MinimalPlugins)
     .add_plugins(VoxelContentPlugin::<DefaultTerrainVoxel>::new())
     .add_systems(Startup, register_blocks);
+```
+
+With the `items` feature, item and drop content uses the same author-defined
+style:
+
+```rust
+use bevy::prelude::*;
+use voxel_framework::prelude::*;
+
+fn register_items_and_drops(
+    mut items: ResMut<ItemRegistry<DefaultItem>>,
+    mut drops: ResMut<BlockDropRegistry<DefaultItem>>,
+) {
+    items
+        .register(
+            ItemDefinition::new("moon_regolith", DefaultItem::Sand)
+                .named("Moon Regolith")
+                .tag("building_material")
+                .attribute("mass", 0.4),
+        )
+        .expect("item id and item value should be unique");
+
+    drops.register_drop(
+        "moon_regolith",
+        BlockDropDefinition::new(DefaultItem::Sand, DropCount::range(1, 3)),
+    );
+}
+
+App::new()
+    .add_plugins(MinimalPlugins)
+    .add_plugins(ItemContentPlugin::<DefaultItem>::new())
+    .add_plugins(BlockDropContentPlugin::<DefaultItem>::new())
+    .add_systems(Startup, register_items_and_drops);
 ```
 
 Run the headless content example:

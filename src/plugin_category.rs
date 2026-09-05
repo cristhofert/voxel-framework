@@ -21,6 +21,8 @@ use bevy::app::Plugin;
 
 use crate::audio::{DefaultAudioPlugin, SfxPlugin};
 use crate::content::VoxelContentPlugin;
+#[cfg(feature = "items")]
+use crate::content::{BlockDropContentPlugin, ItemContentPlugin};
 #[cfg(feature = "crafting")]
 use crate::crafting::{CraftingPlugin, CraftingUiPlugin};
 use crate::fragments::FragmentPlugin;
@@ -97,6 +99,16 @@ impl<V: VoxelType> WorldDataPlugin for PersistencePlugin<V> {}
 
 impl<V: VoxelType> VoxelFrameworkPlugin for VoxelContentPlugin<V> {}
 impl<V: VoxelType> GameplayPlugin for VoxelContentPlugin<V> {}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> VoxelFrameworkPlugin for ItemContentPlugin<I> {}
+#[cfg(feature = "items")]
+impl<I: ItemType> GameplayPlugin for ItemContentPlugin<I> {}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> VoxelFrameworkPlugin for BlockDropContentPlugin<I> {}
+#[cfg(feature = "items")]
+impl<I: ItemType> GameplayPlugin for BlockDropContentPlugin<I> {}
 
 #[cfg(feature = "crafting")]
 impl<V: VoxelType, I: ItemType> VoxelFrameworkPlugin for WorldManifestPlugin<V, I> {}

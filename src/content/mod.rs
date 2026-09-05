@@ -49,6 +49,8 @@ use std::marker::PhantomData;
 use bevy::prelude::{App, Plugin, Resource};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "items")]
+use crate::items::{DefaultItem, ItemType};
 use crate::voxel::{DefaultVoxel, VoxelType};
 
 /// Stable identifier for author-defined content.
@@ -495,6 +497,440 @@ impl<V: VoxelType> BlockRegistry<V> {
     }
 }
 
+// ─── Item content ────────────────────────────────────────────────────────────
+
+/// Author-defined item content associated with a concrete item value.
+///
+/// Available when the `items` feature is enabled. Like blocks, item
+/// definitions are data: the framework stores identity, display information,
+/// tags, and arbitrary attributes without imposing game-specific semantics.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemDefinition<I: ItemType> {
+    id: ContentId,
+    item: I,
+    display_name: String,
+    color: [f32; 4],
+    attributes: HashMap<String, ContentValue>,
+    tags: HashSet<String>,
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> ItemDefinition<I> {
+    /// Creates an item definition for the given id and item value.
+    pub fn new(id: impl Into<ContentId>, item: I) -> Self {
+        Self {
+            id: id.into(),
+            item,
+            display_name: item.name().to_owned(),
+            color: item.color(),
+            attributes: HashMap::new(),
+            tags: HashSet::new(),
+        }
+    }
+
+    /// Returns the stable author-defined id.
+    pub fn id(&self) -> &ContentId {
+        &self.id
+    }
+
+    /// Returns the item value this definition describes.
+    pub fn item(&self) -> I {
+        self.item
+    }
+
+    /// Returns the display name intended for UI/docs.
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    /// Replaces the display name.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.display_name = name.into();
+        self
+    }
+
+    /// Returns the fallback display color.
+    pub fn color(&self) -> [f32; 4] {
+        self.color
+    }
+
+    /// Replaces the fallback display color.
+    pub fn color_override(mut self, color: [f32; 4]) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Adds or replaces an author-defined gameplay attribute.
+    pub fn attribute(mut self, key: impl Into<String>, value: impl Into<ContentValue>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
+    }
+
+    /// Adds an author-defined tag.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.insert(tag.into());
+        self
+    }
+
+    /// Returns a gameplay attribute by key.
+    pub fn get_attribute(&self, key: &str) -> Option<&ContentValue> {
+        self.attributes.get(key)
+    }
+
+    /// Returns all gameplay attributes.
+    pub fn attributes(&self) -> &HashMap<String, ContentValue> {
+        &self.attributes
+    }
+
+    /// Returns true when the author-defined tag exists.
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tags.contains(tag)
+    }
+
+    /// Returns all author-defined tags.
+    pub fn tags(&self) -> &HashSet<String> {
+        &self.tags
+    }
+}
+
+/// Errors returned by [`ItemRegistry::register`].
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemRegistryError<I: ItemType> {
+    /// An item with the same id already exists.
+    DuplicateId { id: ContentId },
+    /// The item value is already associated with a different item id.
+    DuplicateItem { item: I, existing_id: ContentId },
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType + fmt::Debug> fmt::Display for ItemRegistryError<I> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateId { id } => {
+                write!(f, "content id `{id}` is already registered")
+            }
+            Self::DuplicateItem { item, existing_id } => {
+                write!(
+                    f,
+                    "item value `{item:?}` is already registered as `{existing_id}`"
+                )
+            }
+        }
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType + fmt::Debug> std::error::Error for ItemRegistryError<I> {}
+
+/// Registry of author-defined item content.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, Resource)]
+pub struct ItemRegistry<I: ItemType> {
+    items_by_id: HashMap<ContentId, ItemDefinition<I>>,
+    ids_by_item: HashMap<I, ContentId>,
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> Default for ItemRegistry<I> {
+    fn default() -> Self {
+        Self {
+            items_by_id: HashMap::new(),
+            ids_by_item: HashMap::new(),
+        }
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> ItemRegistry<I> {
+    /// Registers a new item definition.
+    pub fn register(&mut self, definition: ItemDefinition<I>) -> Result<(), ItemRegistryError<I>> {
+        if self.items_by_id.contains_key(definition.id()) {
+            return Err(ItemRegistryError::DuplicateId {
+                id: definition.id().clone(),
+            });
+        }
+
+        if let Some(existing_id) = self.ids_by_item.get(&definition.item()) {
+            return Err(ItemRegistryError::DuplicateItem {
+                item: definition.item(),
+                existing_id: existing_id.clone(),
+            });
+        }
+
+        self.ids_by_item
+            .insert(definition.item(), definition.id().clone());
+        self.items_by_id.insert(definition.id().clone(), definition);
+        Ok(())
+    }
+
+    /// Inserts a definition, replacing any previous definition for the same id
+    /// or item value.
+    pub fn insert_or_replace(&mut self, definition: ItemDefinition<I>) {
+        if let Some(old) = self.items_by_id.remove(definition.id()) {
+            self.ids_by_item.remove(&old.item());
+        }
+        if let Some(old_id) = self.ids_by_item.remove(&definition.item()) {
+            self.items_by_id.remove(&old_id);
+        }
+
+        self.ids_by_item
+            .insert(definition.item(), definition.id().clone());
+        self.items_by_id.insert(definition.id().clone(), definition);
+    }
+
+    /// Returns a definition by content id.
+    pub fn get(&self, id: impl AsRef<str>) -> Option<&ItemDefinition<I>> {
+        let id = ContentId::new(id.as_ref());
+        self.items_by_id.get(&id)
+    }
+
+    /// Returns a definition by item value.
+    pub fn get_by_item(&self, item: I) -> Option<&ItemDefinition<I>> {
+        self.ids_by_item
+            .get(&item)
+            .and_then(|id| self.items_by_id.get(id))
+    }
+
+    /// Returns true if an id exists.
+    pub fn contains_id(&self, id: impl AsRef<str>) -> bool {
+        self.get(id).is_some()
+    }
+
+    /// Number of registered item definitions.
+    pub fn len(&self) -> usize {
+        self.items_by_id.len()
+    }
+
+    /// Returns true when no definitions are registered.
+    pub fn is_empty(&self) -> bool {
+        self.items_by_id.is_empty()
+    }
+
+    /// Iterates definitions in unspecified hash-map order.
+    pub fn iter(&self) -> impl Iterator<Item = &ItemDefinition<I>> {
+        self.items_by_id.values()
+    }
+}
+
+/// Horizontal plugin that initializes author-defined item content.
+///
+/// This is separate from [`VoxelContentPlugin`] so item content can remain
+/// generic over `I: ItemType` without turning the block registry into a
+/// convenience bundle.
+#[cfg(feature = "items")]
+pub struct ItemContentPlugin<I: ItemType = DefaultItem> {
+    _marker: PhantomData<I>,
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> ItemContentPlugin<I> {
+    /// Creates a new item-content plugin for item type `I`.
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> Default for ItemContentPlugin<I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> Plugin for ItemContentPlugin<I> {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ItemRegistry<I>>();
+    }
+}
+
+// ─── Drop content ────────────────────────────────────────────────────────────
+
+/// Count range for an author-defined block drop.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DropCount {
+    /// Minimum count, inclusive.
+    pub min: u32,
+    /// Maximum count, inclusive.
+    pub max: u32,
+}
+
+#[cfg(feature = "items")]
+impl DropCount {
+    /// Creates a fixed-count drop.
+    pub fn fixed(count: u32) -> Self {
+        Self {
+            min: count,
+            max: count,
+        }
+    }
+
+    /// Creates a drop range.
+    ///
+    /// The values are normalized so `range(3, 1)` becomes `1..=3` instead of
+    /// panicking in game setup code.
+    pub fn range(min: u32, max: u32) -> Self {
+        Self {
+            min: min.min(max),
+            max: min.max(max),
+        }
+    }
+}
+
+/// Author-defined item drop attached to a block definition.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockDropDefinition<I: ItemType> {
+    item: I,
+    count: DropCount,
+    chance: f32,
+    attributes: HashMap<String, ContentValue>,
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> BlockDropDefinition<I> {
+    /// Creates a fixed-count guaranteed drop for an item.
+    pub fn fixed(item: I, count: u32) -> Self {
+        Self::new(item, DropCount::fixed(count))
+    }
+
+    /// Creates a guaranteed drop with the provided count range.
+    pub fn new(item: I, count: DropCount) -> Self {
+        Self {
+            item,
+            count,
+            chance: 1.0,
+            attributes: HashMap::new(),
+        }
+    }
+
+    /// Returns the item value this drop produces.
+    pub fn item(&self) -> I {
+        self.item
+    }
+
+    /// Returns the count range.
+    pub fn count(&self) -> DropCount {
+        self.count
+    }
+
+    /// Returns the chance in `0.0..=1.0`.
+    pub fn chance(&self) -> f32 {
+        self.chance
+    }
+
+    /// Sets the chance in `0.0..=1.0`.
+    pub fn with_chance(mut self, chance: f32) -> Self {
+        self.chance = chance.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Adds or replaces an author-defined gameplay attribute.
+    pub fn attribute(mut self, key: impl Into<String>, value: impl Into<ContentValue>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
+    }
+
+    /// Returns a gameplay attribute by key.
+    pub fn get_attribute(&self, key: &str) -> Option<&ContentValue> {
+        self.attributes.get(key)
+    }
+}
+
+/// Registry that associates block content ids with author-defined item drops.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, Resource)]
+pub struct BlockDropRegistry<I: ItemType> {
+    drops_by_block_id: HashMap<ContentId, Vec<BlockDropDefinition<I>>>,
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> Default for BlockDropRegistry<I> {
+    fn default() -> Self {
+        Self {
+            drops_by_block_id: HashMap::new(),
+        }
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> BlockDropRegistry<I> {
+    /// Adds one drop definition for a block id.
+    pub fn register_drop(&mut self, block_id: impl Into<ContentId>, drop: BlockDropDefinition<I>) {
+        self.drops_by_block_id
+            .entry(block_id.into())
+            .or_default()
+            .push(drop);
+    }
+
+    /// Returns all drops registered for a block id.
+    pub fn get(&self, block_id: impl AsRef<str>) -> &[BlockDropDefinition<I>] {
+        let id = ContentId::new(block_id.as_ref());
+        self.drops_by_block_id
+            .get(&id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Returns all drops registered for a voxel value by first resolving it
+    /// through a [`BlockRegistry`].
+    pub fn get_for_voxel<V: VoxelType>(
+        &self,
+        voxel: V,
+        blocks: &BlockRegistry<V>,
+    ) -> &[BlockDropDefinition<I>] {
+        let Some(block) = blocks.get_by_voxel(voxel) else {
+            return &[];
+        };
+        self.get(block.id().as_str())
+    }
+
+    /// Number of block ids with at least one registered drop.
+    pub fn len(&self) -> usize {
+        self.drops_by_block_id.len()
+    }
+
+    /// Returns true when no block drops are registered.
+    pub fn is_empty(&self) -> bool {
+        self.drops_by_block_id.is_empty()
+    }
+}
+
+/// Horizontal plugin that initializes author-defined block-drop content.
+#[cfg(feature = "items")]
+pub struct BlockDropContentPlugin<I: ItemType = DefaultItem> {
+    _marker: PhantomData<I>,
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> BlockDropContentPlugin<I> {
+    /// Creates a new block-drop content plugin for item type `I`.
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> Default for BlockDropContentPlugin<I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> Plugin for BlockDropContentPlugin<I> {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<BlockDropRegistry<I>>();
+    }
+}
+
 /// Horizontal plugin that initializes author-defined content registries.
 ///
 /// This plugin does not compose game presets or default content. It only
@@ -529,6 +965,8 @@ mod tests {
     use bevy::prelude::{App, MinimalPlugins};
 
     use super::*;
+    #[cfg(feature = "items")]
+    use crate::items::DefaultItem;
     use crate::voxel::DefaultTerrainVoxel;
 
     #[test]
@@ -616,6 +1054,106 @@ mod tests {
                 .resource::<BlockRegistry<DefaultTerrainVoxel>>()
                 .is_empty(),
             "content plugin must not register game-specific default blocks"
+        );
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn item_definition_keeps_author_defined_attributes_and_tags() {
+        let definition = ItemDefinition::new("dream_glass_shard", DefaultItem::Crystal)
+            .named("Dream Glass Shard")
+            .color_override([0.45, 0.75, 1.0, 1.0])
+            .tag("ritual_material")
+            .attribute("mana_conductivity", 12.0);
+
+        assert_eq!(definition.id().as_str(), "dream_glass_shard");
+        assert_eq!(definition.item(), DefaultItem::Crystal);
+        assert_eq!(definition.display_name(), "Dream Glass Shard");
+        assert_eq!(definition.color(), [0.45, 0.75, 1.0, 1.0]);
+        assert!(definition.has_tag("ritual_material"));
+        assert_eq!(
+            definition
+                .get_attribute("mana_conductivity")
+                .and_then(ContentValue::as_f64),
+            Some(12.0)
+        );
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn item_registry_rejects_duplicate_ids_and_duplicate_items() {
+        let mut registry = ItemRegistry::<DefaultItem>::default();
+        registry
+            .register(ItemDefinition::new("sand_item", DefaultItem::Sand))
+            .expect("first item should register");
+
+        let duplicate_id =
+            registry.register(ItemDefinition::new("sand_item", DefaultItem::Crystal));
+        assert!(matches!(
+            duplicate_id,
+            Err(ItemRegistryError::DuplicateId { .. })
+        ));
+
+        let duplicate_item =
+            registry.register(ItemDefinition::new("another_sand", DefaultItem::Sand));
+        assert!(matches!(
+            duplicate_item,
+            Err(ItemRegistryError::DuplicateItem { .. })
+        ));
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn block_drop_registry_resolves_drops_by_block_id_and_voxel() {
+        let mut blocks = BlockRegistry::<DefaultTerrainVoxel>::default();
+        blocks
+            .register(BlockDefinition::new(
+                "moon_regolith",
+                DefaultTerrainVoxel::Sand,
+            ))
+            .expect("block should register");
+
+        let mut drops = BlockDropRegistry::<DefaultItem>::default();
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::new(DefaultItem::Sand, DropCount::range(3, 1)).with_chance(1.4),
+        );
+
+        let by_id = drops.get("moon_regolith");
+        assert_eq!(by_id.len(), 1);
+        assert_eq!(by_id[0].item(), DefaultItem::Sand);
+        assert_eq!(by_id[0].count(), DropCount { min: 1, max: 3 });
+        assert_eq!(by_id[0].chance(), 1.0);
+
+        let by_voxel = drops.get_for_voxel(DefaultTerrainVoxel::Sand, &blocks);
+        assert_eq!(by_voxel.len(), 1);
+        assert_eq!(by_voxel[0].item(), DefaultItem::Sand);
+        assert!(
+            drops
+                .get_for_voxel(DefaultTerrainVoxel::Stone, &blocks)
+                .is_empty()
+        );
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn item_and_drop_plugins_initialize_empty_registries_without_defaults() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(ItemContentPlugin::<DefaultItem>::new());
+        app.add_plugins(BlockDropContentPlugin::<DefaultItem>::new());
+
+        assert!(
+            app.world()
+                .resource::<ItemRegistry<DefaultItem>>()
+                .is_empty(),
+            "item content plugin must not register game-specific default items"
+        );
+        assert!(
+            app.world()
+                .resource::<BlockDropRegistry<DefaultItem>>()
+                .is_empty(),
+            "block-drop content plugin must not register game-specific default drops"
         );
     }
 }

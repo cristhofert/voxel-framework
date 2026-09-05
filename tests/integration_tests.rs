@@ -6,10 +6,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::math::{IVec3, Vec3};
 use bevy::mesh::VertexAttributeValues;
 use bevy::mesh::{Indices, Mesh};
-use bevy::prelude::{App, IntoScheduleConfigs, MinimalPlugins, Resource, Update};
+use bevy::prelude::{
+    App, IntoScheduleConfigs, MinimalPlugins, Query, Res, ResMut, Resource, Update,
+};
 
 use voxel_framework::chunk::persistence::{chunk_filename, save_chunk};
 use voxel_framework::chunk::{CHUNK_SIZE, Chunk};
@@ -20,9 +23,10 @@ use voxel_framework::mesh::{
     ChunkNeighbors, generate_chunk_mesh, generate_chunk_mesh_with_neighbors,
 };
 use voxel_framework::noise::fbm;
-use voxel_framework::voxel::DefaultVoxel;
+use voxel_framework::voxel::{DefaultVoxel, VoxelType};
 use voxel_framework::world::{
-    ChunkLoadRequest, ChunkManager, ChunkModified, PersistenceConfig, ViewerPosition, WorldPlugin,
+    ChunkLoadRequest, ChunkManager, ChunkModified, MiningConfig, MiningPlugin, MiningProgress,
+    MiningState, PersistenceConfig, ViewerPosition, VoxelBroken, WorldPlugin, tick_mining,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -67,10 +71,45 @@ fn solid_count(chunk: &Chunk<DefaultVoxel>) -> usize {
 struct ObservedLoadRequests(Vec<IVec3>);
 
 fn record_load_requests(
-    mut reader: bevy::ecs::message::MessageReader<ChunkLoadRequest>,
-    mut observed: bevy::prelude::ResMut<ObservedLoadRequests>,
+    mut reader: MessageReader<ChunkLoadRequest>,
+    mut observed: ResMut<ObservedLoadRequests>,
 ) {
     observed.0.extend(reader.read().map(|request| request.0));
+}
+
+#[derive(Resource, Default)]
+struct ObservedBrokenBytes(Vec<u8>);
+
+fn mine_origin_once(
+    mut state: ResMut<MiningState>,
+    config: Res<MiningConfig>,
+    manager: Res<ChunkManager>,
+    mut chunks: Query<&mut Chunk<DefaultVoxel>>,
+    mut broken: MessageWriter<VoxelBroken>,
+    mut progress: MessageWriter<MiningProgress>,
+    mut modified: MessageWriter<ChunkModified>,
+) {
+    tick_mining(
+        IVec3::ZERO,
+        (0, 0, 0),
+        99.0,
+        &mut state,
+        &config,
+        &manager,
+        &mut chunks,
+        &mut broken,
+        &mut progress,
+        &mut modified,
+    );
+}
+
+fn record_broken_bytes(
+    mut reader: MessageReader<VoxelBroken>,
+    mut observed: ResMut<ObservedBrokenBytes>,
+) {
+    observed
+        .0
+        .extend(reader.read().map(|event| event.voxel_byte));
 }
 
 struct CountingGenerator {
@@ -364,6 +403,32 @@ fn world_and_generator_plugins_can_run_in_minimal_app_without_panic() {
     // This verifies the base runtime systems can be registered and ticked in a
     // headless ECS app.
     app.update();
+}
+
+#[test]
+fn mining_emits_real_destroyed_voxel_byte_for_drop_mapping() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(WorldPlugin);
+    app.add_plugins(MiningPlugin);
+    app.init_resource::<ObservedBrokenBytes>();
+    app.add_systems(Update, (mine_origin_once, record_broken_bytes).chain());
+
+    let mut chunk = Chunk::<DefaultVoxel>::new();
+    chunk.set(0, 0, 0, DefaultVoxel::IronOre);
+    let entity = app.world_mut().spawn(chunk).id();
+    app.world_mut()
+        .resource_mut::<ChunkManager>()
+        .register(IVec3::ZERO, entity);
+
+    app.update();
+
+    let observed = app.world().resource::<ObservedBrokenBytes>();
+    assert_eq!(
+        observed.0,
+        vec![DefaultVoxel::IronOre.to_byte()],
+        "VoxelBroken must carry the destroyed voxel byte so drops map from real block content"
+    );
 }
 
 #[test]

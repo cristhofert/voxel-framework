@@ -252,13 +252,7 @@ fn spawn_drops_system<I: ItemType>(
                 .wrapping_add(z)
         };
 
-        // Derive voxel byte from chunk + local coords for the lookup.
-        // The VoxelBroken event doesn't carry the byte directly, so we
-        // derive a pseudo-byte from the local coord to index the drop table.
-        // In real game code users should extend VoxelBroken or pass voxel_byte
-        // separately; here we look up all registered entries and use the seed.
-        let voxel_byte = derive_voxel_byte(event);
-        if let Some((item, count)) = drop_table.get_drop(voxel_byte, seed) {
+        if let Some((item, count)) = drop_table.get_drop(event.voxel_byte, seed) {
             commands.spawn(DroppedItem {
                 item,
                 count,
@@ -267,22 +261,6 @@ fn spawn_drops_system<I: ItemType>(
             });
         }
     }
-}
-
-/// Derives a voxel byte from a [`VoxelBroken`] event.
-///
-/// `VoxelBroken` does not store the original voxel byte. This helper encodes
-/// the local voxel coordinate into a stable byte so the drop table can be
-/// indexed. Game code that needs exact voxel-type drops should store the byte
-/// in `VoxelBroken` or pass it separately.
-fn derive_voxel_byte(event: &VoxelBroken) -> u8 {
-    let (x, y, z) = event.local;
-    // Simple hash of local coordinates, stable per voxel position.
-    ((x as u32)
-        .wrapping_mul(73856093)
-        .wrapping_add((y as u32).wrapping_mul(19349663))
-        .wrapping_add((z as u32).wrapping_mul(83492791))
-        & 0xFF) as u8
 }
 
 /// Applies magnet force toward [`ItemCollector`] and picks up items within
