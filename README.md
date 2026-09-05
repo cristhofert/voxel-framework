@@ -237,6 +237,16 @@ space/survival presets, or impose a closed list of gameplay categories. They are
 horizontal tools: the game author registers content definitions and decides what
 their gameplay attributes mean.
 
+For setup code that should fail loudly, registries also expose `require(...)`
+helpers and block-drop validation:
+
+- `BlockRegistry::require("id")` / `ItemRegistry::require("id")` return explicit
+  missing-id errors instead of `Option`.
+- `BlockDropRegistry::validate_blocks(&blocks)` catches drops attached to block
+  ids that were never registered.
+- `BlockDropRegistry::validate_items(&items)` catches drops that produce item
+  values that were never registered.
+
 The framework only separates two concerns:
 
 1. **Engine contracts** — technical facts the voxel runtime may need, such as
@@ -293,6 +303,8 @@ fn register_items_and_drops(
         "moon_regolith",
         BlockDropDefinition::new(DefaultItem::Sand, DropCount::range(1, 3)),
     );
+
+    drops.validate_items(&items).expect("drops should use registered items");
 }
 
 App::new()
