@@ -76,7 +76,7 @@ categories:
 |---|---|---|
 | Engine | Foundation for streamable/renderable voxel worlds | `WorldPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
 | World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
-| Gameplay | Reusable rules and interactions | `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
+| Gameplay | Reusable rules and interactions | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
 | Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
 | Convenience | Bundles, input adapters, compatibility, recipes/prototyping helpers | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
@@ -211,6 +211,7 @@ cargo run --example basic_world
 |---|---|
 | `voxel` | `VoxelType` trait, `DefaultVoxel` enum, and `VoxelPalette` resource |
 | `content` | Author-defined `BlockDefinition`, `BlockRegistry`, and `VoxelContentPlugin` |
+| `stats` | Author-defined `StatDefinition`, `StatRegistry`, `StatSet`, and `VoxelStatsPlugin` |
 | `chunk` | `Chunk<V>` flat-array storage, `ChunkCoord`, constants, coordinate utilities, and binary persistence |
 | `noise` | Seed-based value noise, FBM, and `hash3` — no external noise crates |
 | `generator` | `ChunkGenerator<V>` trait, `GeneratorPlugin`, and `GeneratorResource` |
@@ -338,6 +339,61 @@ cargo run --example content_definitions
 
 The example also prints a JSON block-content snapshot so you can see the exact
 author-defined content surface exposed to external tools.
+
+## Author-defined Stats
+
+`VoxelStatsPlugin` initializes two empty resources:
+
+- `StatRegistry` — the catalog of stats the game author chooses to define.
+- `StatSet` — runtime values keyed by those author-defined stat ids.
+
+The plugin intentionally registers **no** default health, stamina, oxygen, mana,
+hunger, thirst, or body schema. Those are game decisions. A survival game can
+define `oxygen`; an RPG can define `mana`; an arcade sandbox can define no stats
+at all. The framework only provides ids, bounds, clamping, mutation helpers,
+metadata, tags, and deterministic snapshots.
+
+```rust
+use bevy::prelude::*;
+use voxel_framework::prelude::*;
+
+fn register_stats(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet>) {
+    registry
+        .register(
+            StatDefinition::new("oxygen", 100.0)
+                .named("Suit Oxygen")
+                .bounds(0.0, 100.0)
+                .tag("body")
+                .attribute("ui_hint", "bar")
+                .attribute("critical_threshold", 15.0),
+        )
+        .expect("stat id should be unique");
+
+    values.ensure_registered(&registry);
+}
+
+fn space_tick(registry: Res<StatRegistry>, mut values: ResMut<StatSet>) {
+    values
+        .drain("oxygen", 1.5, &registry)
+        .expect("oxygen should be registered");
+}
+
+App::new()
+    .add_plugins(MinimalPlugins)
+    .add_plugins(VoxelStatsPlugin)
+    .add_systems(Startup, register_stats)
+    .add_systems(Update, space_tick);
+```
+
+Run the headless stats example:
+
+```sh
+cargo run --example stats_definitions
+```
+
+Like content snapshots, `StatRegistry::snapshot()` and `StatSet::snapshot()`
+return deterministic serializable data for docs, tooling, manifests, or AI
+inspection.
 
 ## World Configuration
 

@@ -35,7 +35,7 @@
 //! |----------|---------|----------|
 //! | Engine | Foundation for streamable/renderable voxel worlds | [`world::WorldPlugin`], [`mesh::MeshPlugin`], [`render::RenderPlugin`] |
 //! | World Data | Chunk sources, generation, persistence, lifecycle data | [`generator::GeneratorPlugin`], [`world::PersistencePlugin`] |
-//! | Gameplay | Reusable rules and interactions | [`world::mining::MiningPlugin`], [`world::placement::PlacementPlugin`], [`player::PlayerPlugin`] |
+//! | Gameplay | Reusable rules and interactions | [`content::VoxelContentPlugin`], [`stats::VoxelStatsPlugin`], [`world::mining::MiningPlugin`], [`world::placement::PlacementPlugin`], [`player::PlayerPlugin`] |
 //! | Default Implementation | Replaceable UI/audio/visual defaults | [`ui::UiPlugin`], [`skybox::SkyboxPlugin`], [`audio::DefaultAudioPlugin`] |
 //! | Convenience | Compatibility bundles, input adapters, recipes, prototyping helpers | [`VoxelCorePlugin`], [`VoxelPlugin`] |
 //!
@@ -151,6 +151,7 @@ pub mod profile;
 pub mod render;
 pub mod settings;
 pub mod skybox;
+pub mod stats;
 pub mod ui;
 pub mod voxel;
 pub mod world;
