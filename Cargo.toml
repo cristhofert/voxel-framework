@@ -1,6 +1,6 @@
 [package]
 name = "voxel-framework"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 description = "A reusable voxel engine framework built on Bevy"
@@ -77,6 +77,10 @@ required-features = ["items"]
 [[example]]
 name = "stats_definitions"
 path = "examples/stats_definitions.rs"
+
+[[example]]
+name = "effect_definitions"
+path = "examples/effect_definitions.rs"
 
 [[example]]
 name = "minetest"

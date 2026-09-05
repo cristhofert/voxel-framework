@@ -76,7 +76,7 @@ categories:
 |---|---|---|
 | Engine | Foundation for streamable/renderable voxel worlds | `WorldPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
 | World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
-| Gameplay | Reusable rules and interactions | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
+| Gameplay | Reusable rules and interactions | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `VoxelEffectsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
 | Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
 | Convenience | Bundles, input adapters, compatibility, recipes/prototyping helpers | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
@@ -212,6 +212,7 @@ cargo run --example basic_world
 | `voxel` | `VoxelType` trait, `DefaultVoxel` enum, and `VoxelPalette` resource |
 | `content` | Author-defined `BlockDefinition`, `BlockRegistry`, and `VoxelContentPlugin` |
 | `stats` | Author-defined `StatDefinition`, `StatRegistry`, `StatSet`, and `VoxelStatsPlugin` |
+| `effects` | Author-defined `EffectDefinition`, `EffectRegistry`, `ActiveEffectSet`, and `VoxelEffectsPlugin` |
 | `chunk` | `Chunk<V>` flat-array storage, `ChunkCoord`, constants, coordinate utilities, and binary persistence |
 | `noise` | Seed-based value noise, FBM, and `hash3` — no external noise crates |
 | `generator` | `ChunkGenerator<V>` trait, `GeneratorPlugin`, and `GeneratorResource` |
@@ -444,6 +445,93 @@ actually changes. If you only need a plain data mutation, `StatSet::set`,
 not depend on Bevy message writers. If a reader must react in the same update as
 the writer, order it after the writer with `.chain()` or explicit Bevy system
 ordering.
+
+## Author-defined Effects
+
+`VoxelEffectsPlugin` initializes two empty resources:
+
+- `EffectRegistry` — the catalog of effects the game author chooses to define.
+- `ActiveEffectSet` — runtime active effects, usable globally or as an entity
+  component.
+
+This is not the older `player::effects::StatusEffectsPlugin`, and it is not a
+potion system. The plugin intentionally registers **no** poison, speed,
+regeneration, low-oxygen, buff/debuff taxonomy, or player-specific behavior.
+Those are game decisions. The framework only provides ids, durations, stacks,
+metadata, tags, deterministic snapshots, and optional Bevy lifecycle messages.
+
+```rust
+use bevy::prelude::*;
+use bevy::ecs::message::{MessageReader, MessageWriter};
+use voxel_framework::prelude::*;
+
+fn register_effects(mut registry: ResMut<EffectRegistry>) {
+    registry
+        .register(
+            EffectDefinition::new("low_oxygen")
+                .named("Low Oxygen")
+                .duration_secs(10.0)
+                .max_stacks(3)
+                .tag("space_suit")
+                .attribute("ui_hint", "warning"),
+        )
+        .expect("effect id should be unique");
+}
+
+fn apply_effects(
+    registry: Res<EffectRegistry>,
+    mut active: ResMut<ActiveEffectSet>,
+    mut applied: MessageWriter<EffectApplied>,
+) {
+    apply_effect("low_oxygen", &registry, &mut active, &mut applied)
+        .expect("effect should be registered");
+}
+
+fn tick_active_effects(
+    mut active: ResMut<ActiveEffectSet>,
+    mut expired: MessageWriter<EffectExpired>,
+) {
+    tick_effects(1.0, &mut active, &mut expired);
+}
+
+fn react_to_effects(
+    mut applied: MessageReader<EffectApplied>,
+    mut expired: MessageReader<EffectExpired>,
+) {
+    for event in applied.read() {
+        println!("Applied {}", event.id);
+    }
+    for event in expired.read() {
+        println!("Expired {}", event.id);
+    }
+}
+
+App::new()
+    .add_plugins(MinimalPlugins)
+    .add_plugins(VoxelEffectsPlugin)
+    .add_systems(Startup, register_effects)
+    .add_systems(
+        Update,
+        (apply_effects, tick_active_effects, react_to_effects).chain(),
+    );
+```
+
+Attach `ActiveEffectSet::new()` to entities when the effect scope belongs to a
+specific subject:
+
+```rust
+commands.spawn((MyMob, ActiveEffectSet::new()));
+```
+
+Run the headless effects example:
+
+```sh
+cargo run --example effect_definitions
+```
+
+Like content and stats snapshots, `EffectRegistry::snapshot()` and
+`ActiveEffectSet::snapshot()` return deterministic serializable data for docs,
+tooling, manifests, or AI inspection.
 
 ## World Configuration
 

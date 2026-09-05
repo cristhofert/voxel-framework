@@ -35,7 +35,7 @@
 //! |----------|---------|----------|
 //! | Engine | Foundation for streamable/renderable voxel worlds | [`world::WorldPlugin`], [`mesh::MeshPlugin`], [`render::RenderPlugin`] |
 //! | World Data | Chunk sources, generation, persistence, lifecycle data | [`generator::GeneratorPlugin`], [`world::PersistencePlugin`] |
-//! | Gameplay | Reusable rules and interactions | [`content::VoxelContentPlugin`], [`stats::VoxelStatsPlugin`], [`world::mining::MiningPlugin`], [`world::placement::PlacementPlugin`], [`player::PlayerPlugin`] |
+//! | Gameplay | Reusable rules and interactions | [`content::VoxelContentPlugin`], [`stats::VoxelStatsPlugin`], [`effects::VoxelEffectsPlugin`], [`world::mining::MiningPlugin`], [`world::placement::PlacementPlugin`], [`player::PlayerPlugin`] |
 //! | Default Implementation | Replaceable UI/audio/visual defaults | [`ui::UiPlugin`], [`skybox::SkyboxPlugin`], [`audio::DefaultAudioPlugin`] |
 //! | Convenience | Compatibility bundles, input adapters, recipes, prototyping helpers | [`VoxelCorePlugin`], [`VoxelPlugin`] |
 //!
@@ -136,6 +136,7 @@ pub mod chunk;
 pub mod content;
 #[cfg(feature = "crafting")]
 pub mod crafting;
+pub mod effects;
 pub mod fragments;
 pub mod generator;
 #[cfg(feature = "items")]
