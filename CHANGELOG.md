@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working as the global stats resource initialized by `VoxelStatsPlugin`.
 - `StatSet::from_registry(&registry)` creates a runtime set initialized from
   registered defaults for entity-local or global stat values.
+- `StatDefinition::span()` plus `StatSet::normalized`,
+  `is_at_or_below`, `is_at_or_above`, `is_at_or_below_percent`, and
+  `is_at_or_above_percent` add generic read-side ergonomics for UI, rules, and
+  effects authored outside the framework.
 - Stat definitions and runtime values expose deterministic serializable
   snapshots for documentation, tooling, manifests, and AI inspection.
 - `examples/stats_definitions.rs` demonstrates a headless author-defined stats

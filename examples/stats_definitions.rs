@@ -44,6 +44,16 @@ fn main() {
         "stat values:\n{}",
         serde_json::to_string_pretty(&values.snapshot()).expect("stat snapshots should serialize")
     );
+    println!(
+        "global oxygen: {:.0}% full, critical={}",
+        values
+            .normalized("oxygen", registry)
+            .expect("oxygen should be registered")
+            * 100.0,
+        values
+            .is_at_or_below_percent("oxygen", 0.15, registry)
+            .expect("oxygen should be registered")
+    );
 
     for entity in &subjects.0 {
         if let Some(values) = world.get::<StatSet>(*entity) {
@@ -51,6 +61,16 @@ fn main() {
                 "entity {entity:?} stat values:\n{}",
                 serde_json::to_string_pretty(&values.snapshot())
                     .expect("entity stat snapshots should serialize")
+            );
+            println!(
+                "entity {entity:?} oxygen: {:.0}% full, critical={}",
+                values
+                    .normalized("oxygen", registry)
+                    .expect("oxygen should be registered")
+                    * 100.0,
+                values
+                    .is_at_or_below_percent("oxygen", 0.15, registry)
+                    .expect("oxygen should be registered")
             );
         }
     }
