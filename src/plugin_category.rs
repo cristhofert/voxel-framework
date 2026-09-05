@@ -36,6 +36,7 @@ use crate::player::PlayerPlugin;
 use crate::player::effects::{StatusEffect, StatusEffectsPlugin};
 use crate::render::RenderPlugin;
 use crate::skybox::SkyboxPlugin;
+use crate::stats::VoxelStatsPlugin;
 use crate::ui::{
     CrosshairPlugin, DebugOverlayPlugin, LoadingScreenPlugin, PauseMenuPlugin, UiPlugin,
 };
@@ -99,6 +100,9 @@ impl<V: VoxelType> WorldDataPlugin for PersistencePlugin<V> {}
 
 impl<V: VoxelType> VoxelFrameworkPlugin for VoxelContentPlugin<V> {}
 impl<V: VoxelType> GameplayPlugin for VoxelContentPlugin<V> {}
+
+impl VoxelFrameworkPlugin for VoxelStatsPlugin {}
+impl GameplayPlugin for VoxelStatsPlugin {}
 
 #[cfg(feature = "items")]
 impl<I: ItemType> VoxelFrameworkPlugin for ItemContentPlugin<I> {}

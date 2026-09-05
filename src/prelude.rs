@@ -20,6 +20,12 @@ pub use crate::content::{
     ItemRegistry, ItemRegistryError,
 };
 
+// Author-defined stats
+pub use crate::stats::{
+    StatDefinition, StatDefinitionSnapshot, StatError, StatId, StatRegistry, StatSet,
+    StatValueSnapshot, VoxelStatsPlugin,
+};
+
 // Crafting
 #[cfg(feature = "crafting")]
 pub use crate::crafting::{
