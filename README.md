@@ -353,6 +353,14 @@ define `oxygen`; an RPG can define `mana`; an arcade sandbox can define no stats
 at all. The framework only provides ids, bounds, clamping, mutation helpers,
 metadata, tags, and deterministic snapshots.
 
+For inspection, `StatSet::normalized(id, &registry)` returns a `0.0..=1.0`
+ratio across the stat bounds, while `is_at_or_below`,
+`is_at_or_above`, `is_at_or_below_percent`, and
+`is_at_or_above_percent` give authors small threshold helpers. These helpers are
+for the author's own UI, rules, effects, alarms, or progression systems; the
+framework still does **not** implement any of those layers or assign gameplay
+meaning to a stat id.
+
 `StatSet` works in two scopes:
 
 - **Global stats**: use the `StatSet` resource initialized by
@@ -418,6 +426,16 @@ cargo run --example stats_definitions
 Like content snapshots, `StatRegistry::snapshot()` and `StatSet::snapshot()`
 return deterministic serializable data for docs, tooling, manifests, or AI
 inspection.
+
+Use read helpers when you want to inspect state without changing it:
+
+```rust
+let oxygen_ratio = values.normalized("oxygen", &registry)?;
+
+if values.is_at_or_below_percent("oxygen", 0.15, &registry)? {
+    // Author-defined reaction: update UI, trigger rules, emit effects, etc.
+}
+```
 
 Use `set_stat`, `add_stat`, `drain_stat`, and `fill_stat` when a Bevy system
 wants to emit a `StatChanged` message. They emit only when the clamped value

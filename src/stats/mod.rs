@@ -10,7 +10,7 @@
 //!
 //! - [`StatRegistry`] — author-defined metadata and bounds for stats.
 //! - [`StatSet`] — runtime values keyed by [`StatId`], with clamping and simple
-//!   mutation helpers.
+//!   mutation and inspection helpers.
 //! - [`StatChanged`] plus [`set_stat`], [`add_stat`], [`drain_stat`], and
 //!   [`fill_stat`] — optional Bevy-message helpers for systems that want to
 //!   react when a stat actually changes.
@@ -181,6 +181,13 @@ impl StatDefinition {
     /// Returns the maximum runtime value.
     pub fn max_value(&self) -> f32 {
         self.max_value
+    }
+
+    /// Returns the absolute span between the minimum and maximum runtime values.
+    ///
+    /// A stat with equal bounds has a span of `0.0`.
+    pub fn span(&self) -> f32 {
+        self.max_value - self.min_value
     }
 
     /// Sets runtime bounds. Reversed bounds are normalized.
@@ -442,6 +449,68 @@ impl StatSet {
             .unwrap_or_else(|| definition.default_value()))
     }
 
+    /// Returns the current value normalized to `0.0..=1.0` across the
+    /// registered stat bounds.
+    ///
+    /// This is only an inspection helper: it does not imply HUD, rules, or
+    /// effects behavior. A stat whose minimum and maximum are equal normalizes
+    /// to `1.0` to avoid division by zero.
+    pub fn normalized(
+        &self,
+        id: impl AsRef<str>,
+        registry: &StatRegistry,
+    ) -> Result<f32, StatError> {
+        let definition = registry.require(id.as_ref())?;
+        let value = definition.clamp(self.get(definition.id().as_str(), registry)?);
+        Ok(normalize_value(definition, value))
+    }
+
+    /// Returns true when the current value is at or below an absolute threshold.
+    pub fn is_at_or_below(
+        &self,
+        id: impl AsRef<str>,
+        threshold: f32,
+        registry: &StatRegistry,
+    ) -> Result<bool, StatError> {
+        let definition = registry.require(id.as_ref())?;
+        Ok(self.get(definition.id().as_str(), registry)? <= finite_or_zero(threshold))
+    }
+
+    /// Returns true when the current value is at or above an absolute threshold.
+    pub fn is_at_or_above(
+        &self,
+        id: impl AsRef<str>,
+        threshold: f32,
+        registry: &StatRegistry,
+    ) -> Result<bool, StatError> {
+        let definition = registry.require(id.as_ref())?;
+        Ok(self.get(definition.id().as_str(), registry)? >= finite_or_zero(threshold))
+    }
+
+    /// Returns true when the normalized value is at or below `threshold`.
+    ///
+    /// `threshold` is clamped to `0.0..=1.0`; for example, `0.15` means 15%.
+    pub fn is_at_or_below_percent(
+        &self,
+        id: impl AsRef<str>,
+        threshold: f32,
+        registry: &StatRegistry,
+    ) -> Result<bool, StatError> {
+        Ok(self.normalized(id, registry)? <= normalized_threshold(threshold))
+    }
+
+    /// Returns true when the normalized value is at or above `threshold`.
+    ///
+    /// `threshold` is clamped to `0.0..=1.0`; for example, `0.85` means 85%.
+    pub fn is_at_or_above_percent(
+        &self,
+        id: impl AsRef<str>,
+        threshold: f32,
+        registry: &StatRegistry,
+    ) -> Result<bool, StatError> {
+        Ok(self.normalized(id, registry)? >= normalized_threshold(threshold))
+    }
+
     /// Returns true when this stat value is at or below its minimum bound.
     pub fn is_min(&self, id: impl AsRef<str>, registry: &StatRegistry) -> Result<bool, StatError> {
         let definition = registry.require(id.as_ref())?;
@@ -598,6 +667,19 @@ fn finite_or_zero(value: f32) -> f32 {
     if value.is_finite() { value } else { 0.0 }
 }
 
+fn normalize_value(definition: &StatDefinition, value: f32) -> f32 {
+    let span = definition.span();
+    if span <= f32::EPSILON {
+        return 1.0;
+    }
+
+    ((definition.clamp(value) - definition.min_value()) / span).clamp(0.0, 1.0)
+}
+
+fn normalized_threshold(threshold: f32) -> f32 {
+    finite_or_zero(threshold).clamp(0.0, 1.0)
+}
+
 fn ordered_attributes(
     attributes: &HashMap<String, ContentValue>,
 ) -> BTreeMap<String, ContentValue> {
@@ -648,6 +730,7 @@ mod tests {
 
         assert_eq!(stat.min_value(), -10.0);
         assert_eq!(stat.max_value(), 10.0);
+        assert_eq!(stat.span(), 20.0);
         assert_eq!(stat.default_value(), 10.0);
         assert_eq!(stat.clamp(99.0), 10.0);
         assert_eq!(stat.clamp(-99.0), -10.0);
@@ -695,6 +778,117 @@ mod tests {
         assert_eq!(values.get("oxygen", &registry), Ok(0.0));
         assert_eq!(values.fill("oxygen", 250.0, &registry), Ok(100.0));
         assert_eq!(values.add("oxygen", -40.0, &registry), Ok(60.0));
+    }
+
+    #[test]
+    fn stat_set_normalizes_current_value_against_registered_bounds() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("oxygen", 100.0).bounds(0.0, 100.0))
+            .expect("stat should register");
+
+        let mut values = StatSet::new();
+
+        assert_eq!(values.normalized("oxygen", &registry), Ok(1.0));
+        assert_eq!(values.set("oxygen", 25.0, &registry), Ok(25.0));
+        assert_eq!(values.normalized("oxygen", &registry), Ok(0.25));
+        assert_eq!(values.set("oxygen", -25.0, &registry), Ok(0.0));
+        assert_eq!(values.normalized("oxygen", &registry), Ok(0.0));
+        assert_eq!(values.set("oxygen", f32::INFINITY, &registry), Ok(0.0));
+        assert_eq!(values.normalized("oxygen", &registry), Ok(0.0));
+    }
+
+    #[test]
+    fn stat_set_normalization_handles_equal_bounds_without_dividing_by_zero() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("locked", 5.0).bounds(5.0, 5.0))
+            .expect("stat should register");
+
+        let mut values = StatSet::new();
+
+        assert_eq!(
+            registry.require("locked").map(StatDefinition::span),
+            Ok(0.0)
+        );
+        assert_eq!(values.normalized("locked", &registry), Ok(1.0));
+        assert_eq!(values.set("locked", f32::NAN, &registry), Ok(5.0));
+        assert_eq!(values.normalized("locked", &registry), Ok(1.0));
+    }
+
+    #[test]
+    fn stat_set_supports_absolute_threshold_checks() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("oxygen", 100.0).bounds(0.0, 100.0))
+            .expect("stat should register");
+
+        let mut values = StatSet::new();
+        values
+            .set("oxygen", 15.0, &registry)
+            .expect("oxygen exists");
+
+        assert_eq!(values.is_at_or_below("oxygen", 15.0, &registry), Ok(true));
+        assert_eq!(values.is_at_or_below("oxygen", 14.0, &registry), Ok(false));
+        assert_eq!(values.is_at_or_above("oxygen", 15.0, &registry), Ok(true));
+        assert_eq!(values.is_at_or_above("oxygen", 16.0, &registry), Ok(false));
+        assert_eq!(
+            values.is_at_or_below("oxygen", f32::INFINITY, &registry),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn stat_set_supports_normalized_threshold_checks() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("oxygen", 100.0).bounds(0.0, 100.0))
+            .expect("stat should register");
+
+        let mut values = StatSet::new();
+        values
+            .set("oxygen", 15.0, &registry)
+            .expect("oxygen exists");
+
+        assert_eq!(
+            values.is_at_or_below_percent("oxygen", 0.15, &registry),
+            Ok(true)
+        );
+        assert_eq!(
+            values.is_at_or_below_percent("oxygen", 0.14, &registry),
+            Ok(false)
+        );
+        assert_eq!(
+            values.is_at_or_above_percent("oxygen", 0.15, &registry),
+            Ok(true)
+        );
+        assert_eq!(
+            values.is_at_or_above_percent("oxygen", 0.16, &registry),
+            Ok(false)
+        );
+        assert_eq!(
+            values.is_at_or_above_percent("oxygen", f32::INFINITY, &registry),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn stat_read_helpers_return_missing_id_errors() {
+        let registry = StatRegistry::default();
+        let values = StatSet::new();
+
+        assert!(matches!(
+            values.normalized("missing", &registry),
+            Err(StatError::MissingId { .. })
+        ));
+        assert!(matches!(
+            values.is_at_or_below("missing", 1.0, &registry),
+            Err(StatError::MissingId { .. })
+        ));
+        assert!(matches!(
+            values.is_at_or_below_percent("missing", 0.5, &registry),
+            Err(StatError::MissingId { .. })
+        ));
     }
 
     #[test]
