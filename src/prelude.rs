@@ -26,6 +26,13 @@ pub use crate::stats::{
     StatValueSnapshot, VoxelStatsPlugin, add_stat, drain_stat, fill_stat, set_stat,
 };
 
+// Author-defined effects
+pub use crate::effects::{
+    ActiveEffectSet, EffectApplied, EffectDefinition, EffectDefinitionSnapshot, EffectError,
+    EffectExpired, EffectId, EffectInstance, EffectInstanceSnapshot, EffectRegistry,
+    VoxelEffectsPlugin, apply_effect, apply_effect_instance, tick_effects,
+};
+
 // Crafting
 #[cfg(feature = "crafting")]
 pub use crate::crafting::{

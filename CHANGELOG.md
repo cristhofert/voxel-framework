@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `VoxelEffectsPlugin`, `EffectRegistry`, `EffectDefinition`,
+  `ActiveEffectSet`, and `EffectInstance` add a horizontal author-defined
+  effects layer without framework presets, potion semantics, or player-specific
+  behavior.
+- `EffectApplied`, `EffectExpired`, `apply_effect`, `apply_effect_instance`,
+  and `tick_effects` provide optional Bevy-message helpers for systems that need
+  to react to effect lifecycle changes.
+- Effect definitions and active effect sets expose deterministic serializable
+  snapshots for documentation, tooling, manifests, and AI inspection.
+- `examples/effect_definitions.rs` demonstrates a headless author-defined
+  effects setup using `MinimalPlugins`.
+
 ## [0.6.0] - 2026-09-05
 
 ### Added

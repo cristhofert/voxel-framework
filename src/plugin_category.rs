@@ -25,6 +25,7 @@ use crate::content::VoxelContentPlugin;
 use crate::content::{BlockDropContentPlugin, ItemContentPlugin};
 #[cfg(feature = "crafting")]
 use crate::crafting::{CraftingPlugin, CraftingUiPlugin};
+use crate::effects::VoxelEffectsPlugin;
 use crate::fragments::FragmentPlugin;
 use crate::generator::{GeneratorPlugin, MultiGeneratorPlugin};
 #[cfg(feature = "items")]
@@ -103,6 +104,9 @@ impl<V: VoxelType> GameplayPlugin for VoxelContentPlugin<V> {}
 
 impl VoxelFrameworkPlugin for VoxelStatsPlugin {}
 impl GameplayPlugin for VoxelStatsPlugin {}
+
+impl VoxelFrameworkPlugin for VoxelEffectsPlugin {}
+impl GameplayPlugin for VoxelEffectsPlugin {}
 
 #[cfg(feature = "items")]
 impl<I: ItemType> VoxelFrameworkPlugin for ItemContentPlugin<I> {}
