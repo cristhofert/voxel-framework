@@ -353,6 +353,14 @@ define `oxygen`; an RPG can define `mana`; an arcade sandbox can define no stats
 at all. The framework only provides ids, bounds, clamping, mutation helpers,
 metadata, tags, and deterministic snapshots.
 
+`StatSet` works in two scopes:
+
+- **Global stats**: use the `StatSet` resource initialized by
+  `VoxelStatsPlugin` for world/session values.
+- **Entity stats**: attach `StatSet::from_registry(&registry)` as a component
+  to any entity that needs its own values: player, mob, vehicle, machine,
+  settlement, or any other author-defined subject.
+
 ```rust
 use bevy::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
@@ -371,6 +379,10 @@ fn register_stats(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet
         .expect("stat id should be unique");
 
     values.ensure_registered(&registry);
+}
+
+fn spawn_subject(mut commands: Commands, registry: Res<StatRegistry>) {
+    commands.spawn(StatSet::from_registry(&registry));
 }
 
 fn space_tick(
@@ -393,7 +405,7 @@ fn react_to_stats(mut changed: MessageReader<StatChanged>) {
 App::new()
     .add_plugins(MinimalPlugins)
     .add_plugins(VoxelStatsPlugin)
-    .add_systems(Startup, register_stats)
+    .add_systems(Startup, (register_stats, spawn_subject).chain())
     .add_systems(Update, (space_tick, react_to_stats).chain());
 ```
 

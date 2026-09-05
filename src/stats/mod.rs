@@ -57,7 +57,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use bevy::ecs::message::MessageWriter;
-use bevy::prelude::{App, Message, Plugin, Resource};
+use bevy::prelude::{App, Component, Message, Plugin, Resource};
 use serde::{Deserialize, Serialize};
 
 use crate::content::ContentValue;
@@ -350,7 +350,12 @@ impl StatRegistry {
 }
 
 /// Runtime stat values keyed by author-defined [`StatId`].
-#[derive(Debug, Clone, Default, Resource, Serialize, Deserialize)]
+///
+/// A `StatSet` can be used as the global stats [`Resource`] initialized by
+/// [`VoxelStatsPlugin`] or attached directly to entities as a [`Component`].
+/// The framework does not assign a meaning to the owner entity: it can be a
+/// player, mob, vehicle, machine, colony, or any author-defined subject.
+#[derive(Debug, Clone, Default, Component, Resource, Serialize, Deserialize)]
 pub struct StatSet {
     values: HashMap<StatId, f32>,
 }
@@ -359,6 +364,13 @@ impl StatSet {
     /// Creates an empty stat set.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a stat set initialized with every registered stat default.
+    pub fn from_registry(registry: &StatRegistry) -> Self {
+        let mut values = Self::new();
+        values.ensure_registered(registry);
+        values
     }
 
     /// Inserts any missing registered stats with their configured defaults.
@@ -605,7 +617,8 @@ fn ordered_tags(tags: &HashSet<String>) -> Vec<String> {
 mod tests {
     use bevy::ecs::message::{MessageReader, MessageWriter};
     use bevy::prelude::{
-        App, IntoScheduleConfigs, MinimalPlugins, Res, ResMut, Resource, Startup, Update,
+        App, Component, IntoScheduleConfigs, MinimalPlugins, Query, Res, ResMut, Resource, Startup,
+        Update, With,
     };
 
     use super::*;
@@ -706,6 +719,23 @@ mod tests {
     }
 
     #[test]
+    fn stat_set_from_registry_inserts_registered_defaults() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("oxygen", 100.0))
+            .expect("stat should register");
+        registry
+            .register(StatDefinition::new("radiation", 0.0).bounds(0.0, 1_000.0))
+            .expect("stat should register");
+
+        let values = StatSet::from_registry(&registry);
+
+        assert_eq!(values.get("oxygen", &registry), Ok(100.0));
+        assert_eq!(values.get("radiation", &registry), Ok(0.0));
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
     fn snapshots_are_serializable_and_deterministic() {
         let mut registry = StatRegistry::default();
         registry
@@ -750,6 +780,9 @@ mod tests {
 
     #[derive(Resource, Default)]
     struct ObservedStatErrors(Vec<StatError>);
+
+    #[derive(Component)]
+    struct StatSubject;
 
     fn register_oxygen_stat(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet>) {
         registry
@@ -803,6 +836,17 @@ mod tests {
         let error = add_stat("missing", 1.0, &registry, &mut values, &mut changed)
             .expect_err("missing stat should return an error");
         errors.0.push(error);
+    }
+
+    fn drain_subject_oxygen_with_query(
+        registry: Res<StatRegistry>,
+        mut subjects: Query<&mut StatSet, With<StatSubject>>,
+        mut changed: MessageWriter<StatChanged>,
+    ) {
+        for mut values in &mut subjects {
+            drain_stat("oxygen", 25.0, &registry, &mut values, &mut changed)
+                .expect("oxygen should exist");
+        }
     }
 
     #[test]
@@ -909,6 +953,67 @@ mod tests {
             errors.0,
             vec![StatError::MissingId {
                 id: StatId::new("missing"),
+            }]
+        );
+    }
+
+    #[test]
+    fn stat_set_can_be_attached_to_bevy_entities_as_component() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("oxygen", 100.0).bounds(0.0, 100.0))
+            .expect("oxygen should register");
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let entity = app
+            .world_mut()
+            .spawn((StatSubject, StatSet::from_registry(&registry)))
+            .id();
+
+        let values = app
+            .world()
+            .get::<StatSet>(entity)
+            .expect("entity should have stat set");
+
+        assert_eq!(values.get("oxygen", &registry), Ok(100.0));
+    }
+
+    #[test]
+    fn stat_helpers_can_mutate_query_stat_sets() {
+        let mut registry = StatRegistry::default();
+        registry
+            .register(StatDefinition::new("oxygen", 100.0).bounds(0.0, 100.0))
+            .expect("oxygen should register");
+        let initial_values = StatSet::from_registry(&registry);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(VoxelStatsPlugin);
+        app.insert_resource(registry);
+        app.init_resource::<ObservedStatChanges>();
+        let entity = app.world_mut().spawn((StatSubject, initial_values)).id();
+        app.add_systems(
+            Update,
+            (drain_subject_oxygen_with_query, record_stat_changes).chain(),
+        );
+
+        app.update();
+
+        let registry = app.world().resource::<StatRegistry>();
+        let values = app
+            .world()
+            .get::<StatSet>(entity)
+            .expect("entity should have stat set");
+        assert_eq!(values.get("oxygen", registry), Ok(75.0));
+
+        let observed = app.world().resource::<ObservedStatChanges>();
+        assert_eq!(
+            observed.0,
+            vec![StatChanged {
+                id: StatId::new("oxygen"),
+                previous: 100.0,
+                current: 75.0,
             }]
         );
     }
