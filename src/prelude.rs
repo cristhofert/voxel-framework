@@ -8,6 +8,12 @@ pub use crate::voxel::{
     DefaultTerrainVoxel, DefaultVoxel, MovementModifier, VoxelPalette, VoxelType,
 };
 
+// Author-defined content
+pub use crate::content::{
+    BlockDefinition, BlockEngineProperties, BlockRegistry, ContentId, ContentRegistryError,
+    ContentValue, VoxelContentPlugin,
+};
+
 // Crafting
 #[cfg(feature = "crafting")]
 pub use crate::crafting::{
