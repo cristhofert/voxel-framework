@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BlockDropContentPlugin<I>`, `ItemDefinition`, `ItemRegistry`,
   `BlockDropDefinition`, `BlockDropRegistry`, and `DropCount` extend the same
   author-defined content model to items and block drops.
+- Content definitions now include typed attribute helpers, registry
+  `require(...)` methods, and block-drop validation helpers so setup code can
+  fail loudly when author-defined ids or item references are wrong.
 
 ### Changed
 

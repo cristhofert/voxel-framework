@@ -16,17 +16,28 @@ fn main() {
 
     app.update();
 
-    let blocks = app.world().resource::<BlockRegistry<DefaultTerrainVoxel>>();
+    let world = app.world();
+    let blocks = world.resource::<BlockRegistry<DefaultTerrainVoxel>>();
+    let items = world.resource::<ItemRegistry<DefaultItem>>();
+    let drops = world.resource::<BlockDropRegistry<DefaultItem>>();
+
+    drops
+        .validate_blocks(blocks)
+        .expect("drop definitions should reference registered blocks");
+    drops
+        .validate_items(items)
+        .expect("drop definitions should reference registered items");
+
     for block in blocks.iter() {
         println!(
-            "{} -> {} ({:?})",
+            "{} -> {} ({:?}, hardness {:?})",
             block.id(),
             block.display_name(),
-            block.voxel()
+            block.voxel(),
+            block.number_attribute("hardness")
         );
     }
 
-    let items = app.world().resource::<ItemRegistry<DefaultItem>>();
     for item in items.iter() {
         println!(
             "{} -> {} ({:?})",
@@ -36,7 +47,6 @@ fn main() {
         );
     }
 
-    let drops = app.world().resource::<BlockDropRegistry<DefaultItem>>();
     for drop in drops.get("moon_regolith") {
         println!(
             "moon_regolith drops {:?} x{}..{}",

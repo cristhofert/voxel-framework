@@ -15,8 +15,8 @@ pub use crate::content::{
 };
 #[cfg(feature = "items")]
 pub use crate::content::{
-    BlockDropContentPlugin, BlockDropDefinition, BlockDropRegistry, DropCount, ItemContentPlugin,
-    ItemDefinition, ItemRegistry, ItemRegistryError,
+    BlockDropContentPlugin, BlockDropDefinition, BlockDropRegistry, BlockDropRegistryError,
+    DropCount, ItemContentPlugin, ItemDefinition, ItemRegistry, ItemRegistryError,
 };
 
 // Crafting

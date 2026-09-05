@@ -149,6 +149,15 @@ impl ContentValue {
         }
     }
 
+    /// Returns this value as a number when it stores an integer or float.
+    pub fn as_number(&self) -> Option<f64> {
+        match self {
+            Self::Integer(value) => Some(*value as f64),
+            Self::Float(value) => Some(*value),
+            _ => None,
+        }
+    }
+
     /// Returns this value as text when it stores text.
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -161,6 +170,22 @@ impl ContentValue {
     pub fn as_text_list(&self) -> Option<&[String]> {
         match self {
             Self::TextList(value) => Some(value.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Returns this value as a number list when it stores one.
+    pub fn as_number_list(&self) -> Option<&[f64]> {
+        match self {
+            Self::NumberList(value) => Some(value.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Returns this value as an RGBA color when it stores one.
+    pub fn as_color(&self) -> Option<[f32; 4]> {
+        match self {
+            Self::Color(value) => Some(*value),
             _ => None,
         }
     }
@@ -355,6 +380,44 @@ impl<V: VoxelType> BlockDefinition<V> {
         self.attributes.get(key)
     }
 
+    /// Returns a boolean gameplay attribute by key.
+    pub fn bool_attribute(&self, key: &str) -> Option<bool> {
+        self.get_attribute(key).and_then(ContentValue::as_bool)
+    }
+
+    /// Returns an integer gameplay attribute by key.
+    pub fn integer_attribute(&self, key: &str) -> Option<i64> {
+        self.get_attribute(key).and_then(ContentValue::as_i64)
+    }
+
+    /// Returns a numeric gameplay attribute by key.
+    ///
+    /// Both integer and float attributes are accepted.
+    pub fn number_attribute(&self, key: &str) -> Option<f64> {
+        self.get_attribute(key).and_then(ContentValue::as_number)
+    }
+
+    /// Returns a text gameplay attribute by key.
+    pub fn text_attribute(&self, key: &str) -> Option<&str> {
+        self.get_attribute(key).and_then(ContentValue::as_str)
+    }
+
+    /// Returns a text-list gameplay attribute by key.
+    pub fn text_list_attribute(&self, key: &str) -> Option<&[String]> {
+        self.get_attribute(key).and_then(ContentValue::as_text_list)
+    }
+
+    /// Returns a number-list gameplay attribute by key.
+    pub fn number_list_attribute(&self, key: &str) -> Option<&[f64]> {
+        self.get_attribute(key)
+            .and_then(ContentValue::as_number_list)
+    }
+
+    /// Returns a color gameplay attribute by key.
+    pub fn color_attribute(&self, key: &str) -> Option<[f32; 4]> {
+        self.get_attribute(key).and_then(ContentValue::as_color)
+    }
+
     /// Returns all gameplay attributes.
     pub fn attributes(&self) -> &HashMap<String, ContentValue> {
         &self.attributes
@@ -378,6 +441,8 @@ pub enum ContentRegistryError<V: VoxelType> {
     DuplicateId { id: ContentId },
     /// The voxel value is already associated with a different block id.
     DuplicateVoxel { voxel: V, existing_id: ContentId },
+    /// No block exists for the requested id.
+    MissingId { id: ContentId },
 }
 
 impl<V: VoxelType + fmt::Debug> fmt::Display for ContentRegistryError<V> {
@@ -391,6 +456,9 @@ impl<V: VoxelType + fmt::Debug> fmt::Display for ContentRegistryError<V> {
                     f,
                     "voxel value `{voxel:?}` is already registered as `{existing_id}`"
                 )
+            }
+            Self::MissingId { id } => {
+                write!(f, "content id `{id}` is not registered")
             }
         }
     }
@@ -467,6 +535,17 @@ impl<V: VoxelType> BlockRegistry<V> {
     pub fn get(&self, id: impl AsRef<str>) -> Option<&BlockDefinition<V>> {
         let id = ContentId::new(id.as_ref());
         self.blocks_by_id.get(&id)
+    }
+
+    /// Returns a definition by id or an explicit error.
+    pub fn require(
+        &self,
+        id: impl AsRef<str>,
+    ) -> Result<&BlockDefinition<V>, ContentRegistryError<V>> {
+        let id = ContentId::new(id.as_ref());
+        self.blocks_by_id
+            .get(&id)
+            .ok_or(ContentRegistryError::MissingId { id })
     }
 
     /// Returns a definition by voxel value.
@@ -578,6 +657,44 @@ impl<I: ItemType> ItemDefinition<I> {
         self.attributes.get(key)
     }
 
+    /// Returns a boolean gameplay attribute by key.
+    pub fn bool_attribute(&self, key: &str) -> Option<bool> {
+        self.get_attribute(key).and_then(ContentValue::as_bool)
+    }
+
+    /// Returns an integer gameplay attribute by key.
+    pub fn integer_attribute(&self, key: &str) -> Option<i64> {
+        self.get_attribute(key).and_then(ContentValue::as_i64)
+    }
+
+    /// Returns a numeric gameplay attribute by key.
+    ///
+    /// Both integer and float attributes are accepted.
+    pub fn number_attribute(&self, key: &str) -> Option<f64> {
+        self.get_attribute(key).and_then(ContentValue::as_number)
+    }
+
+    /// Returns a text gameplay attribute by key.
+    pub fn text_attribute(&self, key: &str) -> Option<&str> {
+        self.get_attribute(key).and_then(ContentValue::as_str)
+    }
+
+    /// Returns a text-list gameplay attribute by key.
+    pub fn text_list_attribute(&self, key: &str) -> Option<&[String]> {
+        self.get_attribute(key).and_then(ContentValue::as_text_list)
+    }
+
+    /// Returns a number-list gameplay attribute by key.
+    pub fn number_list_attribute(&self, key: &str) -> Option<&[f64]> {
+        self.get_attribute(key)
+            .and_then(ContentValue::as_number_list)
+    }
+
+    /// Returns a color gameplay attribute by key.
+    pub fn color_attribute(&self, key: &str) -> Option<[f32; 4]> {
+        self.get_attribute(key).and_then(ContentValue::as_color)
+    }
+
     /// Returns all gameplay attributes.
     pub fn attributes(&self) -> &HashMap<String, ContentValue> {
         &self.attributes
@@ -602,6 +719,8 @@ pub enum ItemRegistryError<I: ItemType> {
     DuplicateId { id: ContentId },
     /// The item value is already associated with a different item id.
     DuplicateItem { item: I, existing_id: ContentId },
+    /// No item exists for the requested id.
+    MissingId { id: ContentId },
 }
 
 #[cfg(feature = "items")]
@@ -616,6 +735,9 @@ impl<I: ItemType + fmt::Debug> fmt::Display for ItemRegistryError<I> {
                     f,
                     "item value `{item:?}` is already registered as `{existing_id}`"
                 )
+            }
+            Self::MissingId { id } => {
+                write!(f, "content id `{id}` is not registered")
             }
         }
     }
@@ -684,6 +806,14 @@ impl<I: ItemType> ItemRegistry<I> {
     pub fn get(&self, id: impl AsRef<str>) -> Option<&ItemDefinition<I>> {
         let id = ContentId::new(id.as_ref());
         self.items_by_id.get(&id)
+    }
+
+    /// Returns a definition by id or an explicit error.
+    pub fn require(&self, id: impl AsRef<str>) -> Result<&ItemDefinition<I>, ItemRegistryError<I>> {
+        let id = ContentId::new(id.as_ref());
+        self.items_by_id
+            .get(&id)
+            .ok_or(ItemRegistryError::MissingId { id })
     }
 
     /// Returns a definition by item value.
@@ -840,7 +970,80 @@ impl<I: ItemType> BlockDropDefinition<I> {
     pub fn get_attribute(&self, key: &str) -> Option<&ContentValue> {
         self.attributes.get(key)
     }
+
+    /// Returns a boolean gameplay attribute by key.
+    pub fn bool_attribute(&self, key: &str) -> Option<bool> {
+        self.get_attribute(key).and_then(ContentValue::as_bool)
+    }
+
+    /// Returns an integer gameplay attribute by key.
+    pub fn integer_attribute(&self, key: &str) -> Option<i64> {
+        self.get_attribute(key).and_then(ContentValue::as_i64)
+    }
+
+    /// Returns a numeric gameplay attribute by key.
+    ///
+    /// Both integer and float attributes are accepted.
+    pub fn number_attribute(&self, key: &str) -> Option<f64> {
+        self.get_attribute(key).and_then(ContentValue::as_number)
+    }
+
+    /// Returns a text gameplay attribute by key.
+    pub fn text_attribute(&self, key: &str) -> Option<&str> {
+        self.get_attribute(key).and_then(ContentValue::as_str)
+    }
+
+    /// Returns a text-list gameplay attribute by key.
+    pub fn text_list_attribute(&self, key: &str) -> Option<&[String]> {
+        self.get_attribute(key).and_then(ContentValue::as_text_list)
+    }
+
+    /// Returns a number-list gameplay attribute by key.
+    pub fn number_list_attribute(&self, key: &str) -> Option<&[f64]> {
+        self.get_attribute(key)
+            .and_then(ContentValue::as_number_list)
+    }
+
+    /// Returns a color gameplay attribute by key.
+    pub fn color_attribute(&self, key: &str) -> Option<[f32; 4]> {
+        self.get_attribute(key).and_then(ContentValue::as_color)
+    }
+
+    /// Returns all gameplay attributes.
+    pub fn attributes(&self) -> &HashMap<String, ContentValue> {
+        &self.attributes
+    }
 }
+
+/// Errors returned by block-drop registry validation helpers.
+#[cfg(feature = "items")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlockDropRegistryError<I: ItemType> {
+    /// A drop is attached to a block id that is not registered.
+    UnknownBlockId { id: ContentId },
+    /// A drop produces an item value that is not registered.
+    UnknownItem { block_id: ContentId, item: I },
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType + fmt::Debug> fmt::Display for BlockDropRegistryError<I> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownBlockId { id } => {
+                write!(f, "drop table references unknown block id `{id}`")
+            }
+            Self::UnknownItem { block_id, item } => {
+                write!(
+                    f,
+                    "drop table for block `{block_id}` references unknown item `{item:?}`"
+                )
+            }
+        }
+    }
+}
+
+#[cfg(feature = "items")]
+impl<I: ItemType + fmt::Debug> std::error::Error for BlockDropRegistryError<I> {}
 
 /// Registry that associates block content ids with author-defined item drops.
 #[cfg(feature = "items")]
@@ -877,6 +1080,24 @@ impl<I: ItemType> BlockDropRegistry<I> {
             .unwrap_or(&[])
     }
 
+    /// Returns true when at least one drop exists for a block id.
+    pub fn contains_block_id(&self, block_id: impl AsRef<str>) -> bool {
+        let id = ContentId::new(block_id.as_ref());
+        self.drops_by_block_id.contains_key(&id)
+    }
+
+    /// Returns the number of drops registered for one block id.
+    pub fn len_for(&self, block_id: impl AsRef<str>) -> usize {
+        self.get(block_id).len()
+    }
+
+    /// Iterates block ids and their drop lists in unspecified hash-map order.
+    pub fn iter(&self) -> impl Iterator<Item = (&ContentId, &[BlockDropDefinition<I>])> {
+        self.drops_by_block_id
+            .iter()
+            .map(|(id, drops)| (id, drops.as_slice()))
+    }
+
     /// Returns all drops registered for a voxel value by first resolving it
     /// through a [`BlockRegistry`].
     pub fn get_for_voxel<V: VoxelType>(
@@ -888,6 +1109,36 @@ impl<I: ItemType> BlockDropRegistry<I> {
             return &[];
         };
         self.get(block.id().as_str())
+    }
+
+    /// Validates that every drop references a registered block id.
+    pub fn validate_blocks<V: VoxelType>(
+        &self,
+        blocks: &BlockRegistry<V>,
+    ) -> Result<(), BlockDropRegistryError<I>> {
+        for block_id in self.drops_by_block_id.keys() {
+            if !blocks.contains_id(block_id.as_str()) {
+                return Err(BlockDropRegistryError::UnknownBlockId {
+                    id: block_id.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates that every drop produces a registered item value.
+    pub fn validate_items(&self, items: &ItemRegistry<I>) -> Result<(), BlockDropRegistryError<I>> {
+        for (block_id, drops) in &self.drops_by_block_id {
+            for drop in drops {
+                if items.get_by_item(drop.item()).is_none() {
+                    return Err(BlockDropRegistryError::UnknownItem {
+                        block_id: block_id.clone(),
+                        item: drop.item(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Number of block ids with at least one registered drop.
@@ -982,24 +1233,19 @@ mod tests {
         assert_eq!(definition.voxel(), DefaultTerrainVoxel::Sand);
         assert_eq!(definition.display_name(), "Regolith");
         assert!(definition.has_tag("terrain"));
+        assert_eq!(definition.number_attribute("hardness"), Some(0.8));
+        assert_eq!(definition.bool_attribute("dusty"), Some(true));
         assert_eq!(
-            definition
-                .get_attribute("hardness")
-                .and_then(ContentValue::as_f64),
-            Some(0.8)
-        );
-        assert_eq!(
-            definition
-                .get_attribute("dusty")
-                .and_then(ContentValue::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            definition
-                .get_attribute("drops")
-                .and_then(ContentValue::as_text_list),
+            definition.text_list_attribute("drops"),
             Some(&["regolith".to_owned()][..])
         );
+    }
+
+    #[test]
+    fn content_value_number_accepts_integers_and_floats() {
+        assert_eq!(ContentValue::from(5).as_number(), Some(5.0));
+        assert_eq!(ContentValue::from(0.75).as_number(), Some(0.75));
+        assert_eq!(ContentValue::from("not_a_number").as_number(), None);
     }
 
     #[test]
@@ -1035,6 +1281,14 @@ mod tests {
 
         assert_eq!(registry.len(), 1);
         assert!(registry.contains_id("wood"));
+        assert_eq!(
+            registry.require("wood").expect("wood should exist").voxel(),
+            DefaultTerrainVoxel::Wood
+        );
+        assert!(matches!(
+            registry.require("missing"),
+            Err(ContentRegistryError::MissingId { .. })
+        ));
         assert!(
             registry
                 .get_by_voxel(DefaultTerrainVoxel::Wood)
@@ -1071,12 +1325,7 @@ mod tests {
         assert_eq!(definition.display_name(), "Dream Glass Shard");
         assert_eq!(definition.color(), [0.45, 0.75, 1.0, 1.0]);
         assert!(definition.has_tag("ritual_material"));
-        assert_eq!(
-            definition
-                .get_attribute("mana_conductivity")
-                .and_then(ContentValue::as_f64),
-            Some(12.0)
-        );
+        assert_eq!(definition.number_attribute("mana_conductivity"), Some(12.0));
     }
 
     #[cfg(feature = "items")]
@@ -1099,6 +1348,12 @@ mod tests {
         assert!(matches!(
             duplicate_item,
             Err(ItemRegistryError::DuplicateItem { .. })
+        ));
+
+        assert!(registry.require("sand_item").is_ok());
+        assert!(matches!(
+            registry.require("missing"),
+            Err(ItemRegistryError::MissingId { .. })
         ));
     }
 
@@ -1124,6 +1379,8 @@ mod tests {
         assert_eq!(by_id[0].item(), DefaultItem::Sand);
         assert_eq!(by_id[0].count(), DropCount { min: 1, max: 3 });
         assert_eq!(by_id[0].chance(), 1.0);
+        assert!(drops.contains_block_id("moon_regolith"));
+        assert_eq!(drops.len_for("moon_regolith"), 1);
 
         let by_voxel = drops.get_for_voxel(DefaultTerrainVoxel::Sand, &blocks);
         assert_eq!(by_voxel.len(), 1);
@@ -1133,6 +1390,50 @@ mod tests {
                 .get_for_voxel(DefaultTerrainVoxel::Stone, &blocks)
                 .is_empty()
         );
+    }
+
+    #[cfg(feature = "items")]
+    #[test]
+    fn block_drop_registry_validates_block_and_item_references() {
+        let mut blocks = BlockRegistry::<DefaultTerrainVoxel>::default();
+        blocks
+            .register(BlockDefinition::new(
+                "moon_regolith",
+                DefaultTerrainVoxel::Sand,
+            ))
+            .expect("block should register");
+
+        let mut items = ItemRegistry::<DefaultItem>::default();
+        items
+            .register(ItemDefinition::new("moon_regolith", DefaultItem::Sand))
+            .expect("item should register");
+
+        let mut drops = BlockDropRegistry::<DefaultItem>::default();
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::fixed(DefaultItem::Sand, 1),
+        );
+
+        assert!(drops.validate_blocks(&blocks).is_ok());
+        assert!(drops.validate_items(&items).is_ok());
+
+        drops.register_drop(
+            "missing_block",
+            BlockDropDefinition::fixed(DefaultItem::Sand, 1),
+        );
+        assert!(matches!(
+            drops.validate_blocks(&blocks),
+            Err(BlockDropRegistryError::UnknownBlockId { .. })
+        ));
+
+        drops.register_drop(
+            "moon_regolith",
+            BlockDropDefinition::fixed(DefaultItem::Crystal, 1),
+        );
+        assert!(matches!(
+            drops.validate_items(&items),
+            Err(BlockDropRegistryError::UnknownItem { .. })
+        ));
     }
 
     #[cfg(feature = "items")]
