@@ -6,17 +6,23 @@
 //! has health, oxygen, stamina, mana, radiation, thirst, ship hull integrity, or
 //! no player stats at all.
 //!
-//! The framework provides two horizontal pieces:
+//! The framework provides three horizontal pieces:
 //!
 //! - [`StatRegistry`] — author-defined metadata and bounds for stats.
 //! - [`StatSet`] — runtime values keyed by [`StatId`], with clamping and simple
 //!   mutation helpers.
+//! - [`StatChanged`] plus [`set_stat`], [`add_stat`], [`drain_stat`], and
+//!   [`fill_stat`] — optional Bevy-message helpers for systems that want to
+//!   react when a stat actually changes.
 //!
 //! # Example
 //!
 //! ```rust
 //! use bevy::prelude::*;
-//! use voxel_framework::stats::{StatDefinition, StatRegistry, StatSet, VoxelStatsPlugin};
+//! use bevy::ecs::message::MessageWriter;
+//! use voxel_framework::stats::{
+//!     drain_stat, StatChanged, StatDefinition, StatRegistry, StatSet, VoxelStatsPlugin,
+//! };
 //!
 //! fn register_stats(mut stats: ResMut<StatRegistry>) {
 //!     stats
@@ -30,9 +36,14 @@
 //!         .expect("stat id should be unique");
 //! }
 //!
-//! fn drain_oxygen(registry: Res<StatRegistry>, mut values: ResMut<StatSet>) {
+//! fn drain_oxygen(
+//!     registry: Res<StatRegistry>,
+//!     mut values: ResMut<StatSet>,
+//!     mut changed: MessageWriter<StatChanged>,
+//! ) {
 //!     values.ensure_registered(&registry);
-//!     values.add("oxygen", -1.0, &registry).expect("oxygen should exist");
+//!     drain_stat("oxygen", 1.0, &registry, &mut values, &mut changed)
+//!         .expect("oxygen should exist");
 //! }
 //!
 //! App::new()
@@ -45,7 +56,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
-use bevy::prelude::{App, Plugin, Resource};
+use bevy::ecs::message::MessageWriter;
+use bevy::prelude::{App, Message, Plugin, Resource};
 use serde::{Deserialize, Serialize};
 
 use crate::content::ContentValue;
@@ -468,6 +480,77 @@ pub struct StatValueSnapshot {
     pub value: f32,
 }
 
+/// Message emitted by stat helper functions when a runtime stat value changes.
+///
+/// The framework does not interpret the stat id. Systems in the consuming game
+/// decide whether a change means UI refresh, damage, an alarm, an achievement,
+/// or nothing at all.
+#[derive(Message, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatChanged {
+    /// Stable author-defined stat id.
+    pub id: StatId,
+    /// Value before the helper mutation.
+    pub previous: f32,
+    /// Value after clamping and applying the helper mutation.
+    pub current: f32,
+}
+
+/// Sets a stat and emits [`StatChanged`] when the clamped value differs.
+pub fn set_stat(
+    id: impl AsRef<str>,
+    value: f32,
+    registry: &StatRegistry,
+    values: &mut StatSet,
+    changed: &mut MessageWriter<StatChanged>,
+) -> Result<f32, StatError> {
+    let definition = registry.require(id.as_ref())?;
+    let previous = values.get(definition.id().as_str(), registry)?;
+    let current = values.set(definition.id().as_str(), value, registry)?;
+    write_stat_changed(definition, previous, current, changed);
+    Ok(current)
+}
+
+/// Adds a delta to a stat and emits [`StatChanged`] when the clamped value differs.
+pub fn add_stat(
+    id: impl AsRef<str>,
+    delta: f32,
+    registry: &StatRegistry,
+    values: &mut StatSet,
+    changed: &mut MessageWriter<StatChanged>,
+) -> Result<f32, StatError> {
+    let definition = registry.require(id.as_ref())?;
+    let previous = values.get(definition.id().as_str(), registry)?;
+    set_stat(
+        definition.id().as_str(),
+        previous + finite_or_zero(delta),
+        registry,
+        values,
+        changed,
+    )
+}
+
+/// Removes from a stat and emits [`StatChanged`] when the clamped value differs.
+pub fn drain_stat(
+    id: impl AsRef<str>,
+    amount: f32,
+    registry: &StatRegistry,
+    values: &mut StatSet,
+    changed: &mut MessageWriter<StatChanged>,
+) -> Result<f32, StatError> {
+    add_stat(id, -finite_or_zero(amount).abs(), registry, values, changed)
+}
+
+/// Adds to a stat and emits [`StatChanged`] when the clamped value differs.
+pub fn fill_stat(
+    id: impl AsRef<str>,
+    amount: f32,
+    registry: &StatRegistry,
+    values: &mut StatSet,
+    changed: &mut MessageWriter<StatChanged>,
+) -> Result<f32, StatError> {
+    add_stat(id, finite_or_zero(amount).abs(), registry, values, changed)
+}
+
 /// Horizontal plugin that initializes author-defined stat resources.
 ///
 /// This plugin does not register default stats. The game author defines the
@@ -478,7 +561,25 @@ impl Plugin for VoxelStatsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StatRegistry>();
         app.init_resource::<StatSet>();
+        app.add_message::<StatChanged>();
     }
+}
+
+fn write_stat_changed(
+    definition: &StatDefinition,
+    previous: f32,
+    current: f32,
+    changed: &mut MessageWriter<StatChanged>,
+) {
+    if previous == current {
+        return;
+    }
+
+    changed.write(StatChanged {
+        id: definition.id().clone(),
+        previous,
+        current,
+    });
 }
 
 fn finite_or_zero(value: f32) -> f32 {
@@ -502,7 +603,10 @@ fn ordered_tags(tags: &HashSet<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use bevy::prelude::{App, MinimalPlugins};
+    use bevy::ecs::message::{MessageReader, MessageWriter};
+    use bevy::prelude::{
+        App, IntoScheduleConfigs, MinimalPlugins, Res, ResMut, Resource, Startup, Update,
+    };
 
     use super::*;
 
@@ -608,7 +712,7 @@ mod tests {
             .register(
                 StatDefinition::new("oxygen", 100.0)
                     .tag("survival")
-                    .tag("body")
+                    .tag("space_suit")
                     .attribute("ui_hint", "bar"),
             )
             .expect("stat should register");
@@ -616,7 +720,7 @@ mod tests {
         let definition_snapshot = registry.snapshot();
         assert_eq!(
             definition_snapshot[0].tags,
-            vec!["body".to_owned(), "survival".to_owned()]
+            vec!["space_suit".to_owned(), "survival".to_owned()]
         );
 
         let mut values = StatSet::new();
@@ -639,5 +743,173 @@ mod tests {
 
         assert!(app.world().resource::<StatRegistry>().is_empty());
         assert!(app.world().resource::<StatSet>().is_empty());
+    }
+
+    #[derive(Resource, Default)]
+    struct ObservedStatChanges(Vec<StatChanged>);
+
+    #[derive(Resource, Default)]
+    struct ObservedStatErrors(Vec<StatError>);
+
+    fn register_oxygen_stat(mut registry: ResMut<StatRegistry>, mut values: ResMut<StatSet>) {
+        registry
+            .register(StatDefinition::new("oxygen", 100.0).bounds(0.0, 100.0))
+            .expect("oxygen should register");
+        values.ensure_registered(&registry);
+    }
+
+    fn record_stat_changes(
+        mut reader: MessageReader<StatChanged>,
+        mut observed: ResMut<ObservedStatChanges>,
+    ) {
+        observed.0.extend(reader.read().cloned());
+    }
+
+    fn drain_oxygen_with_helper(
+        registry: Res<StatRegistry>,
+        mut values: ResMut<StatSet>,
+        mut changed: MessageWriter<StatChanged>,
+    ) {
+        drain_stat("oxygen", 25.0, &registry, &mut values, &mut changed)
+            .expect("oxygen should exist");
+    }
+
+    fn set_oxygen_to_same_value_with_helper(
+        registry: Res<StatRegistry>,
+        mut values: ResMut<StatSet>,
+        mut changed: MessageWriter<StatChanged>,
+    ) {
+        set_stat("oxygen", 100.0, &registry, &mut values, &mut changed)
+            .expect("oxygen should exist");
+    }
+
+    fn fill_oxygen_past_max_with_helper(
+        registry: Res<StatRegistry>,
+        mut values: ResMut<StatSet>,
+        mut changed: MessageWriter<StatChanged>,
+    ) {
+        set_stat("oxygen", 90.0, &registry, &mut values, &mut changed)
+            .expect("oxygen should exist");
+        fill_stat("oxygen", 50.0, &registry, &mut values, &mut changed)
+            .expect("oxygen should exist");
+    }
+
+    fn add_missing_stat_with_helper(
+        registry: Res<StatRegistry>,
+        mut values: ResMut<StatSet>,
+        mut changed: MessageWriter<StatChanged>,
+        mut errors: ResMut<ObservedStatErrors>,
+    ) {
+        let error = add_stat("missing", 1.0, &registry, &mut values, &mut changed)
+            .expect_err("missing stat should return an error");
+        errors.0.push(error);
+    }
+
+    #[test]
+    fn stat_helpers_emit_changed_message_when_value_changes() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(VoxelStatsPlugin);
+        app.init_resource::<ObservedStatChanges>();
+        app.add_systems(Startup, register_oxygen_stat);
+        app.add_systems(
+            Update,
+            (drain_oxygen_with_helper, record_stat_changes).chain(),
+        );
+
+        app.update();
+
+        let observed = app.world().resource::<ObservedStatChanges>();
+        assert_eq!(
+            observed.0,
+            vec![StatChanged {
+                id: StatId::new("oxygen"),
+                previous: 100.0,
+                current: 75.0,
+            }]
+        );
+    }
+
+    #[test]
+    fn stat_helpers_do_not_emit_when_clamped_value_is_unchanged() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(VoxelStatsPlugin);
+        app.init_resource::<ObservedStatChanges>();
+        app.add_systems(Startup, register_oxygen_stat);
+        app.add_systems(
+            Update,
+            (set_oxygen_to_same_value_with_helper, record_stat_changes).chain(),
+        );
+
+        app.update();
+
+        let observed = app.world().resource::<ObservedStatChanges>();
+        assert!(observed.0.is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<StatSet>()
+                .get("oxygen", app.world().resource::<StatRegistry>()),
+            Ok(100.0)
+        );
+    }
+
+    #[test]
+    fn stat_helpers_emit_clamped_final_value() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(VoxelStatsPlugin);
+        app.init_resource::<ObservedStatChanges>();
+        app.add_systems(Startup, register_oxygen_stat);
+        app.add_systems(
+            Update,
+            (fill_oxygen_past_max_with_helper, record_stat_changes).chain(),
+        );
+
+        app.update();
+
+        let observed = app.world().resource::<ObservedStatChanges>();
+        assert_eq!(
+            observed.0,
+            vec![
+                StatChanged {
+                    id: StatId::new("oxygen"),
+                    previous: 100.0,
+                    current: 90.0,
+                },
+                StatChanged {
+                    id: StatId::new("oxygen"),
+                    previous: 90.0,
+                    current: 100.0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn stat_helpers_return_missing_id_without_emitting_message() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(VoxelStatsPlugin);
+        app.init_resource::<ObservedStatChanges>();
+        app.init_resource::<ObservedStatErrors>();
+        app.add_systems(Startup, register_oxygen_stat);
+        app.add_systems(
+            Update,
+            (add_missing_stat_with_helper, record_stat_changes).chain(),
+        );
+
+        app.update();
+
+        let observed = app.world().resource::<ObservedStatChanges>();
+        assert!(observed.0.is_empty());
+
+        let errors = app.world().resource::<ObservedStatErrors>();
+        assert_eq!(
+            errors.0,
+            vec![StatError::MissingId {
+                id: StatId::new("missing"),
+            }]
+        );
     }
 }

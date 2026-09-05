@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   horizontal stats layer where game authors define runtime values such as
   oxygen, mana, hunger, hull integrity, or any other stat without framework
   presets or fixed body schemas.
+- `StatChanged` plus `set_stat`, `add_stat`, `drain_stat`, and `fill_stat`
+  provide optional Bevy-message helpers for systems that need to react to
+  author-defined stat value changes.
 - Stat definitions and runtime values expose deterministic serializable
   snapshots for documentation, tooling, manifests, and AI inspection.
 - `examples/stats_definitions.rs` demonstrates a headless author-defined stats
-  setup using `MinimalPlugins`.
+  setup using `MinimalPlugins` and `StatChanged` readers.
 
 ## [0.5.0] - 2026-09-05
 

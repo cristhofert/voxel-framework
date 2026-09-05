@@ -22,8 +22,8 @@ pub use crate::content::{
 
 // Author-defined stats
 pub use crate::stats::{
-    StatDefinition, StatDefinitionSnapshot, StatError, StatId, StatRegistry, StatSet,
-    StatValueSnapshot, VoxelStatsPlugin,
+    StatChanged, StatDefinition, StatDefinitionSnapshot, StatError, StatId, StatRegistry, StatSet,
+    StatValueSnapshot, VoxelStatsPlugin, add_stat, drain_stat, fill_stat, set_stat,
 };
 
 // Crafting
