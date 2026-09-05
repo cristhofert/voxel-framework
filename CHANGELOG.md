@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `VoxelContentPlugin<V>` and the `content` module: an author-defined block
+  registry with `BlockDefinition`, `BlockRegistry`, `ContentId`,
+  `ContentValue`, and `BlockEngineProperties`. This starts the 0.5 gameplay
+  definition layer without shipping game presets or fixed gameplay categories.
+
 ## [0.4.0] - 2026-09-04
 
 ### Added

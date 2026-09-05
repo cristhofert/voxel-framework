@@ -210,6 +210,7 @@ cargo run --example basic_world
 | Module | Description |
 |---|---|
 | `voxel` | `VoxelType` trait, `DefaultVoxel` enum, and `VoxelPalette` resource |
+| `content` | Author-defined `BlockDefinition`, `BlockRegistry`, and `VoxelContentPlugin` |
 | `chunk` | `Chunk<V>` flat-array storage, `ChunkCoord`, constants, coordinate utilities, and binary persistence |
 | `noise` | Seed-based value noise, FBM, and `hash3` — no external noise crates |
 | `generator` | `ChunkGenerator<V>` trait, `GeneratorPlugin`, and `GeneratorResource` |
@@ -225,6 +226,51 @@ cargo run --example basic_world
 | `player` | 6DOF jetpack player (`PlayerPlugin`, `PlayerConfig`, capsule collision) |
 | `ui/pause_menu` | Optional `PauseMenuPlugin` with `PauseMenuState` and `PauseMenuConfig` |
 | `prelude` | Convenience re-export of all public types |
+
+## Author-defined Content
+
+`VoxelContentPlugin<V>` initializes a `BlockRegistry<V>` resource. The registry
+does **not** create a game, ship space/survival presets, or impose a closed list
+of gameplay categories. It is a horizontal tool: the game author registers block
+definitions and decides what their gameplay attributes mean.
+
+The framework only separates two concerns:
+
+1. **Engine contracts** — technical facts the voxel runtime may need, such as
+   whether a block emits mesh geometry, collides, has opacity, color, or texture
+   layers.
+2. **Author-defined gameplay data** — arbitrary attributes and tags such as
+   hardness, rarity, mana conductivity, drops, faction, temperature, or tool
+   rules.
+
+```rust
+use bevy::prelude::*;
+use voxel_framework::prelude::*;
+
+fn register_blocks(mut blocks: ResMut<BlockRegistry<DefaultTerrainVoxel>>) {
+    blocks
+        .register(
+            BlockDefinition::new("moon_regolith", DefaultTerrainVoxel::Sand)
+                .named("Moon Regolith")
+                .tag("terrain")
+                .attribute("hardness", 0.8)
+                .attribute("dusty", true)
+                .attribute("drops", ContentValue::strings(["moon_regolith"])),
+        )
+        .expect("block id and voxel value should be unique");
+}
+
+App::new()
+    .add_plugins(MinimalPlugins)
+    .add_plugins(VoxelContentPlugin::<DefaultTerrainVoxel>::new())
+    .add_systems(Startup, register_blocks);
+```
+
+Run the headless content example:
+
+```sh
+cargo run --example content_definitions
+```
 
 ## World Configuration
 

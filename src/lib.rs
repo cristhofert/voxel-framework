@@ -133,6 +133,7 @@
 
 pub mod audio;
 pub mod chunk;
+pub mod content;
 #[cfg(feature = "crafting")]
 pub mod crafting;
 pub mod fragments;
