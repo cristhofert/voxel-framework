@@ -45,6 +45,13 @@ fn main() {
         serde_json::to_string_pretty(&active.snapshot())
             .expect("active effect snapshots should serialize")
     );
+    println!(
+        "low_oxygen active={} stacks={} remaining_secs={:?} ratio={:?}",
+        active.is_active("low_oxygen"),
+        active.stacks("low_oxygen"),
+        active.remaining_secs("low_oxygen"),
+        active.remaining_ratio("low_oxygen")
+    );
 
     for entity in &subjects.0 {
         if let Some(effects) = world.get::<ActiveEffectSet>(*entity) {
@@ -52,6 +59,13 @@ fn main() {
                 "entity {entity:?} effects:\n{}",
                 serde_json::to_string_pretty(&effects.snapshot())
                     .expect("entity effect snapshots should serialize")
+            );
+            println!(
+                "magnetic_boots active={} stacks={} remaining_secs={:?} ratio={:?}",
+                effects.is_active("magnetic_boots"),
+                effects.stacks("magnetic_boots"),
+                effects.remaining_secs("magnetic_boots"),
+                effects.remaining_ratio("magnetic_boots")
             );
         }
     }

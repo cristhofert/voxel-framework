@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to react to effect lifecycle changes.
 - Effect definitions and active effect sets expose deterministic serializable
   snapshots for documentation, tooling, manifests, and AI inspection.
+- Active effects now expose read-side helpers for active state, stacks,
+  remaining seconds, and remaining duration ratio.
 - `examples/effect_definitions.rs` demonstrates a headless author-defined
   effects setup using `MinimalPlugins`.
 

@@ -338,9 +338,10 @@ impl EffectRegistry {
 }
 
 /// Runtime instance of an author-defined effect.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EffectInstance {
     id: EffectId,
+    duration_secs: Option<f32>,
     remaining_secs: Option<f32>,
     stacks: u32,
 }
@@ -350,6 +351,8 @@ pub struct EffectInstance {
 pub struct EffectInstanceSnapshot {
     /// Stable author-defined id.
     pub id: EffectId,
+    /// Initial duration captured when the instance was applied. `None` means indefinite.
+    pub duration_secs: Option<f32>,
     /// Remaining duration. `None` means indefinite.
     pub remaining_secs: Option<f32>,
     /// Current stack count.
@@ -357,10 +360,29 @@ pub struct EffectInstanceSnapshot {
 }
 
 impl EffectInstance {
-    /// Creates an effect instance with explicit runtime state.
-    pub fn new(id: impl Into<EffectId>, remaining_secs: Option<f32>, stacks: u32) -> Self {
+    /// Creates an effect instance with an initial duration and stack count.
+    ///
+    /// The provided duration is stored as both the original duration and the
+    /// current remaining duration. `None` means indefinite.
+    pub fn new(id: impl Into<EffectId>, duration_secs: Option<f32>, stacks: u32) -> Self {
+        let duration_secs = duration_secs.map(non_negative_finite_or_zero);
+        Self::with_runtime_state(id, duration_secs, duration_secs, stacks)
+    }
+
+    /// Creates an effect instance with explicit original and remaining durations.
+    ///
+    /// This is useful when hydrating effect state from author-owned save data or
+    /// when forwarding an already-ticked instance. Durations are normalized to
+    /// finite, non-negative values; `None` means indefinite.
+    pub fn with_runtime_state(
+        id: impl Into<EffectId>,
+        duration_secs: Option<f32>,
+        remaining_secs: Option<f32>,
+        stacks: u32,
+    ) -> Self {
         Self {
             id: id.into(),
+            duration_secs: duration_secs.map(non_negative_finite_or_zero),
             remaining_secs: remaining_secs.map(non_negative_finite_or_zero),
             stacks: stacks.max(1),
         }
@@ -380,9 +402,29 @@ impl EffectInstance {
         &self.id
     }
 
+    /// Returns the initial duration captured when the instance was applied.
+    ///
+    /// `None` means the effect is indefinite.
+    pub fn duration_secs(&self) -> Option<f32> {
+        self.duration_secs
+    }
+
     /// Returns remaining duration. `None` means indefinite.
     pub fn remaining_secs(&self) -> Option<f32> {
         self.remaining_secs
+    }
+
+    /// Returns the remaining fraction of the original duration.
+    ///
+    /// Timed effects return a value clamped to `0.0..=1.0`. Indefinite effects
+    /// return `None` because they have no finite denominator.
+    pub fn remaining_ratio(&self) -> Option<f32> {
+        let duration_secs = self.duration_secs?;
+        if duration_secs <= f32::EPSILON {
+            return Some(0.0);
+        }
+
+        Some((self.remaining_secs.unwrap_or(0.0) / duration_secs).clamp(0.0, 1.0))
     }
 
     /// Returns the current stack count.
@@ -399,9 +441,35 @@ impl EffectInstance {
     pub fn snapshot(&self) -> EffectInstanceSnapshot {
         EffectInstanceSnapshot {
             id: self.id.clone(),
+            duration_secs: self.duration_secs,
             remaining_secs: self.remaining_secs,
             stacks: self.stacks,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for EffectInstance {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct SerializedEffectInstance {
+            id: EffectId,
+            #[serde(default)]
+            duration_secs: Option<f32>,
+            remaining_secs: Option<f32>,
+            stacks: u32,
+        }
+
+        let serialized = SerializedEffectInstance::deserialize(deserializer)?;
+        let duration_secs = serialized.duration_secs.or(serialized.remaining_secs);
+        Ok(Self::with_runtime_state(
+            serialized.id,
+            duration_secs,
+            serialized.remaining_secs,
+            serialized.stacks,
+        ))
     }
 }
 
@@ -452,8 +520,9 @@ impl ActiveEffectSet {
         registry: &EffectRegistry,
     ) -> Result<EffectInstance, EffectError> {
         let definition = registry.require(instance.id().as_str())?;
-        let next = EffectInstance::new(
+        let next = EffectInstance::with_runtime_state(
             definition.id().clone(),
+            instance.duration_secs(),
             instance.remaining_secs(),
             instance.stacks().min(definition.max_stacks_value()),
         );
@@ -504,10 +573,36 @@ impl ActiveEffectSet {
         self.get(id).is_some()
     }
 
+    /// Returns true when an effect id is active.
+    ///
+    /// This is a read-side alias for [`ActiveEffectSet::has`].
+    pub fn is_active(&self, id: impl AsRef<str>) -> bool {
+        self.has(id)
+    }
+
     /// Returns an active effect by id.
     pub fn get(&self, id: impl AsRef<str>) -> Option<&EffectInstance> {
         let id = EffectId::new(id.as_ref());
         self.effects_by_id.get(&id)
+    }
+
+    /// Returns the current stack count for an active effect id, or `0` when inactive.
+    pub fn stacks(&self, id: impl AsRef<str>) -> u32 {
+        self.get(id).map_or(0, EffectInstance::stacks)
+    }
+
+    /// Returns the remaining duration for an active effect id.
+    ///
+    /// `None` means the effect is inactive or indefinite.
+    pub fn remaining_secs(&self, id: impl AsRef<str>) -> Option<f32> {
+        self.get(id).and_then(EffectInstance::remaining_secs)
+    }
+
+    /// Returns the remaining fraction for an active timed effect id.
+    ///
+    /// `None` means the effect is inactive or indefinite.
+    pub fn remaining_ratio(&self, id: impl AsRef<str>) -> Option<f32> {
+        self.get(id).and_then(EffectInstance::remaining_ratio)
     }
 
     /// Number of active effects.
@@ -719,14 +814,20 @@ mod tests {
         let first = effects
             .apply("low_oxygen", &registry)
             .expect("effect should exist");
+        assert_eq!(first.duration_secs(), Some(10.0));
         assert_eq!(first.remaining_secs(), Some(10.0));
+        assert_eq!(first.remaining_ratio(), Some(1.0));
         assert_eq!(first.stacks(), 1);
 
         effects.tick(4.0);
+        assert_eq!(effects.remaining_secs("low_oxygen"), Some(6.0));
+        assert_eq!(effects.remaining_ratio("low_oxygen"), Some(0.6));
         let second = effects
             .apply("low_oxygen", &registry)
             .expect("effect should exist");
+        assert_eq!(second.duration_secs(), Some(10.0));
         assert_eq!(second.remaining_secs(), Some(10.0));
+        assert_eq!(second.remaining_ratio(), Some(1.0));
         assert_eq!(second.stacks(), 2);
 
         let third = effects
@@ -748,7 +849,33 @@ mod tests {
             .expect("effect should exist");
 
         assert_eq!(applied.stacks(), 3);
+        assert_eq!(applied.duration_secs(), Some(5.0));
         assert_eq!(applied.remaining_secs(), Some(5.0));
+    }
+
+    #[test]
+    fn apply_instance_preserves_original_duration_for_ticked_instances() {
+        let mut registry = EffectRegistry::default();
+        registry
+            .register(EffectDefinition::new("shielded").duration_secs(10.0))
+            .expect("effect should register");
+
+        let mut source = ActiveEffectSet::new();
+        source.apply("shielded", &registry).expect("effect exists");
+        source.tick(4.0);
+        let ticked = source
+            .get("shielded")
+            .expect("effect should still be active")
+            .clone();
+
+        let mut target = ActiveEffectSet::new();
+        let applied = target
+            .apply_instance(ticked, &registry)
+            .expect("effect should exist");
+
+        assert_eq!(applied.duration_secs(), Some(10.0));
+        assert_eq!(applied.remaining_secs(), Some(6.0));
+        assert_eq!(applied.remaining_ratio(), Some(0.6));
     }
 
     #[test]
@@ -772,9 +899,18 @@ mod tests {
             effects
                 .get("timed")
                 .expect("timed should still be active")
+                .duration_secs(),
+            Some(2.0)
+        );
+        assert_eq!(
+            effects
+                .get("timed")
+                .expect("timed should still be active")
                 .remaining_secs(),
             Some(2.0)
         );
+        assert_eq!(effects.remaining_ratio("timed"), Some(1.0));
+        assert_eq!(effects.remaining_ratio("indefinite"), None);
         assert!(effects.tick(1.0).is_empty());
         assert_eq!(
             effects
@@ -783,12 +919,85 @@ mod tests {
                 .remaining_secs(),
             Some(1.0)
         );
+        assert_eq!(effects.remaining_ratio("timed"), Some(0.5));
 
         let expired = effects.tick(1.0);
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].id().as_str(), "timed");
         assert!(!effects.has("timed"));
         assert!(effects.has("indefinite"));
+    }
+
+    #[test]
+    fn active_effect_read_helpers_cover_finite_indefinite_inactive_and_missing() {
+        let mut registry = EffectRegistry::default();
+        registry
+            .register(
+                EffectDefinition::new("timed")
+                    .duration_secs(8.0)
+                    .max_stacks(3),
+            )
+            .expect("effect should register");
+        registry
+            .register(EffectDefinition::new("indefinite").max_stacks(2))
+            .expect("effect should register");
+
+        let mut effects = ActiveEffectSet::new();
+        assert!(!effects.is_active("timed"));
+        assert_eq!(effects.stacks("timed"), 0);
+        assert_eq!(effects.remaining_secs("timed"), None);
+        assert_eq!(effects.remaining_ratio("timed"), None);
+        assert_eq!(effects.stacks("missing"), 0);
+        assert_eq!(effects.remaining_secs("missing"), None);
+        assert_eq!(effects.remaining_ratio("missing"), None);
+
+        effects.apply("timed", &registry).expect("timed exists");
+        effects.apply("timed", &registry).expect("timed exists");
+        effects
+            .apply("indefinite", &registry)
+            .expect("indefinite exists");
+        effects.tick(2.0);
+
+        assert!(effects.is_active("timed"));
+        assert_eq!(effects.stacks("timed"), 2);
+        assert_eq!(effects.remaining_secs("timed"), Some(6.0));
+        assert_eq!(effects.remaining_ratio("timed"), Some(0.75));
+        assert!(effects.is_active("indefinite"));
+        assert_eq!(effects.stacks("indefinite"), 1);
+        assert_eq!(effects.remaining_secs("indefinite"), None);
+        assert_eq!(effects.remaining_ratio("indefinite"), None);
+
+        effects.remove("timed");
+        assert!(!effects.is_active("timed"));
+        assert_eq!(effects.stacks("timed"), 0);
+        assert_eq!(effects.remaining_secs("timed"), None);
+        assert_eq!(effects.remaining_ratio("timed"), None);
+    }
+
+    #[test]
+    fn remaining_ratio_clamps_to_original_duration_bounds() {
+        let expired = EffectInstance::with_runtime_state("expired", Some(10.0), Some(-2.0), 1);
+        let overfull = EffectInstance::with_runtime_state("overfull", Some(10.0), Some(12.0), 1);
+        let instant = EffectInstance::new("instant", Some(0.0), 1);
+        let indefinite = EffectInstance::new("indefinite", None, 1);
+
+        assert_eq!(expired.remaining_ratio(), Some(0.0));
+        assert_eq!(overfull.remaining_ratio(), Some(1.0));
+        assert_eq!(instant.remaining_ratio(), Some(0.0));
+        assert_eq!(indefinite.remaining_ratio(), None);
+    }
+
+    #[test]
+    fn effect_instance_deserializes_legacy_runtime_state_without_duration() {
+        let instance: EffectInstance =
+            serde_json::from_str(r#"{"id":"legacy_timed","remaining_secs":6.0,"stacks":2}"#)
+                .expect("legacy effect instance should deserialize");
+
+        assert_eq!(instance.id().as_str(), "legacy_timed");
+        assert_eq!(instance.duration_secs(), Some(6.0));
+        assert_eq!(instance.remaining_secs(), Some(6.0));
+        assert_eq!(instance.remaining_ratio(), Some(1.0));
+        assert_eq!(instance.stacks(), 2);
     }
 
     #[test]
@@ -822,8 +1031,13 @@ mod tests {
                     .attribute("ui_hint", "warning"),
             )
             .expect("effect should register");
+        registry
+            .register(EffectDefinition::new("magnetic_boots").indefinite())
+            .expect("effect should register");
 
         let definition_snapshot = registry.snapshot();
+        assert_eq!(definition_snapshot[0].id.as_str(), "low_oxygen");
+        assert_eq!(definition_snapshot[1].id.as_str(), "magnetic_boots");
         assert_eq!(
             definition_snapshot[0].tags,
             vec!["space_suit".to_owned(), "survival".to_owned()]
@@ -833,9 +1047,16 @@ mod tests {
         effects
             .apply("low_oxygen", &registry)
             .expect("effect should exist");
+        effects
+            .apply("magnetic_boots", &registry)
+            .expect("effect should exist");
         let active_snapshot = effects.snapshot();
         assert_eq!(active_snapshot[0].id.as_str(), "low_oxygen");
+        assert_eq!(active_snapshot[0].duration_secs, Some(10.0));
         assert_eq!(active_snapshot[0].remaining_secs, Some(10.0));
+        assert_eq!(active_snapshot[1].id.as_str(), "magnetic_boots");
+        assert_eq!(active_snapshot[1].duration_secs, None);
+        assert_eq!(active_snapshot[1].remaining_secs, None);
 
         serde_json::to_string(&definition_snapshot).expect("definitions should serialize");
         serde_json::to_string(&active_snapshot).expect("active effects should serialize");
