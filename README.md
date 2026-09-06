@@ -523,6 +523,17 @@ specific subject:
 commands.spawn((MyMob, ActiveEffectSet::new()));
 ```
 
+Read-side helpers keep gameplay and UI code registry-free once an effect is
+active:
+
+```rust
+if active.is_active("low_oxygen") {
+    let stacks = active.stacks("low_oxygen");
+    let remaining = active.remaining_secs("low_oxygen");
+    let ratio = active.remaining_ratio("low_oxygen");
+}
+```
+
 Run the headless effects example:
 
 ```sh
@@ -531,7 +542,8 @@ cargo run --example effect_definitions
 
 Like content and stats snapshots, `EffectRegistry::snapshot()` and
 `ActiveEffectSet::snapshot()` return deterministic serializable data for docs,
-tooling, manifests, or AI inspection.
+tooling, manifests, or AI inspection. Active effect snapshots include both the
+initial duration and current remaining duration for timed instances.
 
 ## World Configuration
 
