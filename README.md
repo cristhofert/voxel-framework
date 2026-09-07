@@ -25,7 +25,7 @@
 
 ## Release Status & Stability
 
-`voxel-framework` 0.4 is an early public release of a Bevy-first voxel game
+`voxel-framework` 0.7 is an early public release of a Bevy-first voxel game
 framework. It is intended to be usable by real consumer crates, examples, and
 experiments, but it is not a 1.0 stability promise yet.
 
@@ -33,7 +33,7 @@ Compatibility target:
 
 | Area | Current status |
 |---|---|
-| Crate version | `0.4.x` |
+| Crate version | `0.7.x` |
 | Bevy version | `0.18` |
 | Rust version | MSRV `1.85` |
 | Stability | Public API can still change across `0.x` minor releases |
@@ -117,13 +117,13 @@ Add the dependency to your `Cargo.toml`. Use crates.io for released versions, or
 ```toml
 [dependencies]
 # Option A — released crate (recommended for consumers):
-voxel-framework = "0.4"
+voxel-framework = "0.7"
 
 # Option B — local clone side-by-side (development):
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from git, pinned to a stable tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.4.0" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.7.0" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
