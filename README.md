@@ -48,9 +48,11 @@ release gates without using `cargo build`.
 
 - This is a framework/library, not a complete editor or standalone game. Your
   game crate still owns window setup, input choices, game state, and custom UX.
-- The bundled examples are graphical Bevy apps and require a working display to
-  run interactively. Headless tests cover pure logic and selected runtime
-  contracts, but they do not replace manual playtesting.
+- `basic_world` and `minetest` are graphical Bevy apps and require a working
+  display. `content_definitions`, `stats_definitions`, and
+  `effect_definitions` use `MinimalPlugins` and run headlessly in a terminal.
+  Headless examples and tests do not replace manual playtesting of the
+  graphical runtime.
 - `ViewerPosition` must be kept in sync with your camera/player every frame; it
   drives chunk streaming. If it never changes, no new chunks stream in.
 - `ChunkGenerator::generate` runs on background threads. Generators must be
@@ -96,6 +98,14 @@ architecture:
 `GeneratorPlugin<V>` and `PersistencePlugin<V>` are explicit World Data choices
 regardless of which convenience bundle you use.
 
+`VoxelContentPlugin<V>`, `VoxelStatsPlugin`, and `VoxelEffectsPlugin` are
+independent, horizontal Gameplay choices. They initialize empty registries and
+runtime state for definitions owned by the game author; they do not install a
+vertical genre preset or a JSON-driven configuration layer. Register only the
+content, stats, and effects your game needs through the Rust API. Deterministic
+snapshots are available for tooling and may be serialized by the caller, but
+they are not a second configuration model.
+
 ```rust
 // Compatibility bundle: historical core runtime
 App::new()
@@ -138,7 +148,7 @@ bevy = "0.18"
 | I want to... | Start with | Notes |
 |---|---|---|
 | See a working voxel world fast | `cargo run --example basic_world` | Best first smoke test after cloning the repo |
-| Build a prototype with defaults | `VoxelPlugin<V>` + `GeneratorPlugin<V>` | Includes core runtime plus default UI/audio/visual helpers |
+| Build a prototype with defaults | `VoxelPlugin<V>` + `GeneratorPlugin<V>` | Includes core runtime, UI/visual helpers, and SFX request generation; audio playback remains opt-in |
 | Build my own game UI/audio | `VoxelCorePlugin<V>` + `GeneratorPlugin<V>` | Keeps rendering, streaming, meshing, mining and placement primitives |
 | Add procedural generation | `GeneratorPlugin<V>` + `GeneratorResource<V>` | Your generator implements `ChunkGenerator<V>` |
 | Save modified chunks | `PersistencePlugin<V>::with_world("world")` | Writes under `./worlds/{world}/chunks` |
@@ -204,6 +214,20 @@ Run the bundled example:
 ```sh
 cargo run --example basic_world
 ```
+
+### Bundled examples
+
+| Example | Runtime | Purpose |
+|---|---|---|
+| `content_definitions` | Headless (`MinimalPlugins`); requires `items` (enabled by default) | Author-defined blocks, items, drops, validation, and snapshots |
+| `stats_definitions` | Headless (`MinimalPlugins`) | Author-defined global/entity stats, mutation helpers, and messages |
+| `effect_definitions` | Headless (`MinimalPlugins`) | Author-defined global/entity effects, ticking, and lifecycle messages |
+| `basic_world` | Graphical; display required; requires `items` (enabled by default) | Small playable asteroid world; see [`examples/basic_world.md`](examples/basic_world.md) |
+| `minetest` | Graphical; display required; requires `items`, `crafting`, and `mobs` (enabled by default) | Larger integration example |
+
+The headless examples are the fastest way to inspect the horizontal gameplay
+APIs without opening a window. The stats and effects examples do not require
+optional framework features.
 
 ## Module Overview
 
