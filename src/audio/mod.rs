@@ -4,56 +4,36 @@
 //!
 //! The audio module is deliberately split into two layers:
 //!
-//! * **Event layer** ([`SfxPlugin`]) — framework systems translate world events
-//!   (voxel broken, voxel placed, …) into [`SfxRequest`] messages.  This layer
-//!   has no knowledge of any audio engine.
-//! * **Playback layer** — the game is responsible for consuming [`SfxRequest`]
-//!   messages and driving its chosen audio backend.  [`DefaultAudioPlugin`] is
-//!   provided as a stub that only logs requests; replace it for real playback.
+//! * **Request layer** ([`SfxPlugin`]) — framework systems translate world
+//!   events (voxel broken, voxel placed, …) into [`SfxRequest`] messages. The
+//!   convenience [`crate::VoxelPlugin`] includes this layer, so it generates
+//!   requests but does not play them.
+//! * **Playback layer** ([`DefaultAudioPlugin`]) — consumes [`SfxRequest`]
+//!   messages, resolves registered paths through [`SfxConfig`], loads the
+//!   assets, and spawns Bevy [`AudioPlayer`] entities. Games can replace this
+//!   plugin with a custom playback backend.
 //!
-//! This split keeps `voxel-framework` free of a mandatory `bevy_audio`
-//! dependency.  Because `voxel-framework` compiles Bevy with
-//! `default-features = false`, the `bevy_audio` crate (and any codec backend
-//! such as `vorbis`) is **not** included unless the consuming game opts in.
+//! `voxel-framework` enables Bevy's `bevy_audio` and `vorbis` features, so the
+//! default playback layer supports Ogg Vorbis assets. The request layer remains
+//! separate so games can omit [`DefaultAudioPlugin`] or supply another handler.
 //!
 //! # Integration
 //!
-//! 1. Add `"bevy_audio"` and a codec feature (e.g. `"vorbis"`) to the `bevy`
-//!    dependency in your game's `Cargo.toml`.
-//! 2. Populate [`SfxConfig`] with asset paths for each [`SfxEvent`] category.
-//! 3. Add [`SfxPlugin`] to register the event channel and framework systems.
-//! 4. Add your own playback plugin (or use [`DefaultAudioPlugin`] for
-//!    development) to consume [`SfxRequest`] messages.
+//! 1. Add Bevy's asset and audio plugins, normally through `DefaultPlugins`.
+//! 2. Put Ogg Vorbis files in the configured Bevy asset source (normally the
+//!    `assets/` directory) and populate [`SfxConfig`] with their asset-relative
+//!    paths.
+//! 3. Add [`SfxPlugin`] directly, or add [`crate::VoxelPlugin`], to register the
+//!    request channel and framework request-producing systems.
+//! 4. Add [`DefaultAudioPlugin`] for Bevy audio playback, or add a custom plugin
+//!    that consumes [`SfxRequest`] messages. [`crate::VoxelPlugin`] does not add
+//!    a playback plugin.
 //!
 //! ## Example
 //!
 //! ```no_run
 //! use bevy::prelude::*;
-//! use voxel_framework::audio::{SfxConfig, SfxEvent, SfxPlugin, SfxRequest};
-//! use bevy::ecs::message::MessageReader;
-//!
-//! // Custom playback plugin that uses bevy_audio (requires "bevy_audio" feature).
-//! struct MyAudioPlugin;
-//!
-//! impl Plugin for MyAudioPlugin {
-//!     fn build(&self, app: &mut App) {
-//!         app.add_systems(Update, play_sfx);
-//!     }
-//! }
-//!
-//! fn play_sfx(
-//!     mut reader: MessageReader<SfxRequest>,
-//!     config: Res<SfxConfig>,
-//!     asset_server: Res<AssetServer>,
-//!     mut commands: Commands,
-//! ) {
-//!     for (i, request) in reader.read().enumerate() {
-//!         if let Some(path) = config.pick_path(&request.event, i as u64).map(|p| p.to_owned()) {
-//!             let source: Handle<AudioSource> = asset_server.load(path);
-//!             commands.spawn((AudioPlayer(source), PlaybackSettings::ONCE));
-//!         }
-//!     }
-//! }
+//! use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent, SfxPlugin};
 //!
 //! fn main() {
 //!     let mut sfx_config = SfxConfig::new();
@@ -61,9 +41,10 @@
 //!     sfx_config.register(SfxEvent::MiningComplete, vec!["sounds/break1.ogg"]);
 //!
 //!     App::new()
+//!         .add_plugins(DefaultPlugins)
 //!         .insert_resource(sfx_config)
 //!         .add_plugins(SfxPlugin)
-//!         .add_plugins(MyAudioPlugin)
+//!         .add_plugins(DefaultAudioPlugin)
 //!         .run();
 //! }
 //! ```
@@ -289,9 +270,10 @@ pub fn placement_sfx_system(
 /// # What it does NOT do
 ///
 /// `SfxPlugin` never loads audio assets, never creates audio entities, and
-/// never calls into any audio backend.  Actual playback is the responsibility
-/// of a separate plugin — either [`DefaultAudioPlugin`] (development stub) or
-/// a custom plugin that reads [`SfxRequest`] events.
+/// never calls into any audio backend. Actual playback is the responsibility
+/// of a separate plugin — either [`DefaultAudioPlugin`], which uses Bevy audio,
+/// or a custom plugin that reads [`SfxRequest`] events. [`crate::VoxelPlugin`]
+/// includes `SfxPlugin`, but it does not include a playback plugin.
 pub struct SfxPlugin;
 
 impl Plugin for SfxPlugin {

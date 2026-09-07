@@ -51,19 +51,37 @@ The prelude re-exports every public type you normally need.
 Everything is generic over `V: VoxelType`. Use `DefaultVoxel` unless you need a
 custom palette.
 
-## The one decision you must make: which plugin?
+## Compose the flat plugin catalog
 
-| Plugin | Gives you | Use when |
-|--------|-----------|----------|
-| `VoxelCorePlugin::<V>` | Pure engine: chunk mgmt, streaming, meshing, rendering, occlusion, mining, placement, loading. **No game content.** | You want full control over UI/audio/hotbar. |
-| `VoxelPlugin::<V>` | Everything in Core **plus** skybox, audio, hotbar, fragments, UI. | You want batteries included. |
+The framework exposes a **flat catalog**, not a hierarchy of increasingly
+game-like super-plugins. Pick explicit plugins by responsibility as your game
+matures:
 
-Both are additive. Then, **always opt-in** (they need a `GeneratorResource<V>`):
+| Category | Responsibility | Examples |
+|---|---|---|
+| Engine | Streamable/renderable voxel-world foundation | `WorldPlugin`, `WorldConfigPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
+| World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
+| Gameplay | Reusable rules and author-defined horizontal data | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `VoxelEffectsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>` |
+| Default Implementation | Replaceable presentation defaults | `UiPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
+| Convenience | Compatibility bundles and adapters | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
-- `GeneratorPlugin::<V>` — wires the generator to the world. Without it, chunks come up empty.
-- `PersistencePlugin::<V>` — saves/loads modified chunks to disk.
+`VoxelCorePlugin<V>` and `VoxelPlugin<V>` remain useful starting points, but
+they are convenience bundles rather than the primary architecture:
 
-### Minimal: pure engine
+| Bundle | Gives you | Use when |
+|---|---|---|
+| `VoxelCorePlugin<V>` | Engine foundation plus mining and placement primitives | You want to own UI, audio, and other presentation choices |
+| `VoxelPlugin<V>` | Core plus selected defaults: skybox, SFX events, hotbar with `items`, fragments, and UI | You want a quick prototype or example |
+
+Generation and persistence remain explicit World Data choices regardless of
+the bundle:
+
+- `GeneratorPlugin<V>` wires a generator into streaming and requires a
+  `GeneratorResource<V>`. Without it, requested chunks are not procedurally
+  generated.
+- `PersistencePlugin<V>` optionally saves and loads modified chunks from disk.
+
+### Core convenience bundle
 
 ```rust
 App::new()
@@ -76,7 +94,7 @@ App::new()
     .run();
 ```
 
-### Batteries-included
+### Quick-start bundle
 
 ```rust
 App::new()
@@ -89,6 +107,24 @@ App::new()
     })
     .run();
 ```
+
+## Author-defined content, stats, and effects
+
+These Gameplay plugins are independent horizontal building blocks:
+
+- `VoxelContentPlugin<V>` initializes the block registry; with `items`,
+  `ItemContentPlugin<I>` and `BlockDropContentPlugin<I>` initialize item and
+  drop registries.
+- `VoxelStatsPlugin` initializes an empty stat catalog and global value set;
+  `StatSet` can also be attached to entities.
+- `VoxelEffectsPlugin` initializes an empty effect catalog and active-effect
+  set; `ActiveEffectSet` can also be attached to entities.
+
+The framework does **not** define health/oxygen/mana, poison/buffs, genre
+categories, or other vertical presets. The game author registers definitions in
+ordinary Rust setup systems and decides what ids, tags, and attributes mean.
+Snapshots are deterministic and serializable for tooling, but there is no JSON
+configuration schema competing with the Rust API.
 
 ## Runtime contracts & gotchas (the things that bite)
 
@@ -123,12 +159,15 @@ does nothing:
 
 ## Commands
 
-```sh
-cargo check                       # verify compile — use this, NOT `cargo build`
-cargo check --example basic_world
-cargo test                        # pure-logic tests, no display needed
-cargo run --example basic_world   # requires a display
-```
+| Command | Environment | Purpose |
+|---|---|---|
+| `cargo check` | Headless | Verify compilation; use this, never `cargo build` |
+| `cargo test` | Headless | Run pure-logic and selected runtime tests |
+| `cargo run --example content_definitions` | Headless; requires `items` (enabled by default) | Inspect author-defined blocks, items, and drops |
+| `cargo run --example stats_definitions` | Headless | Inspect author-defined global/entity stats |
+| `cargo run --example effect_definitions` | Headless | Inspect author-defined global/entity effects |
+| `cargo run --example basic_world` | Graphical; display required; requires `items` (enabled by default) | Run the small playable asteroid example |
+| `cargo run --example minetest` | Graphical; display required; requires `items`, `crafting`, and `mobs` (enabled by default) | Run the larger integration example |
 
 ## Where to look next
 
@@ -139,5 +178,9 @@ cargo run --example basic_world   # requires a display
   [examples/basic_world.md](./examples/basic_world.md).
 - **[examples/minetest.rs](./examples/minetest.rs)** — advanced example
   (`items,crafting,mobs`).
+- **[examples/content_definitions.rs](./examples/content_definitions.rs)**,
+  **[examples/stats_definitions.rs](./examples/stats_definitions.rs)**, and
+  **[examples/effect_definitions.rs](./examples/effect_definitions.rs)** —
+  headless examples of the author-defined horizontal APIs.
 - **`src/prelude.rs`** — the full list of re-exported public types.
 - **`src/lib.rs`** — crate-level rustdoc with the plugin architecture overview.
