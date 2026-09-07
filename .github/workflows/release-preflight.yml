@@ -1,0 +1,41 @@
+name: Release preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version without a v prefix (for example, 0.8.0)
+        required: true
+        type: string
+
+concurrency:
+  group: release-preflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Validate ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run release preflight
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: ./scripts/release-preflight.sh "$RELEASE_VERSION"
