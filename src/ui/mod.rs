@@ -1,9 +1,9 @@
 //! HUD overlay plugins for voxel game user interfaces.
 //!
-//! This module provides four composable HUD plugins that cover the most common
-//! in-game overlay needs. Each plugin is self-contained and can be added
-//! independently; [`UiPlugin`] is an umbrella that adds all four at once using
-//! [`DefaultItem`] as the item type.
+//! This module provides four composable overlay plugins plus the author-defined,
+//! game-neutral [`hud`] data model. Each existing plugin is self-contained and
+//! can be added independently; [`UiPlugin`] is an umbrella that adds all four
+//! existing overlays at once using [`DefaultItem`] as the item type.
 //!
 //! # Available plugins
 //!
@@ -61,6 +61,9 @@ use crate::items::inventory::ItemPickedUp;
 #[cfg(feature = "items")]
 use crate::items::inventory::ItemType;
 use crate::world::loading::{LoadingProgress, WorldLoadingState};
+
+/// Author-defined, game-neutral HUD data model and stores.
+pub mod hud;
 
 // ─── Crosshair ────────────────────────────────────────────────────────────────
 

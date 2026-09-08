@@ -6,9 +6,9 @@
 
 ## Batch 1: Public model and stores
 
-- [ ] 1.1 Create `src/ui/hud.rs` IDs, `HudScalar`, closed `HudValue`, errors, and owned icon paths; enforce finite/range and kind invariants.
-- [ ] 1.2 Add presentation builders, definitions, nine anchors, placement/order, theme/overrides, and deterministic snapshot types in `src/ui/hud.rs`.
-- [ ] 1.3 Implement `HudRegistry`/`HudValueSet` keyed reads, duplicate-safe registration, explicit replacement/removal, monotonic revisions, ordered inspection, and real-change messages.
+- [x] 1.1 Create `src/ui/hud.rs` IDs, `HudScalar`, closed `HudValue`, errors, and owned icon paths; enforce finite/range and kind invariants.
+- [x] 1.2 Add presentation builders, definitions, nine anchors, placement/order, theme/overrides, and deterministic snapshot types in `src/ui/hud.rs`.
+- [x] 1.3 Implement `HudRegistry`/`HudValueSet` keyed reads, duplicate-safe registration, explicit replacement/removal, monotonic revisions, ordered inspection, and real-change messages.
 
 ## Batch 2: Pure resolution
 
