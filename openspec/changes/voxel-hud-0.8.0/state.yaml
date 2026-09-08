@@ -1,5 +1,5 @@
 change: voxel-hud-0.8.0
-phase: tasks
+phase: apply
 artifact_store: hybrid
 artifacts:
   exploration: true
@@ -7,15 +7,15 @@ artifacts:
   specs: true
   design: true
   tasks: true
-  apply-progress: false
+  apply-progress: true
   verify-report: false
   archive-report: false
 tasks_progress:
-  completed: []
-  pending:
+  completed:
     - "1.1"
     - "1.2"
     - "1.3"
+  pending:
     - "2.1"
     - "2.2"
     - "3.1"
