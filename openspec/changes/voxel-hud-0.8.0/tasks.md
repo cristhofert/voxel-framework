@@ -12,8 +12,8 @@
 
 ## Batch 2: Pure resolution
 
-- [ ] 2.1 Implement text formatting, clamped bar ratios, bounded segment counts, visibility, style merging, anchor/offset/stack layout, and ID tie-breaking in `src/ui/hud.rs`.
-- [ ] 2.2 Resolve missing, mismatched, invalid, excessive, and unavailable-asset inputs to hidden/compatible fallback state with transition-deduplicated `HudDiagnostic`; never coerce or panic.
+- [x] 2.1 Implement text formatting, clamped bar ratios, bounded segment counts, visibility, style merging, anchor/offset/stack layout, and ID tie-breaking in `src/ui/hud.rs`.
+- [x] 2.2 Resolve missing, mismatched, invalid, excessive, and unavailable-asset inputs to hidden/compatible fallback state with transition-deduplicated `HudDiagnostic`; never coerce or panic.
 
 ## Batch 3: Retained renderer and wiring
 
