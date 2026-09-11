@@ -3207,6 +3207,123 @@ mod tests {
     }
 
     #[test]
+    fn every_anchor_and_style_field_resolves_from_author_configuration() {
+        let anchors = [
+            (
+                HudAnchor::TopLeft,
+                HudAxisAnchor::Start,
+                HudAxisAnchor::Start,
+            ),
+            (
+                HudAnchor::TopCenter,
+                HudAxisAnchor::Center,
+                HudAxisAnchor::Start,
+            ),
+            (
+                HudAnchor::TopRight,
+                HudAxisAnchor::End,
+                HudAxisAnchor::Start,
+            ),
+            (
+                HudAnchor::CenterLeft,
+                HudAxisAnchor::Start,
+                HudAxisAnchor::Center,
+            ),
+            (
+                HudAnchor::Center,
+                HudAxisAnchor::Center,
+                HudAxisAnchor::Center,
+            ),
+            (
+                HudAnchor::CenterRight,
+                HudAxisAnchor::End,
+                HudAxisAnchor::Center,
+            ),
+            (
+                HudAnchor::BottomLeft,
+                HudAxisAnchor::Start,
+                HudAxisAnchor::End,
+            ),
+            (
+                HudAnchor::BottomCenter,
+                HudAxisAnchor::Center,
+                HudAxisAnchor::End,
+            ),
+            (
+                HudAnchor::BottomRight,
+                HudAxisAnchor::End,
+                HudAxisAnchor::End,
+            ),
+        ];
+        let theme = HudTheme {
+            font_size: 13.0,
+            text_color: [0.1, 0.2, 0.3, 0.4],
+            background_color: [0.2, 0.3, 0.4, 0.5],
+            foreground_color: [0.3, 0.4, 0.5, 0.6],
+            padding: [1.0, 2.0, 3.0, 4.0],
+            gap: 5.0,
+            bar_size: [101.0, 11.0],
+            icon_size: [21.0, 22.0],
+            segment_size: [8.0, 9.0],
+            z_index: 41,
+        };
+        let overrides = HudStyleOverride {
+            font_size: Some(23.0),
+            text_color: Some([0.9, 0.8, 0.7, 0.6]),
+            background_color: Some([0.8, 0.7, 0.6, 0.5]),
+            foreground_color: Some([0.7, 0.6, 0.5, 0.4]),
+            padding: Some([9.0, 8.0, 7.0, 6.0]),
+            gap: Some(4.0),
+            bar_size: Some([202.0, 22.0]),
+            icon_size: Some([42.0, 44.0]),
+            segment_size: Some([16.0, 18.0]),
+            z_index: Some(82),
+        };
+
+        for (index, (anchor, horizontal, vertical)) in anchors.into_iter().enumerate() {
+            let definition = text_definition(&format!("anchor-{index}"), "value")
+                .placement(
+                    HudPlacement::new(anchor)
+                        .offset(index as f32, -(index as f32))
+                        .stack_direction(HudStackDirection::Horizontal),
+                )
+                .order(index as i32)
+                .style(overrides.clone());
+            let layout = resolve_layout(&definition);
+            assert_eq!(layout.anchor, anchor);
+            assert_eq!(layout.horizontal, horizontal);
+            assert_eq!(layout.vertical, vertical);
+            assert_eq!(layout.offset, [index as f32, -(index as f32)]);
+            assert_eq!(layout.stack_direction, HudStackDirection::Horizontal);
+            assert_eq!(layout.order, index as i32);
+
+            let style = resolve_style(&theme, definition.style_override()).unwrap();
+            assert_eq!(style.font_size, 23.0);
+            assert_eq!(style.text_color, [0.9, 0.8, 0.7, 0.6]);
+            assert_eq!(style.background_color, [0.8, 0.7, 0.6, 0.5]);
+            assert_eq!(style.foreground_color, [0.7, 0.6, 0.5, 0.4]);
+            assert_eq!(style.padding, [9.0, 8.0, 7.0, 6.0]);
+            assert_eq!(style.gap, 4.0);
+            assert_eq!(style.bar_size, [202.0, 22.0]);
+            assert_eq!(style.icon_size, [42.0, 44.0]);
+            assert_eq!(style.segment_size, [16.0, 18.0]);
+            assert_eq!(style.z_index, 82);
+        }
+
+        let defaults = resolve_style(&theme, &HudStyleOverride::default()).unwrap();
+        assert_eq!(defaults.font_size, theme.font_size);
+        assert_eq!(defaults.text_color, theme.text_color);
+        assert_eq!(defaults.background_color, theme.background_color);
+        assert_eq!(defaults.foreground_color, theme.foreground_color);
+        assert_eq!(defaults.padding, theme.padding);
+        assert_eq!(defaults.gap, theme.gap);
+        assert_eq!(defaults.bar_size, theme.bar_size);
+        assert_eq!(defaults.icon_size, theme.icon_size);
+        assert_eq!(defaults.segment_size, theme.segment_size);
+        assert_eq!(defaults.z_index, theme.z_index);
+    }
+
+    #[test]
     fn missing_and_mismatched_values_use_only_compatible_fallbacks() {
         let fallback =
             HudElementDefinition::new("fallback", HudPresentation::Bar(HudBar::new("missing")))
@@ -3520,6 +3637,107 @@ mod tests {
     }
 
     #[test]
+    fn empty_standalone_plugin_starts_headlessly_and_keeps_structure_stable() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        let mut diagnostics = app
+            .world()
+            .resource::<Messages<HudDiagnostic>>()
+            .get_cursor_current();
+
+        app.update();
+
+        assert!(app.world().resource::<HudRegistry>().is_empty());
+        assert_eq!(app.world().resource::<HudRegistry>().revision(), 0);
+        assert!(app.world().resource::<HudValueSet>().is_empty());
+        assert_eq!(app.world().resource::<HudValueSet>().revision(), 0);
+        assert!(app.world().resource::<HudAssetCache>().handles.is_empty());
+        assert_eq!(
+            diagnostics
+                .read(app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            0
+        );
+
+        let canvas = {
+            let mut query = app.world_mut().query_filtered::<Entity, With<HudCanvas>>();
+            let canvases: Vec<_> = query.iter(app.world()).collect();
+            assert_eq!(canvases.len(), 1);
+            canvases[0]
+        };
+        let anchors = {
+            let mut query = app.world_mut().query::<(Entity, &HudAnchorRoot)>();
+            let mut anchors: Vec<_> = query
+                .iter(app.world())
+                .map(|(entity, anchor)| (anchor.0, entity))
+                .collect();
+            anchors.sort_by_key(|(key, _)| *key);
+            assert_eq!(anchors.len(), 18);
+            anchors
+        };
+        let mut roots = app.world_mut().query::<&HudElementRoot>();
+        assert_eq!(roots.iter(app.world()).count(), 0);
+        let mut children = app.world_mut().query::<&HudChildIdentity>();
+        assert_eq!(children.iter(app.world()).count(), 0);
+
+        app.update();
+
+        let mut canvas_query = app.world_mut().query_filtered::<Entity, With<HudCanvas>>();
+        assert_eq!(canvas_query.iter(app.world()).collect::<Vec<_>>(), [canvas]);
+        let mut anchor_query = app.world_mut().query::<(Entity, &HudAnchorRoot)>();
+        let mut unchanged_anchors: Vec<_> = anchor_query
+            .iter(app.world())
+            .map(|(entity, anchor)| (anchor.0, entity))
+            .collect();
+        unchanged_anchors.sort_by_key(|(key, _)| *key);
+        assert_eq!(unchanged_anchors, anchors);
+    }
+
+    #[test]
+    fn hud_and_existing_ui_plugin_coexist_without_replacing_overlays() {
+        use crate::world::{LoadingProgress, WorldLoadingState};
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<WorldLoadingState>();
+        app.add_message::<LoadingProgress>();
+        #[cfg(feature = "items")]
+        {
+            use crate::items::hotbar::{HotbarSelectionChanged, HotbarState};
+
+            app.init_resource::<HotbarState>();
+            app.add_message::<HotbarSelectionChanged>();
+        }
+        app.add_plugins((crate::ui::UiPlugin, VoxelHudPlugin));
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .register(text_definition("coexisting", "coexisting-value"))
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("coexisting-value", "ready");
+
+        app.update();
+
+        let hud_root = root_for(&mut app, "coexisting");
+        assert!(app.world().get::<HudElementRoot>(hud_root).is_some());
+        let mut crosshair = app
+            .world_mut()
+            .query_filtered::<Entity, With<crate::ui::CrosshairNode>>();
+        assert_eq!(crosshair.iter(app.world()).count(), 5);
+        let mut loading = app
+            .world_mut()
+            .query_filtered::<Entity, With<crate::ui::LoadingOverlay>>();
+        assert_eq!(loading.iter(app.world()).count(), 1);
+
+        app.update();
+
+        assert_eq!(root_for(&mut app, "coexisting"), hud_root);
+        assert_eq!(crosshair.iter(app.world()).count(), 5);
+        assert_eq!(loading.iter(app.world()).count(), 1);
+    }
+
+    #[test]
     fn retained_renderer_preserves_roots_and_reconciles_only_changed_children() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, VoxelHudPlugin));
@@ -3827,6 +4045,69 @@ mod tests {
                 .read(app.world().resource::<Messages<HudDiagnostic>>())
                 .count(),
             0
+        );
+    }
+
+    #[test]
+    fn ecs_diagnostics_deduplicate_and_reemit_after_recovery() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .register(text_definition("status", "status-value"))
+            .unwrap();
+        let mut diagnostics = app
+            .world()
+            .resource::<Messages<HudDiagnostic>>()
+            .get_cursor_current();
+
+        app.update();
+        let first: Vec<_> = diagnostics
+            .read(app.world().resource::<Messages<HudDiagnostic>>())
+            .cloned()
+            .collect();
+        assert_eq!(first.len(), 1);
+        assert!(matches!(
+            first[0].kind,
+            HudDiagnosticKind::MissingValue {
+                binding: HudBindingKind::Presentation,
+                ..
+            }
+        ));
+
+        app.update();
+        assert_eq!(
+            diagnostics
+                .read(app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            0
+        );
+
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("status-value", "ready");
+        app.update();
+        assert_eq!(
+            diagnostics
+                .read(app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            0
+        );
+        let root = root_for(&mut app, "status");
+        assert_eq!(
+            *app.world().get::<Visibility>(root).unwrap(),
+            Visibility::Inherited
+        );
+
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .remove("status-value");
+        app.update();
+        assert_eq!(
+            diagnostics
+                .read(app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            1
         );
     }
 }

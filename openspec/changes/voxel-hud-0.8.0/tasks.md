@@ -25,8 +25,8 @@
 
 ## Batch 4: Tests
 
-- [ ] 4.1 Add inline model/resolution tests in `src/ui/hud.rs` for IDs, stores, revisions, snapshots, scalar/formatting/bounds, all presentations, fallback, theme, anchors, and ordering.
-- [ ] 4.2 Add `MinimalPlugins` ECS tests for empty/standalone/coexisting plugin startup, same-frame publication, stable roots/child counts, selective mutation, definition reconciliation, diagnostic deduplication, and zero asset I/O.
+- [x] 4.1 Add inline model/resolution tests in `src/ui/hud.rs` for IDs, stores, revisions, snapshots, scalar/formatting/bounds, all presentations, fallback, theme, anchors, and ordering.
+- [x] 4.2 Add `MinimalPlugins` ECS tests for empty/standalone/coexisting plugin startup, same-frame publication, stable roots/child counts, selective mutation, definition reconciliation, diagnostic deduplication, and zero asset I/O.
 
 ## Batch 5: Consumer example and guidance
 
