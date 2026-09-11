@@ -14,6 +14,8 @@
 - [x] 3.5 Public module/prelude exports, crate rustdoc, and Default Implementation classification without bundle membership.
 - [x] 4.1 Comprehensive inline model/resolution coverage for IDs, stores, revisions, snapshots, scalar formatting/bounds, all presentations, fallbacks, complete theme overrides, all nine anchors, and deterministic ordering.
 - [x] 4.2 Headless `MinimalPlugins` ECS coverage for empty/standalone/coexisting startup, same-frame publication, stable retained identity/structure, selective mutation, definition reconciliation, diagnostic transitions, and zero asset I/O.
+- [x] 5.1 Feature-independent headless example for neutral text, bar, icon, and segments with startup publication, same-frame updates, retained reuse, and an unchanged frame.
+- [x] 5.2 Consumer guidance for explicit composition, publication scheduling, safe fallbacks, deterministic inspection, coexistence and incremental custom-overlay migration, and non-goals.
 
 ## Implementation
 
@@ -26,6 +28,9 @@
 - Added focused headless Batch 3 tests for same-frame publication, stable identity, child reconciliation/resizing, deterministic order/reparenting, selective mutation, bar transitions, and zero-I/O missing-asset behavior; Batch 4 retains and expands this coverage.
 - Completed Batch 4 by extending the inline suite from 25 to 29 HUD tests, including exhaustive nine-anchor/full-style resolution, stable empty startup, real `UiPlugin` coexistence under both feature modes, and ECS diagnostic deduplication with recovery/re-entry.
 - Kept tests domain-neutral and headless: no gameplay semantics, automatic bridges, screenshots, windows, filesystem access, or asset loads were introduced.
+- Added `examples/hud.rs` as a feature-independent `MinimalPlugins` consumer example. It uses only neutral `sample.*` ids, publishes values for all four presentation kinds through `HudSystemSet::Publish`, updates across retained frames, and leaves a third frame unchanged.
+- Added `docs/hud.md` and focused README/agent guidance covering the explicit plugin boundary, Rust registration, same-frame publication, safe fallback/diagnostic behavior, deterministic inspection, coexistence, and incremental custom-overlay migration.
+- Kept Batch 5 free of game semantics, automatic domain bridges, rules, configuration DSLs, JSON examples, vertical presets, release metadata, version changes, and hardening changes.
 
 ## Validation
 
@@ -60,6 +65,27 @@
 - `git diff --check` — passed.
 - Documentation generation was not rerun because Batch 4 changed tests and SDD state only. The pre-existing no-default rustdoc link failures remain deferred to final hardening, as required by scope.
 
+## Batch 5 Validation — 2026-09-11
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo check --locked --example hud` — passed.
+- `cargo check --locked --no-default-features --example hud` — passed.
+- `cargo run --locked --example hud` — passed headlessly; four definitions and deterministic values were printed across two changed frames and one unchanged frame.
+- `cargo run --locked --no-default-features --example hud` — passed with the same output and no asset I/O.
+- `cargo test --locked ui::hud::tests --lib` — 29 passed, 0 failed, 245 filtered out.
+- `cargo test --locked --no-default-features ui::hud::tests --lib` — 29 passed, 0 failed, 198 filtered out.
+- `cargo doc --locked --no-deps --all-features` — passed with no rustdoc-link failures.
+- Local Markdown targets added by Batch 5 were confirmed present.
+- `git diff --check` — passed.
+
+## Independent Batch 5 Verification — 2026-09-11
+
+- Reviewed the full proposal, specification, design, tasks, and apply progress against the Batch 5 working tree at `fab7cf1`.
+- Confirmed the example uses only neutral `sample.*` ids and public APIs, runs with `MinimalPlugins`, performs no asset I/O without an `AssetServer`, publishes before same-frame reconciliation/rendering, and leaves registry/value revisions unchanged on its third update.
+- Confirmed the `hud` Cargo example has no required features, all Batch 5 local Markdown links resolve, and the public 0.7 version claims remain correct until Batch 6.
+- Corrected the progress wording from “all four value kinds” to “values for all four presentation kinds”; `HudValue` intentionally has five kinds, including `Bool` for visibility bindings.
+- Re-ran formatting, default/no-default example checks and headless runs, 29 focused HUD tests in each feature mode, all-features rustdoc, local-link validation, Cargo target metadata inspection, and `git diff --check`; all passed.
+
 ## Remaining
 
-Batch 4 is complete. Batch 5 remains independently ready; Batch 6 follows Batch 5, then Batch 7 validation and independent verification. No Batch 5+ example, documentation, version, or release work was included.
+Batch 5 is complete. Batch 6 release metadata remains next, followed by Batch 7 hardening and independent verification. No Batch 6 version/release documentation or Batch 7 hardening work was included.

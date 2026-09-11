@@ -62,7 +62,7 @@ matures:
 | Engine | Streamable/renderable voxel-world foundation | `WorldPlugin`, `WorldConfigPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
 | World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
 | Gameplay | Reusable rules and author-defined horizontal data | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `VoxelEffectsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>` |
-| Default Implementation | Replaceable presentation defaults | `UiPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
+| Default Implementation | Replaceable presentation defaults | `UiPlugin`, `VoxelHudPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
 | Convenience | Compatibility bundles and adapters | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
 `VoxelCorePlugin<V>` and `VoxelPlugin<V>` remain useful starting points, but
@@ -126,6 +126,27 @@ ordinary Rust setup systems and decides what ids, tags, and attributes mean.
 Snapshots are deterministic and serializable for tooling, but there is no JSON
 configuration schema competing with the Rust API.
 
+## Author-defined retained HUD
+
+`VoxelHudPlugin` is an explicit, non-generic Default Implementation plugin. It
+initializes an empty `HudRegistry`, `HudValueSet`, and retained renderer; it is
+not included in `UiPlugin`, `VoxelCorePlugin<V>`, or `VoxelPlugin<V>`. Register
+neutral text, bar, icon, or bounded-segment definitions during `Startup`, then
+publish screen-ready values from game-owned systems.
+
+Put publishers in `HudSystemSet::Publish` when updates must render in the same
+frame. Missing or mismatched values resolve safely to hidden state or a
+compatible author fallback and emit transition-deduplicated `HudDiagnostic`
+messages. Snapshot APIs are deterministic inspection tools, not persistence or
+a JSON/config DSL.
+
+The plugin can coexist with `UiPlugin` and custom Bevy UI. Migrate a custom
+overlay element by element: preserve the game-owned query, publish its neutral
+view value explicitly, verify the retained replacement, then remove the old UI
+entity. Do not invent automatic stats/effects bridges, player discovery,
+gameplay rules, or genre presets. See [`docs/hud.md`](./docs/hud.md) and the
+feature-independent [`examples/hud.rs`](./examples/hud.rs).
+
 ## Runtime contracts & gotchas (the things that bite)
 
 These are not obvious from the type signatures — get them wrong and it silently
@@ -142,9 +163,12 @@ does nothing:
    `stop_mining`, `try_place_voxel`, `tick_placement` are plain functions invoked
    from *your* systems. The plugins only initialize resources/messages — they do
    not run the interaction loop for you.
-4. **`world.toml` is read from the current working directory at startup.** Missing
+4. **HUD values are author-published view data.** The framework never discovers
+   players or mirrors stats/effects automatically. Use `HudSystemSet::Publish`
+   for same-frame retained updates.
+5. **`world.toml` is read from the current working directory at startup.** Missing
    file → defaults. `WorldConfig::from_file(path)` loads an explicit one.
-5. **Chunks are 16³.** Index math is `x*256 + y*16 + z`. Coordinates are in chunk
+6. **Chunks are 16³.** Index math is `x*256 + y*16 + z`. Coordinates are in chunk
    units (1 unit = 16 world units) via `ChunkCoord`.
 
 ## Cargo features
@@ -166,6 +190,7 @@ does nothing:
 | `cargo run --example content_definitions` | Headless; requires `items` (enabled by default) | Inspect author-defined blocks, items, and drops |
 | `cargo run --example stats_definitions` | Headless | Inspect author-defined global/entity stats |
 | `cargo run --example effect_definitions` | Headless | Inspect author-defined global/entity effects |
+| `cargo run --example hud` | Headless; feature-independent | Inspect neutral retained HUD definitions, same-frame publication, and updates |
 | `cargo run --example basic_world` | Graphical; display required; requires `items` (enabled by default) | Run the small playable asteroid example |
 | `cargo run --example minetest` | Graphical; display required; requires `items`, `crafting`, and `mobs` (enabled by default) | Run the larger integration example |
 
@@ -182,5 +207,8 @@ does nothing:
   **[examples/stats_definitions.rs](./examples/stats_definitions.rs)**, and
   **[examples/effect_definitions.rs](./examples/effect_definitions.rs)** —
   headless examples of the author-defined horizontal APIs.
+- **[docs/hud.md](./docs/hud.md)** and
+  **[examples/hud.rs](./examples/hud.rs)** — retained HUD publication,
+  scheduling, migration, fallbacks, inspection, and a neutral headless example.
 - **`src/prelude.rs`** — the full list of re-exported public types.
 - **`src/lib.rs`** — crate-level rustdoc with the plugin architecture overview.

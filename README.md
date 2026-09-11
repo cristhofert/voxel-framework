@@ -79,7 +79,7 @@ categories:
 | Engine | Foundation for streamable/renderable voxel worlds | `WorldPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
 | World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
 | Gameplay | Reusable rules and interactions | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `VoxelEffectsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
-| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
+| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `VoxelHudPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
 | Convenience | Bundles, input adapters, compatibility, recipes/prototyping helpers | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
 The categories are also exposed as marker traits:
@@ -154,6 +154,7 @@ bevy = "0.18"
 | Save modified chunks | `PersistencePlugin<V>::with_world("world")` | Writes under `./worlds/{world}/chunks` |
 | Drive loading screens | `LoadingPlugin` / `WorldReady` / `LoadingProgress` | Bundled by the convenience plugins |
 | Mine or place blocks manually | `MiningPlugin` / `PlacementPlugin` | Call `tick_mining`, `stop_mining`, `try_place_voxel`, and `tick_placement` from your systems |
+| Publish an author-defined retained HUD | `VoxelHudPlugin` | Explicit, non-generic, domain-neutral, and not included in `UiPlugin` or convenience bundles |
 | Use included item/hotbar UX | default features or `--features items` | Enables inventory, hotbar, drops, and related UI |
 
 Minimal `main.rs` that spawns an asteroid world with config and persistence:
@@ -222,12 +223,13 @@ cargo run --example basic_world
 | `content_definitions` | Headless (`MinimalPlugins`); requires `items` (enabled by default) | Author-defined blocks, items, drops, validation, and snapshots |
 | `stats_definitions` | Headless (`MinimalPlugins`) | Author-defined global/entity stats, mutation helpers, and messages |
 | `effect_definitions` | Headless (`MinimalPlugins`) | Author-defined global/entity effects, ticking, and lifecycle messages |
+| `hud` | Headless (`MinimalPlugins`); feature-independent | Neutral text, bar, icon, and segment definitions with same-frame publication and retained updates |
 | `basic_world` | Graphical; display required; requires `items` (enabled by default) | Small playable asteroid world; see [`examples/basic_world.md`](examples/basic_world.md) |
 | `minetest` | Graphical; display required; requires `items`, `crafting`, and `mobs` (enabled by default) | Larger integration example |
 
-The headless examples are the fastest way to inspect the horizontal gameplay
-APIs without opening a window. The stats and effects examples do not require
-optional framework features.
+The headless examples are the fastest way to inspect author-defined APIs without
+opening a window. The HUD, stats, and effects examples do not require optional
+framework features.
 
 ## Module Overview
 
@@ -237,6 +239,7 @@ optional framework features.
 | `content` | Author-defined `BlockDefinition`, `BlockRegistry`, and `VoxelContentPlugin` |
 | `stats` | Author-defined `StatDefinition`, `StatRegistry`, `StatSet`, and `VoxelStatsPlugin` |
 | `effects` | Author-defined `EffectDefinition`, `EffectRegistry`, `ActiveEffectSet`, and `VoxelEffectsPlugin` |
+| `ui::hud` | Author-defined `HudRegistry`, `HudValueSet`, retained presentations, and explicit `VoxelHudPlugin` |
 | `chunk` | `Chunk<V>` flat-array storage, `ChunkCoord`, constants, coordinate utilities, and binary persistence |
 | `noise` | Seed-based value noise, FBM, and `hash3` — no external noise crates |
 | `generator` | `ChunkGenerator<V>` trait, `GeneratorPlugin`, and `GeneratorResource` |
@@ -568,6 +571,45 @@ Like content and stats snapshots, `EffectRegistry::snapshot()` and
 `ActiveEffectSet::snapshot()` return deterministic serializable data for docs,
 tooling, manifests, or AI inspection. Active effect snapshots include both the
 initial duration and current remaining duration for timed instances.
+
+## Author-defined Retained HUD
+
+`VoxelHudPlugin` is an explicit, non-generic presentation plugin. It is not
+included in `UiPlugin`, `VoxelCorePlugin<V>`, or `VoxelPlugin<V>`, and it does
+not require gameplay plugins or optional Cargo features:
+
+```rust
+App::new()
+    .add_plugins(DefaultPlugins)
+    .add_plugins(VoxelHudPlugin)
+    .add_systems(Startup, register_hud)
+    .add_systems(
+        Update,
+        publish_hud_values.in_set(HudSystemSet::Publish),
+    );
+```
+
+Authors register neutral text, bar, icon, and bounded-segment definitions in
+`HudRegistry`, then publish screen-ready `HudValue`s through `HudValueSet`.
+`HudSystemSet::Publish` is the same-frame boundary before retained
+reconciliation and rendering. Missing or mismatched values hide safely or use a
+compatible author fallback, with transition-deduplicated `HudDiagnostic`
+messages instead of panics.
+
+`HudRegistry::snapshot()` and `HudValueSet::snapshot()` provide deterministic,
+id-ordered inspection. They are not a persistence format or JSON/config DSL.
+The plugin coexists with `UiPlugin` and custom Bevy UI, so custom overlays can
+migrate element by element: keep game-owned queries, explicitly publish neutral
+view values, verify each retained replacement, then remove the old entity.
+
+There are no reserved ids, vertical presets, automatic stats/effects/content
+bridges, player discovery, thresholds, rules, or interactions. See the complete
+[HUD guide](docs/hud.md) and run the feature-independent headless example:
+
+```sh
+cargo run --example hud
+cargo run --no-default-features --example hud
+```
 
 ## World Configuration
 
