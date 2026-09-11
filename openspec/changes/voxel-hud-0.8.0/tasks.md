@@ -30,8 +30,8 @@
 
 ## Batch 5: Consumer example and guidance
 
-- [ ] 5.1 Add feature-independent headless `examples/hud.rs` and its `Cargo.toml` target, registering/updating neutral text, bar, icon, and segment values.
-- [ ] 5.2 Add `docs/hud.md`; update `README.md` and `AGENTS.md` with publication, scheduling, fallbacks, inspection, coexistence/custom-overlay migration, explicit opt-in, and non-goals.
+- [x] 5.1 Add feature-independent headless `examples/hud.rs` and its `Cargo.toml` target, registering/updating neutral text, bar, icon, and segment values.
+- [x] 5.2 Add `docs/hud.md`; update `README.md` and `AGENTS.md` with publication, scheduling, fallbacks, inspection, coexistence/custom-overlay migration, explicit opt-in, and non-goals.
 
 ## Batch 6: 0.8.0 release metadata
 

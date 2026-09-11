@@ -83,6 +83,10 @@ name = "effect_definitions"
 path = "examples/effect_definitions.rs"
 
 [[example]]
+name = "hud"
+path = "examples/hud.rs"
+
+[[example]]
 name = "minetest"
 path = "examples/minetest.rs"
 required-features = ["items", "crafting", "mobs"]
