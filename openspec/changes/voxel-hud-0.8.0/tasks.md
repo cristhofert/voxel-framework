@@ -35,7 +35,7 @@
 
 ## Batch 6: 0.8.0 release metadata
 
-- [ ] 6.1 Set `Cargo.toml`/root `Cargo.lock` to `0.8.0` and add dated `CHANGELOG.md` notes covering the additive API and unchanged compatibility boundaries.
+- [x] 6.1 Set `Cargo.toml`/root `Cargo.lock` to `0.8.0` and add dated `CHANGELOG.md` notes covering the additive API and unchanged compatibility boundaries.
 
 ## Batch 7: Validation and independent verification
 

@@ -16,6 +16,7 @@
 - [x] 4.2 Headless `MinimalPlugins` ECS coverage for empty/standalone/coexisting startup, same-frame publication, stable retained identity/structure, selective mutation, definition reconciliation, diagnostic transitions, and zero asset I/O.
 - [x] 5.1 Feature-independent headless example for neutral text, bar, icon, and segments with startup publication, same-frame updates, retained reuse, and an unchanged frame.
 - [x] 5.2 Consumer guidance for explicit composition, publication scheduling, safe fallbacks, deterministic inspection, coexistence and incremental custom-overlay migration, and non-goals.
+- [x] 6.1 Package and lockfile version `0.8.0`, dated release notes for the additive HUD API and unchanged compatibility boundaries, and current 0.8 guidance without claiming publication.
 
 ## Implementation
 
@@ -31,6 +32,9 @@
 - Added `examples/hud.rs` as a feature-independent `MinimalPlugins` consumer example. It uses only neutral `sample.*` ids, publishes values for all four presentation kinds through `HudSystemSet::Publish`, updates across retained frames, and leaves a third frame unchanged.
 - Added `docs/hud.md` and focused README/agent guidance covering the explicit plugin boundary, Rust registration, same-frame publication, safe fallback/diagnostic behavior, deterministic inspection, coexistence, and incremental custom-overlay migration.
 - Kept Batch 5 free of game semantics, automatic domain bridges, rules, configuration DSLs, JSON examples, vertical presets, release metadata, version changes, and hardening changes.
+- Prepared `Cargo.toml` and the root `Cargo.lock` for package version `0.8.0`.
+- Added a dated 0.8.0 changelog entry covering the explicit retained HUD API, all four presentation kinds, publication/diagnostic behavior, deterministic inspection, migration guidance, and the unchanged opt-in/domain-neutral boundaries.
+- Updated README and consumer-agent current-version guidance to 0.8 while explicitly avoiding any claim that the crate or `v0.8.0` tag has already been published.
 
 ## Validation
 
@@ -86,6 +90,21 @@
 - Corrected the progress wording from “all four value kinds” to “values for all four presentation kinds”; `HudValue` intentionally has five kinds, including `Bool` for visibility bindings.
 - Re-ran formatting, default/no-default example checks and headless runs, 29 focused HUD tests in each feature mode, all-features rustdoc, local-link validation, Cargo target metadata inspection, and `git diff --check`; all passed.
 
+## Batch 6 Validation — 2026-09-11
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo check --locked --all-targets` — passed at package version 0.8.0.
+- `cargo check --locked --no-default-features --all-targets` — passed at package version 0.8.0.
+- `cargo test --locked` — 274 library tests, 19 integration tests, and 110 doctests passed; 3 doctests ignored.
+- `cargo test --locked --no-default-features` — 227 library tests, 19 integration tests, and 87 doctests passed; 3 doctests ignored.
+- `cargo doc --locked --no-deps` and `cargo doc --locked --no-deps --all-features` — passed. The pre-existing no-default feature-gated link hardening was not changed or rerun because it belongs to Batch 7.
+- `cargo run --locked --example hud` and `cargo run --locked --no-default-features --example hud` — passed headlessly with four retained definitions and unchanged third-frame revisions.
+- `cargo package --locked --offline --allow-dirty --list` — passed; the package list includes `Cargo.lock`, `docs/hud.md`, and `examples/hud.rs`, and excludes `openspec/`.
+- `cargo package --locked --offline --allow-dirty --no-verify` — packaged 121 files (3.6 MiB, 1.5 MiB compressed) as `voxel-framework` 0.8.0.
+- Audited README, AGENTS, crate rustdoc, example metadata, prelude/module exports, and the plugin catalog for explicit `VoxelHudPlugin` composition and the absence of presets, automatic bridges/player discovery, gameplay rules, persistence, or a JSON/config DSL.
+- `git diff --check` — passed.
+- These commands are scoped implementation confidence only; Batch 7 tasks remain unchecked and no independent verification report was created.
+
 ## Remaining
 
-Batch 5 is complete. Batch 6 release metadata remains next, followed by Batch 7 hardening and independent verification. No Batch 6 version/release documentation or Batch 7 hardening work was included.
+Batch 6 is complete. Batch 7 hardening and independent verification remain pending; no verification report, archive, merge, commit, tag, or publish work was included.

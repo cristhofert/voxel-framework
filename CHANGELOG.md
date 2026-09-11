@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-11
+
+### Added
+
+- `VoxelHudPlugin` adds an explicit, non-generic retained HUD renderer backed by
+  author-defined `HudRegistry` definitions and screen-ready `HudValueSet`
+  values.
+- Text, continuous bar, icon, and bounded repeated-segment presentations support
+  nine screen anchors, deterministic ordering, a default theme, and narrow
+  per-element style overrides.
+- `HudSystemSet::Publish` provides a same-frame publication boundary, while
+  compatible fallbacks and transition-deduplicated `HudDiagnostic` messages
+  keep missing, mismatched, invalid, or unavailable-asset inputs non-panicking.
+- Deterministic registry/value snapshots, a feature-independent headless `hud`
+  example, and migration guidance document inspection, coexistence with
+  `UiPlugin`, and element-by-element replacement of custom overlays.
+- The HUD remains an additive, explicit Default Implementation choice: it is
+  not included in `UiPlugin`, `VoxelCorePlugin`, or `VoxelPlugin`, requires no
+  new Cargo feature, and adds no vertical presets, automatic domain bridges or
+  player discovery, gameplay rules, persistence, or JSON/config DSL.
+
 ## [0.7.0] - 2026-09-06
 
 ### Added
