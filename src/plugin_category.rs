@@ -40,6 +40,7 @@ use crate::skybox::SkyboxPlugin;
 use crate::stats::VoxelStatsPlugin;
 use crate::ui::{
     CrosshairPlugin, DebugOverlayPlugin, LoadingScreenPlugin, PauseMenuPlugin, UiPlugin,
+    VoxelHudPlugin,
 };
 #[cfg(feature = "items")]
 use crate::ui::{HotbarUiPlugin, PickupNotificationPlugin};
@@ -169,6 +170,9 @@ impl DefaultImplementationPlugin for DefaultAudioPlugin {}
 
 impl VoxelFrameworkPlugin for UiPlugin {}
 impl DefaultImplementationPlugin for UiPlugin {}
+
+impl VoxelFrameworkPlugin for VoxelHudPlugin {}
+impl DefaultImplementationPlugin for VoxelHudPlugin {}
 
 impl VoxelFrameworkPlugin for CrosshairPlugin {}
 impl DefaultImplementationPlugin for CrosshairPlugin {}

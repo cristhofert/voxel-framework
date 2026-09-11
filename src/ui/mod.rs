@@ -1,9 +1,9 @@
 //! HUD overlay plugins for voxel game user interfaces.
 //!
-//! This module provides four composable overlay plugins plus the author-defined,
-//! game-neutral [`hud`] data model. Each existing plugin is self-contained and
-//! can be added independently; [`UiPlugin`] is an umbrella that adds all four
-//! existing overlays at once using [`DefaultItem`] as the item type.
+//! This module provides four legacy overlay plugins plus the explicit,
+//! author-defined [`VoxelHudPlugin`]. Each plugin is self-contained and can be
+//! added independently; [`UiPlugin`] remains an umbrella for only the four
+//! existing overlays and does not add [`VoxelHudPlugin`].
 //!
 //! # Available plugins
 //!
@@ -13,6 +13,7 @@
 //! | [`LoadingScreenPlugin`] | Full-screen overlay with progress bar while the world loads |
 //! | `HotbarUiPlugin` *(feature `items`)* | Bottom-center row of inventory slots |
 //! | [`PickupNotificationPlugin`] | Timed top-right pop-up text on item pickup |
+//! | [`VoxelHudPlugin`] | Retained, game-neutral text, bar, icon, and segment elements |
 //!
 //! # Choosing between [`UiPlugin`] and individual plugins
 //!
@@ -64,6 +65,14 @@ use crate::world::loading::{LoadingProgress, WorldLoadingState};
 
 /// Author-defined, game-neutral HUD data model and stores.
 pub mod hud;
+pub use hud::{
+    HudAnchor, HudBar, HudBindingKind, HudDefinitionError, HudDiagnostic, HudDiagnosticKind,
+    HudElementDefinition, HudElementId, HudElementSnapshot, HudIcon, HudIconSource, HudPlacement,
+    HudPresentation, HudRegistry, HudRegistryError, HudScalar, HudScalarField, HudSegments,
+    HudStackDirection, HudStyleOverride, HudSystemSet, HudText, HudTheme, HudValue,
+    HudValueChanged, HudValueError, HudValueId, HudValueKind, HudValueSet, HudValueSnapshot,
+    MAX_HUD_SEGMENTS, VoxelHudPlugin, remove_hud_value, set_hud_value,
+};
 
 // ─── Crosshair ────────────────────────────────────────────────────────────────
 

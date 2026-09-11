@@ -130,6 +130,14 @@ pub use crate::items::{
 };
 
 // UI system
+pub use crate::ui::hud::{
+    HudAnchor, HudBar, HudBindingKind, HudDefinitionError, HudDiagnostic, HudDiagnosticKind,
+    HudElementDefinition, HudElementId, HudElementSnapshot, HudIcon, HudIconSource, HudPlacement,
+    HudPresentation, HudRegistry, HudRegistryError, HudScalar, HudScalarField, HudSegments,
+    HudStackDirection, HudStyleOverride, HudSystemSet, HudText, HudTheme, HudValue,
+    HudValueChanged, HudValueError, HudValueId, HudValueKind, HudValueSet, HudValueSnapshot,
+    MAX_HUD_SEGMENTS, VoxelHudPlugin, remove_hud_value, set_hud_value,
+};
 pub use crate::ui::{
     CrosshairConfig, CrosshairPlugin, DebugOverlayPlugin, DebugOverlayState, LoadingScreenConfig,
     LoadingScreenPlugin, PauseMenuConfig, PauseMenuPlugin, PauseMenuState, SaveSettingsRequest,
