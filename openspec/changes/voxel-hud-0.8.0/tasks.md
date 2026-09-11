@@ -17,11 +17,11 @@
 
 ## Batch 3: Retained renderer and wiring
 
-- [ ] 3.1 Add private root/child identity and cached fingerprint/asset-handle components; create retained trees for text, bar, icon, and segments in `src/ui/hud.rs`.
-- [ ] 3.2 Reconcile only registry/theme revisions: preserve roots, prevent duplicates, reparent/reorder placement changes, rebuild only changed presentation children, and resize segment children.
-- [ ] 3.3 Render only relevant value changes and mutate only changed `Text`, `Node`, color, image, and visibility components.
-- [ ] 3.4 Implement `VoxelHudPlugin` resources/messages plus chained `HudSystemSet::{Publish,Reconcile,Render}` in `Update` and `PostStartup`, with a deferred-command barrier.
-- [ ] 3.5 Export/document the API through `src/ui/mod.rs`, `src/prelude.rs`, and crate rustdoc in `src/lib.rs`; classify only `VoxelHudPlugin` in `src/plugin_category.rs` and leave bundles unchanged.
+- [x] 3.1 Add private root/child identity and cached fingerprint/asset-handle components; create retained trees for text, bar, icon, and segments in `src/ui/hud.rs`.
+- [x] 3.2 Reconcile only registry/theme revisions: preserve roots, prevent duplicates, reparent/reorder placement changes, rebuild only changed presentation children, and resize segment children.
+- [x] 3.3 Render only relevant value changes and mutate only changed `Text`, `Node`, color, image, and visibility components.
+- [x] 3.4 Implement `VoxelHudPlugin` resources/messages plus chained `HudSystemSet::{Publish,Reconcile,Render}` in `Update` and `PostStartup`, with a deferred-command barrier.
+- [x] 3.5 Export/document the API through `src/ui/mod.rs`, `src/prelude.rs`, and crate rustdoc in `src/lib.rs`; classify only `VoxelHudPlugin` in `src/plugin_category.rs` and leave bundles unchanged.
 
 ## Batch 4: Tests
 

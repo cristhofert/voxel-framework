@@ -36,7 +36,7 @@
 //! | Engine | Foundation for streamable/renderable voxel worlds | [`world::WorldPlugin`], [`mesh::MeshPlugin`], [`render::RenderPlugin`] |
 //! | World Data | Chunk sources, generation, persistence, lifecycle data | [`generator::GeneratorPlugin`], [`world::PersistencePlugin`] |
 //! | Gameplay | Reusable rules and interactions | [`content::VoxelContentPlugin`], [`stats::VoxelStatsPlugin`], [`effects::VoxelEffectsPlugin`], [`world::mining::MiningPlugin`], [`world::placement::PlacementPlugin`], [`player::PlayerPlugin`] |
-//! | Default Implementation | Replaceable UI/audio/visual defaults | [`ui::UiPlugin`], [`skybox::SkyboxPlugin`], [`audio::DefaultAudioPlugin`] |
+//! | Default Implementation | Replaceable UI/audio/visual defaults | [`ui::UiPlugin`], [`ui::VoxelHudPlugin`], [`skybox::SkyboxPlugin`], [`audio::DefaultAudioPlugin`] |
 //! | Convenience | Compatibility bundles, input adapters, recipes, prototyping helpers | [`VoxelCorePlugin`], [`VoxelPlugin`] |
 //!
 //! These categories are also represented by marker traits in
@@ -52,6 +52,12 @@
 //! over `V: VoxelType` and requires the caller to supply a
 //! [`generator::GeneratorResource`] holding a concrete generator. Add it
 //! separately after either a bundle or explicit engine plugins.
+//!
+//! [`ui::VoxelHudPlugin`] is also explicit and remains outside [`ui::UiPlugin`]
+//! and the convenience bundles. Authors register domain-neutral presentation
+//! definitions, publish screen-ready values, and may schedule same-frame
+//! publishers in [`ui::HudSystemSet::Publish`]. The retained renderer preserves
+//! element identity and safely hides unresolved or unavailable asset inputs.
 //!
 //! ## The Chunk Pipeline
 //!

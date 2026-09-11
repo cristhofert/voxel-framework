@@ -6,9 +6,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use bevy::asset::AssetPath;
+use bevy::asset::{AssetPath, LoadState};
 use bevy::ecs::message::MessageWriter;
-use bevy::prelude::{Message, Resource};
+use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Maximum number of retained children supported by a segments presentation.
@@ -520,7 +520,9 @@ pub enum HudAnchor {
 }
 
 /// Direction in which elements sharing an anchor are stacked.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub enum HudStackDirection {
     /// Lay out elements from left to right.
     Horizontal,
@@ -1145,9 +1147,156 @@ pub struct HudDiagnostic {
     pub kind: HudDiagnosticKind,
 }
 
-// Batch 3's retained renderer consumes the pure resolution layer. Keep these
-// internals private without producing dead-code noise between sequential batches.
-#[allow(dead_code)]
+/// Public scheduling boundary for author publication and retained HUD updates.
+///
+/// Put systems that call [`set_hud_value`] or [`remove_hud_value`] in
+/// [`HudSystemSet::Publish`] when their changes must be visible in the same
+/// update. Reconciliation and rendering are ordered after that set.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HudSystemSet {
+    /// Author-owned systems publish screen-ready values here.
+    Publish,
+    /// Retained entity structure is reconciled after publication.
+    Reconcile,
+    /// Changed resolved state is applied after deferred reconciliation.
+    Render,
+}
+
+/// Explicit, domain-neutral retained renderer for author-defined HUD elements.
+///
+/// The plugin is intentionally independent from [`crate::ui::UiPlugin`] and
+/// every convenience bundle. It can run with `MinimalPlugins`, initializes an
+/// empty HUD, and performs no asset I/O unless a registered presentation
+/// actually references an image path and an [`AssetServer`] is available.
+pub struct VoxelHudPlugin;
+
+impl Plugin for VoxelHudPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<HudRegistry>()
+            .init_resource::<HudValueSet>()
+            .init_resource::<HudTheme>()
+            .init_resource::<HudRuntimeState>()
+            .init_resource::<HudDiagnosticTracker>()
+            .init_resource::<HudAssetCache>()
+            .add_message::<HudValueChanged>()
+            .add_message::<HudDiagnostic>()
+            .configure_sets(
+                Update,
+                (
+                    HudSystemSet::Publish,
+                    HudSystemSet::Reconcile,
+                    HudSystemSet::Render,
+                )
+                    .chain(),
+            )
+            .configure_sets(
+                PostStartup,
+                (
+                    HudSystemSet::Publish,
+                    HudSystemSet::Reconcile,
+                    HudSystemSet::Render,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                PostStartup,
+                (
+                    reconcile_hud_entities.in_set(HudSystemSet::Reconcile),
+                    ApplyDeferred,
+                    render_hud_entities.in_set(HudSystemSet::Render),
+                )
+                    .chain(),
+            )
+            .add_systems(
+                Update,
+                (
+                    reconcile_hud_entities.in_set(HudSystemSet::Reconcile),
+                    ApplyDeferred,
+                    render_hud_entities.in_set(HudSystemSet::Render),
+                )
+                    .chain(),
+            );
+    }
+}
+
+#[derive(Component)]
+struct HudCanvas;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct HudAnchorKey {
+    anchor: HudAnchor,
+    direction: HudStackDirection,
+}
+
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+struct HudAnchorRoot(HudAnchorKey);
+
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct HudElementRoot(HudElementId);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HudTreeKind {
+    Text,
+    Bar,
+    Icon,
+    Segments(u32),
+}
+
+impl HudTreeKind {
+    fn from_presentation(presentation: &HudPresentation) -> Self {
+        match presentation {
+            HudPresentation::Text(_) => Self::Text,
+            HudPresentation::Bar(_) => Self::Bar,
+            HudPresentation::Icon(_) => Self::Icon,
+            HudPresentation::Segments(segments) => Self::Segments(segments.capacity()),
+        }
+    }
+}
+
+#[derive(Component, Debug, Clone, PartialEq)]
+struct HudDefinitionFingerprint {
+    definition: HudElementSnapshot,
+    tree: HudTreeKind,
+}
+
+#[derive(Component, Debug, Default, Clone, PartialEq)]
+struct HudResolvedFingerprint(Option<ResolvedHudElement>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HudChildKind {
+    Text,
+    BarTrack,
+    BarFill,
+    Icon,
+    Segment(u32),
+}
+
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct HudChildIdentity {
+    element: HudElementId,
+    kind: HudChildKind,
+}
+
+#[derive(Component, Debug, Default, Clone, PartialEq)]
+struct HudCachedImage {
+    path: Option<AssetPath<'static>>,
+    handle: Option<Handle<Image>>,
+}
+
+#[derive(Resource, Debug, Default)]
+struct HudRuntimeState {
+    registry_revision: Option<u64>,
+    value_revision: Option<u64>,
+    render_all: bool,
+    pending_assets: bool,
+    asset_server_present: bool,
+}
+
+#[derive(Resource, Debug, Default)]
+struct HudAssetCache {
+    handles: HashMap<AssetPath<'static>, Handle<Image>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HudAxisAnchor {
     Start,
@@ -1155,7 +1304,6 @@ enum HudAxisAnchor {
     End,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 struct ResolvedHudLayout {
     anchor: HudAnchor,
@@ -1166,7 +1314,6 @@ struct ResolvedHudLayout {
     order: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 struct ResolvedHudStyle {
     font_size: f32,
@@ -1181,7 +1328,6 @@ struct ResolvedHudStyle {
     z_index: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum ResolvedHudPresentation {
     Text(String),
@@ -1199,7 +1345,6 @@ enum ResolvedHudPresentation {
     },
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 struct ResolvedHudElement {
     id: HudElementId,
@@ -1210,13 +1355,11 @@ struct ResolvedHudElement {
     presentation: ResolvedHudPresentation,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Default)]
+#[derive(Resource, Debug, Default)]
 struct HudDiagnosticTracker {
     active_by_element: HashMap<HudElementId, HudDiagnosticKind>,
 }
 
-#[allow(dead_code)]
 impl HudDiagnosticTracker {
     fn transition(
         &mut self,
@@ -1244,7 +1387,6 @@ impl HudDiagnosticTracker {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct ResolvedHud {
     elements: Vec<ResolvedHudElement>,
@@ -1289,7 +1431,758 @@ pub fn remove_hud_value(
     true
 }
 
-#[allow(dead_code)]
+const HUD_ANCHORS: [HudAnchor; 9] = [
+    HudAnchor::TopLeft,
+    HudAnchor::TopCenter,
+    HudAnchor::TopRight,
+    HudAnchor::CenterLeft,
+    HudAnchor::Center,
+    HudAnchor::CenterRight,
+    HudAnchor::BottomLeft,
+    HudAnchor::BottomCenter,
+    HudAnchor::BottomRight,
+];
+const HUD_STACK_DIRECTIONS: [HudStackDirection; 2] =
+    [HudStackDirection::Horizontal, HudStackDirection::Vertical];
+
+fn hud_anchor_keys() -> impl Iterator<Item = HudAnchorKey> {
+    HUD_ANCHORS.into_iter().flat_map(|anchor| {
+        HUD_STACK_DIRECTIONS
+            .into_iter()
+            .map(move |direction| HudAnchorKey { anchor, direction })
+    })
+}
+
+fn reconcile_hud_entities(
+    mut commands: Commands,
+    registry: Res<HudRegistry>,
+    theme: Res<HudTheme>,
+    mut runtime: ResMut<HudRuntimeState>,
+    canvases: Query<(Entity, Option<&Children>), With<HudCanvas>>,
+    anchors: Query<(Entity, &HudAnchorRoot, Option<&Children>, Option<&ChildOf>)>,
+    roots: Query<(
+        Entity,
+        &HudElementRoot,
+        &HudDefinitionFingerprint,
+        Option<&Children>,
+    )>,
+    child_identities: Query<&HudChildIdentity>,
+) {
+    let structure_missing = canvases.iter().count() != 1 || anchors.iter().count() != 18;
+    if runtime.registry_revision == Some(registry.revision())
+        && !theme.is_changed()
+        && !structure_missing
+    {
+        return;
+    }
+
+    let mut canvas_entities: Vec<_> = canvases
+        .iter()
+        .map(|(entity, children)| (entity, children.map(|children| children.to_vec())))
+        .collect();
+    canvas_entities.sort_by_key(|(entity, _)| entity.to_bits());
+    let canvas_children = canvas_entities
+        .first()
+        .and_then(|(_, children)| children.clone())
+        .unwrap_or_default();
+    let canvas = canvas_entities
+        .first()
+        .map(|(entity, _)| *entity)
+        .unwrap_or_else(|| {
+            commands
+                .spawn((
+                    HudCanvas,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                ))
+                .id()
+        });
+    for (duplicate, children) in canvas_entities.into_iter().skip(1) {
+        for child in children.into_iter().flatten() {
+            commands.entity(canvas).add_child(child);
+        }
+        commands.entity(duplicate).despawn();
+    }
+
+    let mut anchors_by_kind: HashMap<HudAnchorKey, Vec<(Entity, Vec<Entity>, Option<Entity>)>> =
+        HashMap::new();
+    for (entity, anchor, children, parent) in &anchors {
+        anchors_by_kind.entry(anchor.0).or_default().push((
+            entity,
+            children.map_or_else(Vec::new, |children| children.to_vec()),
+            parent.map(ChildOf::parent),
+        ));
+    }
+
+    let mut anchor_entities = HashMap::new();
+    let mut anchor_children = HashMap::new();
+    for key in hud_anchor_keys() {
+        let mut candidates = anchors_by_kind.remove(&key).unwrap_or_default();
+        candidates.sort_by_key(|(entity, _, _)| entity.to_bits());
+        let anchor_entity = candidates
+            .first()
+            .map(|(entity, _, _)| *entity)
+            .unwrap_or_else(|| {
+                commands
+                    .spawn((HudAnchorRoot(key), anchor_node(key), ChildOf(canvas)))
+                    .id()
+            });
+        anchor_children.insert(
+            key,
+            candidates
+                .first()
+                .map(|(_, children, _)| children.clone())
+                .unwrap_or_default(),
+        );
+
+        if candidates.first().and_then(|(_, _, parent)| *parent) != Some(canvas) {
+            commands.entity(canvas).add_child(anchor_entity);
+        }
+        for (duplicate, children, _) in candidates.into_iter().skip(1) {
+            for child in children {
+                commands.entity(anchor_entity).add_child(child);
+            }
+            commands.entity(duplicate).despawn();
+        }
+        anchor_entities.insert(key, anchor_entity);
+    }
+    let ordered_anchors: Vec<_> = hud_anchor_keys().map(|key| anchor_entities[&key]).collect();
+    if canvas_children != ordered_anchors {
+        commands.entity(canvas).replace_children(&ordered_anchors);
+    }
+
+    let mut root_candidates: HashMap<
+        HudElementId,
+        Vec<(Entity, HudDefinitionFingerprint, Vec<Entity>)>,
+    > = HashMap::new();
+    for (entity, root, fingerprint, children) in &roots {
+        root_candidates.entry(root.0.clone()).or_default().push((
+            entity,
+            fingerprint.clone(),
+            children.map_or_else(Vec::new, |children| children.to_vec()),
+        ));
+    }
+    for candidates in root_candidates.values_mut() {
+        candidates.sort_by_key(|(entity, _, _)| entity.to_bits());
+    }
+
+    let mut definitions: Vec<_> = registry.iter().collect();
+    definitions.sort_by(|left, right| {
+        left.placement
+            .anchor
+            .cmp(&right.placement.anchor)
+            .then_with(|| left.order.cmp(&right.order))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let active_ids: HashSet<_> = definitions
+        .iter()
+        .map(|definition| definition.id().clone())
+        .collect();
+
+    for (id, candidates) in &root_candidates {
+        if !active_ids.contains(id) {
+            for (entity, _, _) in candidates {
+                commands.entity(*entity).despawn();
+            }
+        } else {
+            for (entity, _, _) in candidates.iter().skip(1) {
+                commands.entity(*entity).despawn();
+            }
+        }
+    }
+
+    let mut roots_by_id = HashMap::new();
+    for definition in &definitions {
+        let id = definition.id().clone();
+        let tree = HudTreeKind::from_presentation(definition.presentation());
+        let snapshot = definition.snapshot();
+        let root = if let Some((entity, old_fingerprint, children)) = root_candidates
+            .get(&id)
+            .and_then(|candidates| candidates.first())
+        {
+            reconcile_hud_tree(
+                &mut commands,
+                *entity,
+                &id,
+                old_fingerprint.tree,
+                tree,
+                children,
+                &child_identities,
+            );
+            if old_fingerprint.definition != snapshot || old_fingerprint.tree != tree {
+                commands.entity(*entity).insert(HudDefinitionFingerprint {
+                    definition: snapshot,
+                    tree,
+                });
+            }
+            *entity
+        } else {
+            let entity = commands
+                .spawn((
+                    HudElementRoot(id.clone()),
+                    HudDefinitionFingerprint {
+                        definition: snapshot,
+                        tree,
+                    },
+                    HudResolvedFingerprint::default(),
+                    Node::default(),
+                    UiTransform::default(),
+                    BackgroundColor(Color::NONE),
+                    Visibility::Hidden,
+                    ZIndex(0),
+                ))
+                .id();
+            spawn_hud_tree(&mut commands, entity, &id, tree);
+            entity
+        };
+        roots_by_id.insert(id, root);
+    }
+
+    let mut desired_by_anchor: HashMap<HudAnchorKey, Vec<Entity>> = HashMap::new();
+    for definition in definitions {
+        let placement = definition.placement_value();
+        desired_by_anchor
+            .entry(HudAnchorKey {
+                anchor: placement.anchor,
+                direction: placement.stack_direction,
+            })
+            .or_default()
+            .push(roots_by_id[definition.id()]);
+    }
+    for key in hud_anchor_keys() {
+        let desired = desired_by_anchor.remove(&key).unwrap_or_default();
+        if anchor_children[&key] != desired {
+            commands
+                .entity(anchor_entities[&key])
+                .replace_children(&desired);
+        }
+    }
+
+    runtime.registry_revision = Some(registry.revision());
+    runtime.render_all = true;
+}
+
+fn anchor_node(key: HudAnchorKey) -> Node {
+    let horizontal = match key.anchor {
+        HudAnchor::TopLeft | HudAnchor::CenterLeft | HudAnchor::BottomLeft => HudAxisAnchor::Start,
+        HudAnchor::TopCenter | HudAnchor::Center | HudAnchor::BottomCenter => HudAxisAnchor::Center,
+        HudAnchor::TopRight | HudAnchor::CenterRight | HudAnchor::BottomRight => HudAxisAnchor::End,
+    };
+    let vertical = match key.anchor {
+        HudAnchor::TopLeft | HudAnchor::TopCenter | HudAnchor::TopRight => HudAxisAnchor::Start,
+        HudAnchor::CenterLeft | HudAnchor::Center | HudAnchor::CenterRight => HudAxisAnchor::Center,
+        HudAnchor::BottomLeft | HudAnchor::BottomCenter | HudAnchor::BottomRight => {
+            HudAxisAnchor::End
+        }
+    };
+    let axis_to_align = |axis| match axis {
+        HudAxisAnchor::Start => AlignItems::FlexStart,
+        HudAxisAnchor::Center => AlignItems::Center,
+        HudAxisAnchor::End => AlignItems::FlexEnd,
+    };
+    let axis_to_justify = |axis| match axis {
+        HudAxisAnchor::Start => JustifyContent::FlexStart,
+        HudAxisAnchor::Center => JustifyContent::Center,
+        HudAxisAnchor::End => JustifyContent::FlexEnd,
+    };
+    let (align_items, justify_content) = match key.direction {
+        HudStackDirection::Horizontal => (axis_to_align(vertical), axis_to_justify(horizontal)),
+        HudStackDirection::Vertical => (axis_to_align(horizontal), axis_to_justify(vertical)),
+    };
+    Node {
+        position_type: PositionType::Absolute,
+        width: Val::Percent(100.0),
+        height: Val::Percent(100.0),
+        flex_direction: match key.direction {
+            HudStackDirection::Horizontal => FlexDirection::Row,
+            HudStackDirection::Vertical => FlexDirection::Column,
+        },
+        align_items,
+        justify_content,
+        ..default()
+    }
+}
+
+fn reconcile_hud_tree(
+    commands: &mut Commands,
+    root: Entity,
+    id: &HudElementId,
+    old: HudTreeKind,
+    new: HudTreeKind,
+    children: &[Entity],
+    child_identities: &Query<&HudChildIdentity>,
+) {
+    match (old, new) {
+        (HudTreeKind::Segments(_), HudTreeKind::Segments(capacity)) => {
+            let mut segments = Vec::new();
+            let mut malformed = false;
+            for child in children {
+                match child_identities.get(*child) {
+                    Ok(HudChildIdentity {
+                        element,
+                        kind: HudChildKind::Segment(index),
+                    }) if element == id => segments.push((*index, *child)),
+                    _ => malformed = true,
+                }
+            }
+            segments.sort_by_key(|(index, entity)| (*index, entity.to_bits()));
+            let unique = segments.windows(2).all(|pair| pair[0].0 != pair[1].0);
+            if malformed || !unique {
+                commands.entity(root).despawn_children();
+                spawn_hud_tree(commands, root, id, new);
+                return;
+            }
+
+            let mut desired = Vec::with_capacity(capacity as usize);
+            for index in 0..capacity {
+                if let Some((_, entity)) = segments.iter().find(|(existing, _)| *existing == index)
+                {
+                    desired.push(*entity);
+                } else {
+                    desired.push(spawn_segment(commands, root, id, index));
+                }
+            }
+            for (index, entity) in segments {
+                if index >= capacity {
+                    commands.entity(entity).despawn();
+                }
+            }
+            commands.entity(root).replace_children(&desired);
+        }
+        (HudTreeKind::Text, HudTreeKind::Text)
+        | (HudTreeKind::Bar, HudTreeKind::Bar)
+        | (HudTreeKind::Icon, HudTreeKind::Icon) => {}
+        _ => {
+            commands.entity(root).despawn_children();
+            spawn_hud_tree(commands, root, id, new);
+        }
+    }
+}
+
+fn spawn_hud_tree(commands: &mut Commands, root: Entity, id: &HudElementId, tree: HudTreeKind) {
+    match tree {
+        HudTreeKind::Text => {
+            commands.spawn((
+                HudChildIdentity {
+                    element: id.clone(),
+                    kind: HudChildKind::Text,
+                },
+                Text::new(""),
+                TextFont::default(),
+                TextColor(Color::WHITE),
+                Node::default(),
+                ChildOf(root),
+            ));
+        }
+        HudTreeKind::Bar => {
+            let track = commands
+                .spawn((
+                    HudChildIdentity {
+                        element: id.clone(),
+                        kind: HudChildKind::BarTrack,
+                    },
+                    Node::default(),
+                    BackgroundColor(Color::NONE),
+                    ChildOf(root),
+                ))
+                .id();
+            commands.spawn((
+                HudChildIdentity {
+                    element: id.clone(),
+                    kind: HudChildKind::BarFill,
+                },
+                Node::default(),
+                BackgroundColor(Color::NONE),
+                ChildOf(track),
+            ));
+        }
+        HudTreeKind::Icon => {
+            commands.spawn((
+                HudChildIdentity {
+                    element: id.clone(),
+                    kind: HudChildKind::Icon,
+                },
+                HudCachedImage::default(),
+                Node::default(),
+                ImageNode::default(),
+                ChildOf(root),
+            ));
+        }
+        HudTreeKind::Segments(capacity) => {
+            for index in 0..capacity {
+                spawn_segment(commands, root, id, index);
+            }
+        }
+    }
+}
+
+fn spawn_segment(commands: &mut Commands, root: Entity, id: &HudElementId, index: u32) -> Entity {
+    commands
+        .spawn((
+            HudChildIdentity {
+                element: id.clone(),
+                kind: HudChildKind::Segment(index),
+            },
+            HudCachedImage::default(),
+            Node::default(),
+            BackgroundColor(Color::NONE),
+            ImageNode::default(),
+            ChildOf(root),
+        ))
+        .id()
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn render_hud_entities(
+    registry: Res<HudRegistry>,
+    values: Res<HudValueSet>,
+    theme: Res<HudTheme>,
+    asset_server: Option<Res<AssetServer>>,
+    mut asset_cache: ResMut<HudAssetCache>,
+    mut runtime: ResMut<HudRuntimeState>,
+    mut tracker: ResMut<HudDiagnosticTracker>,
+    mut diagnostics: MessageWriter<HudDiagnostic>,
+    mut roots: Query<
+        (
+            &HudElementRoot,
+            &mut HudResolvedFingerprint,
+            &mut Node,
+            &mut UiTransform,
+            &mut BackgroundColor,
+            &mut Visibility,
+            &mut ZIndex,
+        ),
+        Without<HudChildIdentity>,
+    >,
+    mut children: Query<
+        (
+            &HudChildIdentity,
+            &mut Node,
+            Option<&mut Text>,
+            Option<&mut TextFont>,
+            Option<&mut TextColor>,
+            Option<&mut BackgroundColor>,
+            Option<&mut ImageNode>,
+            Option<&mut HudCachedImage>,
+        ),
+        Without<HudElementRoot>,
+    >,
+) {
+    let asset_server_present = asset_server.is_some();
+    if !runtime.render_all
+        && runtime.value_revision == Some(values.revision())
+        && !runtime.pending_assets
+        && runtime.asset_server_present == asset_server_present
+    {
+        return;
+    }
+
+    let mut pending_assets = false;
+    let mut touched_assets = HashSet::new();
+    let resolved = resolve_hud(
+        &registry,
+        &values,
+        &theme,
+        |path| {
+            touched_assets.insert(path.clone().into_owned());
+            asset_server.as_ref().is_some_and(|server| {
+                asset_cache.ensure_available(path, server, &mut pending_assets)
+            })
+        },
+        &mut tracker,
+    );
+    asset_cache
+        .handles
+        .retain(|path, _| touched_assets.contains(path));
+    for diagnostic in resolved.diagnostics.iter().cloned() {
+        diagnostics.write(diagnostic);
+    }
+
+    let resolved_by_id: HashMap<_, _> = resolved
+        .elements
+        .iter()
+        .map(|element| (element.id.clone(), element))
+        .collect();
+    let mut changed_elements = HashSet::new();
+    for (
+        root,
+        mut fingerprint,
+        mut node,
+        mut transform,
+        mut background,
+        mut visibility,
+        mut z_index,
+    ) in &mut roots
+    {
+        let Some(element) = resolved_by_id.get(&root.0).copied() else {
+            continue;
+        };
+        if fingerprint.0.as_ref() == Some(element) {
+            continue;
+        }
+
+        replace_if_changed(&mut node, hud_root_node(element));
+        replace_if_changed(&mut transform, hud_root_transform(&element.layout));
+        replace_if_changed(
+            &mut background,
+            BackgroundColor(root_background_color(element)),
+        );
+        replace_if_changed(
+            &mut visibility,
+            if element.visible {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+        );
+        replace_if_changed(&mut z_index, ZIndex(element.style.z_index));
+        fingerprint.0 = Some(element.clone());
+        changed_elements.insert(root.0.clone());
+    }
+
+    for (identity, mut node, text, font, text_color, background, image, cached_image) in
+        &mut children
+    {
+        if !changed_elements.contains(&identity.element) {
+            continue;
+        }
+        let Some(element) = resolved_by_id.get(&identity.element).copied() else {
+            continue;
+        };
+        render_hud_child(
+            identity.kind,
+            element,
+            &asset_cache,
+            &mut node,
+            text,
+            font,
+            text_color,
+            background,
+            image,
+            cached_image,
+        );
+    }
+
+    runtime.value_revision = Some(values.revision());
+    runtime.render_all = false;
+    runtime.pending_assets = pending_assets;
+    runtime.asset_server_present = asset_server_present;
+}
+
+impl HudAssetCache {
+    fn ensure_available(
+        &mut self,
+        path: &AssetPath<'static>,
+        asset_server: &AssetServer,
+        pending: &mut bool,
+    ) -> bool {
+        let handle = self
+            .handles
+            .entry(path.clone().into_owned())
+            .or_insert_with(|| asset_server.load::<Image>(path.clone().into_owned()));
+        match asset_server.load_state(handle.id()) {
+            LoadState::Loaded => true,
+            LoadState::NotLoaded | LoadState::Loading => {
+                *pending = true;
+                false
+            }
+            LoadState::Failed(_) => false,
+        }
+    }
+
+    fn handle(&self, path: &AssetPath<'static>) -> Option<Handle<Image>> {
+        self.handles.get(path).cloned()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_hud_child(
+    kind: HudChildKind,
+    element: &ResolvedHudElement,
+    asset_cache: &HudAssetCache,
+    node: &mut Mut<Node>,
+    mut text: Option<Mut<Text>>,
+    mut font: Option<Mut<TextFont>>,
+    mut text_color: Option<Mut<TextColor>>,
+    mut background: Option<Mut<BackgroundColor>>,
+    mut image: Option<Mut<ImageNode>>,
+    mut cached_image: Option<Mut<HudCachedImage>>,
+) {
+    match (kind, &element.presentation) {
+        (HudChildKind::Text, ResolvedHudPresentation::Text(value)) => {
+            replace_if_changed(node, Node::default());
+            if let Some(text) = text.as_mut() {
+                replace_if_changed(text, Text::new(value.clone()));
+            }
+            if let Some(font) = font.as_mut() {
+                replace_if_changed(font, TextFont::from_font_size(element.style.font_size));
+            }
+            if let Some(text_color) = text_color.as_mut() {
+                replace_if_changed(
+                    text_color,
+                    TextColor(color_from_array(element.style.text_color)),
+                );
+            }
+        }
+        (HudChildKind::BarTrack, ResolvedHudPresentation::Bar { .. }) => {
+            replace_if_changed(
+                node,
+                Node {
+                    width: Val::Px(element.style.bar_size[0]),
+                    height: Val::Px(element.style.bar_size[1]),
+                    ..default()
+                },
+            );
+            if let Some(background) = background.as_mut() {
+                replace_if_changed(
+                    background,
+                    BackgroundColor(color_from_array(element.style.background_color)),
+                );
+            }
+        }
+        (HudChildKind::BarFill, ResolvedHudPresentation::Bar { ratio }) => {
+            replace_if_changed(
+                node,
+                Node {
+                    width: Val::Px(element.style.bar_size[0] * ratio),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+            );
+            if let Some(background) = background.as_mut() {
+                replace_if_changed(
+                    background,
+                    BackgroundColor(color_from_array(element.style.foreground_color)),
+                );
+            }
+        }
+        (HudChildKind::Icon, ResolvedHudPresentation::Icon { path }) => {
+            replace_if_changed(
+                node,
+                Node {
+                    width: Val::Px(element.style.icon_size[0]),
+                    height: Val::Px(element.style.icon_size[1]),
+                    ..default()
+                },
+            );
+            render_image(path.as_ref(), asset_cache, &mut image, &mut cached_image);
+        }
+        (
+            HudChildKind::Segment(index),
+            ResolvedHudPresentation::Segments {
+                filled,
+                filled_asset,
+                empty_asset,
+                ..
+            },
+        ) => {
+            replace_if_changed(
+                node,
+                Node {
+                    width: Val::Px(element.style.segment_size[0]),
+                    height: Val::Px(element.style.segment_size[1]),
+                    ..default()
+                },
+            );
+            let is_filled = index < *filled;
+            let path = if is_filled {
+                filled_asset.as_ref()
+            } else {
+                empty_asset.as_ref()
+            };
+            render_image(path, asset_cache, &mut image, &mut cached_image);
+            if let Some(background) = background.as_mut() {
+                let color = if path.is_some() {
+                    Color::NONE
+                } else if is_filled {
+                    color_from_array(element.style.foreground_color)
+                } else {
+                    color_from_array(element.style.background_color)
+                };
+                replace_if_changed(background, BackgroundColor(color));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn render_image(
+    path: Option<&AssetPath<'static>>,
+    asset_cache: &HudAssetCache,
+    image: &mut Option<Mut<ImageNode>>,
+    cached: &mut Option<Mut<HudCachedImage>>,
+) {
+    let handle = path.and_then(|path| asset_cache.handle(path));
+    let next = HudCachedImage {
+        path: path.cloned(),
+        handle: handle.clone(),
+    };
+    let changed = cached.as_ref().is_none_or(|cached| **cached != next);
+    if changed && let Some(image) = image.as_mut() {
+        **image = handle
+            .map(ImageNode::new)
+            .unwrap_or_else(ImageNode::default);
+    }
+    if let Some(cached) = cached.as_mut() {
+        replace_if_changed(cached, next);
+    }
+}
+
+fn hud_root_node(element: &ResolvedHudElement) -> Node {
+    let mut node = Node {
+        flex_direction: FlexDirection::Row,
+        padding: UiRect {
+            left: Val::Px(element.style.padding[0]),
+            right: Val::Px(element.style.padding[1]),
+            top: Val::Px(element.style.padding[2]),
+            bottom: Val::Px(element.style.padding[3]),
+        },
+        row_gap: Val::Px(element.style.gap),
+        column_gap: Val::Px(element.style.gap),
+        ..default()
+    };
+    match element.layout.horizontal {
+        HudAxisAnchor::Start | HudAxisAnchor::Center => {
+            node.margin.left = Val::Px(element.layout.offset[0]);
+        }
+        HudAxisAnchor::End => node.margin.right = Val::Px(element.layout.offset[0]),
+    }
+    match element.layout.vertical {
+        HudAxisAnchor::Start | HudAxisAnchor::Center => {
+            node.margin.top = Val::Px(element.layout.offset[1]);
+        }
+        HudAxisAnchor::End => node.margin.bottom = Val::Px(element.layout.offset[1]),
+    }
+    node
+}
+
+fn hud_root_transform(_layout: &ResolvedHudLayout) -> UiTransform {
+    UiTransform::default()
+}
+
+fn root_background_color(element: &ResolvedHudElement) -> Color {
+    match element.presentation {
+        ResolvedHudPresentation::Bar { .. } | ResolvedHudPresentation::Segments { .. } => {
+            Color::NONE
+        }
+        _ => color_from_array(element.style.background_color),
+    }
+}
+
+fn color_from_array(color: [f32; 4]) -> Color {
+    Color::linear_rgba(color[0], color[1], color[2], color[3])
+}
+
+fn replace_if_changed<T: PartialEq>(current: &mut Mut<T>, next: T) {
+    if **current != next {
+        **current = next;
+    }
+}
+
 fn resolve_hud(
     registry: &HudRegistry,
     values: &HudValueSet,
@@ -1324,7 +2217,6 @@ fn resolve_hud(
     resolved
 }
 
-#[allow(dead_code)]
 fn resolve_hud_element(
     definition: &HudElementDefinition,
     values: &HudValueSet,
@@ -1426,7 +2318,6 @@ fn resolve_hud_element(
     }
 }
 
-#[allow(dead_code)]
 enum PresentationResolution {
     Visible {
         presentation: ResolvedHudPresentation,
@@ -1438,7 +2329,6 @@ enum PresentationResolution {
     },
 }
 
-#[allow(dead_code)]
 fn resolve_presentation(
     definition: &HudElementDefinition,
     values: &HudValueSet,
@@ -1500,7 +2390,6 @@ fn resolve_presentation(
     }
 }
 
-#[allow(dead_code)]
 fn resolve_with_value(
     presentation: &HudPresentation,
     value: Option<&HudValue>,
@@ -1576,7 +2465,6 @@ fn resolve_with_value(
     }
 }
 
-#[allow(dead_code)]
 fn format_text_value(text: &HudText, value: &HudValue) -> String {
     let value = match value {
         HudValue::Text(value) => value.clone(),
@@ -1591,7 +2479,6 @@ fn format_text_value(text: &HudText, value: &HudValue) -> String {
     format!("{}{}{}", text.prefix_value(), value, text.suffix_value())
 }
 
-#[allow(dead_code)]
 fn resolve_visibility(
     definition: &HudElementDefinition,
     values: &HudValueSet,
@@ -1613,7 +2500,6 @@ fn resolve_visibility(
     }
 }
 
-#[allow(dead_code)]
 fn resolve_layout(definition: &HudElementDefinition) -> ResolvedHudLayout {
     let placement = definition.placement_value();
     let (horizontal, vertical) = match placement.anchor {
@@ -1637,7 +2523,6 @@ fn resolve_layout(definition: &HudElementDefinition) -> ResolvedHudLayout {
     }
 }
 
-#[allow(dead_code)]
 fn safe_default_layout() -> ResolvedHudLayout {
     ResolvedHudLayout {
         anchor: HudAnchor::TopLeft,
@@ -1649,7 +2534,6 @@ fn safe_default_layout() -> ResolvedHudLayout {
     }
 }
 
-#[allow(dead_code)]
 fn resolve_style(
     theme: &HudTheme,
     style: &HudStyleOverride,
@@ -1670,7 +2554,6 @@ fn resolve_style(
     Ok(resolved)
 }
 
-#[allow(dead_code)]
 fn validate_resolved_style(style: &ResolvedHudStyle) -> Result<(), &'static str> {
     for (field, values) in [
         ("padding", style.padding.as_slice()),
@@ -1702,7 +2585,6 @@ fn validate_resolved_style(style: &ResolvedHudStyle) -> Result<(), &'static str>
     Ok(())
 }
 
-#[allow(dead_code)]
 fn safe_default_style() -> ResolvedHudStyle {
     let theme = HudTheme::default();
     ResolvedHudStyle {
@@ -1719,7 +2601,6 @@ fn safe_default_style() -> ResolvedHudStyle {
     }
 }
 
-#[allow(dead_code)]
 fn safe_presentation(presentation: &HudPresentation) -> ResolvedHudPresentation {
     match presentation {
         HudPresentation::Text(_) => ResolvedHudPresentation::Text(String::new()),
@@ -2614,5 +3495,338 @@ mod tests {
         assert_resource::<HudTheme>();
         assert_message::<HudValueChanged>();
         assert_message::<HudDiagnostic>();
+    }
+
+    fn root_for(app: &mut App, id: &str) -> Entity {
+        let mut query = app.world_mut().query::<(Entity, &HudElementRoot)>();
+        let matches: Vec<_> = query
+            .iter(app.world())
+            .filter_map(|(entity, root)| (root.0.as_str() == id).then_some(entity))
+            .collect();
+        assert_eq!(matches.len(), 1, "expected exactly one root for {id}");
+        matches[0]
+    }
+
+    fn children_for(app: &mut App, id: &str) -> Vec<(HudChildKind, Entity)> {
+        let mut query = app.world_mut().query::<(Entity, &HudChildIdentity)>();
+        let mut matches: Vec<_> = query
+            .iter(app.world())
+            .filter_map(|(entity, child)| {
+                (child.element.as_str() == id).then_some((child.kind, entity))
+            })
+            .collect();
+        matches.sort_by_key(|(kind, entity)| (format!("{kind:?}"), entity.to_bits()));
+        matches
+    }
+
+    #[test]
+    fn retained_renderer_preserves_roots_and_reconciles_only_changed_children() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .register(text_definition("status", "status_value"))
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("status_value", "ready");
+
+        app.update();
+        let root = root_for(&mut app, "status");
+        let text_child = children_for(&mut app, "status")
+            .into_iter()
+            .find_map(|(kind, entity)| (kind == HudChildKind::Text).then_some(entity))
+            .unwrap();
+        assert_eq!(app.world().get::<Text>(text_child).unwrap().0, "ready");
+
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("status_value", "updated");
+        app.update();
+        assert_eq!(root_for(&mut app, "status"), root);
+        assert_eq!(app.world().get::<Text>(text_child).unwrap().0, "updated");
+
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .insert_or_replace(text_definition("status", "status_value").order(5).style(
+                HudStyleOverride {
+                    font_size: Some(24.0),
+                    ..default()
+                },
+            ))
+            .unwrap();
+        app.update();
+        assert_eq!(root_for(&mut app, "status"), root);
+        assert_eq!(
+            children_for(&mut app, "status"),
+            vec![(HudChildKind::Text, text_child)]
+        );
+
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .insert_or_replace(HudElementDefinition::new(
+                "status",
+                HudPresentation::Segments(HudSegments::new("charges", 3)),
+            ))
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("charges", 2_u32);
+        app.update();
+        assert_eq!(root_for(&mut app, "status"), root);
+        assert!(app.world().get_entity(text_child).is_err());
+        let first_segments = children_for(&mut app, "status");
+        assert_eq!(first_segments.len(), 3);
+
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .insert_or_replace(HudElementDefinition::new(
+                "status",
+                HudPresentation::Segments(HudSegments::new("charges", 5)),
+            ))
+            .unwrap();
+        app.update();
+        assert_eq!(root_for(&mut app, "status"), root);
+        let resized = children_for(&mut app, "status");
+        assert_eq!(resized.len(), 5);
+        for (kind, entity) in first_segments {
+            assert!(resized.contains(&(kind, entity)));
+        }
+
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .remove("status")
+            .unwrap();
+        app.update();
+        let mut query = app.world_mut().query::<&HudElementRoot>();
+        assert_eq!(query.iter(app.world()).count(), 0);
+        assert!(app.world().get_entity(root).is_err());
+    }
+
+    #[test]
+    fn bar_render_transition_mutates_fill_without_rebuilding_tree() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .register(HudElementDefinition::new(
+                "energy",
+                HudPresentation::Bar(HudBar::new("energy-value")),
+            ))
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("energy-value", HudScalar::new(25.0, 0.0, 100.0).unwrap());
+        app.update();
+
+        let root = root_for(&mut app, "energy");
+        let fill = children_for(&mut app, "energy")
+            .into_iter()
+            .find_map(|(kind, entity)| (kind == HudChildKind::BarFill).then_some(entity))
+            .unwrap();
+        assert_eq!(app.world().get::<Node>(fill).unwrap().width, Val::Px(55.0));
+
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("energy-value", HudScalar::new(75.0, 0.0, 100.0).unwrap());
+        app.update();
+
+        assert_eq!(root_for(&mut app, "energy"), root);
+        assert!(children_for(&mut app, "energy").contains(&(HudChildKind::BarFill, fill)));
+        assert_eq!(app.world().get::<Node>(fill).unwrap().width, Val::Px(165.0));
+    }
+
+    #[test]
+    fn reconciliation_orders_ties_and_reparents_without_replacing_roots() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        for id in ["zeta", "alpha"] {
+            app.world_mut()
+                .resource_mut::<HudRegistry>()
+                .register(
+                    text_definition(id, id)
+                        .order(7)
+                        .placement(HudPlacement::new(HudAnchor::BottomRight)),
+                )
+                .unwrap();
+            app.world_mut()
+                .resource_mut::<HudValueSet>()
+                .insert_or_replace(id, id);
+        }
+        app.update();
+
+        let alpha = root_for(&mut app, "alpha");
+        let zeta = root_for(&mut app, "zeta");
+        let mut anchors = app
+            .world_mut()
+            .query::<(Entity, &HudAnchorRoot, &Children)>();
+        let bottom_right = anchors
+            .iter(app.world())
+            .find(|(_, anchor, _)| {
+                anchor.0
+                    == HudAnchorKey {
+                        anchor: HudAnchor::BottomRight,
+                        direction: HudStackDirection::Vertical,
+                    }
+            })
+            .unwrap();
+        assert_eq!(bottom_right.2.as_ref(), &[alpha, zeta]);
+
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .insert_or_replace(
+                text_definition("zeta", "zeta").order(7).placement(
+                    HudPlacement::new(HudAnchor::TopLeft)
+                        .offset(12.0, 8.0)
+                        .stack_direction(HudStackDirection::Horizontal),
+                ),
+            )
+            .unwrap();
+        app.update();
+        assert_eq!(root_for(&mut app, "zeta"), zeta);
+        let zeta_parent = app.world().get::<ChildOf>(zeta).unwrap().parent();
+        let anchor = app.world().get::<HudAnchorRoot>(zeta_parent).unwrap();
+        assert_eq!(anchor.0.anchor, HudAnchor::TopLeft);
+        assert_eq!(anchor.0.direction, HudStackDirection::Horizontal);
+        let node = app.world().get::<Node>(zeta).unwrap();
+        assert_eq!(node.margin.left, Val::Px(12.0));
+        assert_eq!(node.margin.top, Val::Px(8.0));
+    }
+
+    #[derive(Resource, Default)]
+    struct PublishOnce(bool);
+
+    fn register_startup_hud(mut registry: ResMut<HudRegistry>) {
+        registry
+            .register(text_definition("same-frame", "same-frame-value"))
+            .unwrap();
+    }
+
+    fn publish_same_frame(
+        mut once: ResMut<PublishOnce>,
+        mut values: ResMut<HudValueSet>,
+        mut changed: MessageWriter<HudValueChanged>,
+    ) {
+        if !once.0 {
+            set_hud_value("same-frame-value", "visible now", &mut values, &mut changed);
+            once.0 = true;
+        }
+    }
+
+    #[test]
+    fn publish_set_updates_startup_definition_in_the_same_app_update() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        app.init_resource::<PublishOnce>();
+        app.add_systems(Startup, register_startup_hud);
+        app.add_systems(Update, publish_same_frame.in_set(HudSystemSet::Publish));
+
+        app.update();
+
+        let child = children_for(&mut app, "same-frame")
+            .into_iter()
+            .find_map(|(kind, entity)| (kind == HudChildKind::Text).then_some(entity))
+            .unwrap();
+        assert_eq!(app.world().get::<Text>(child).unwrap().0, "visible now");
+        let root = root_for(&mut app, "same-frame");
+        assert_eq!(
+            *app.world().get::<Visibility>(root).unwrap(),
+            Visibility::Inherited
+        );
+    }
+
+    #[test]
+    fn unchanged_and_unrelated_values_do_not_mutate_retained_text() {
+        #[derive(Resource, Default)]
+        struct ChangedTexts(Vec<Vec<String>>);
+
+        fn record_changed_texts(
+            changed: Query<&HudChildIdentity, Changed<Text>>,
+            mut observed: ResMut<ChangedTexts>,
+        ) {
+            let mut ids: Vec<_> = changed
+                .iter()
+                .map(|identity| identity.element.as_str().to_owned())
+                .collect();
+            ids.sort();
+            observed.0.push(ids);
+        }
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        app.init_resource::<ChangedTexts>();
+        app.add_systems(Update, record_changed_texts.after(HudSystemSet::Render));
+        for id in ["alpha", "beta"] {
+            app.world_mut()
+                .resource_mut::<HudRegistry>()
+                .register(text_definition(id, id))
+                .unwrap();
+            app.world_mut()
+                .resource_mut::<HudValueSet>()
+                .insert_or_replace(id, id);
+        }
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<HudValueSet>()
+            .insert_or_replace("alpha", "changed");
+        app.update();
+        assert_eq!(
+            app.world().resource::<ChangedTexts>().0.last().unwrap(),
+            &["alpha"]
+        );
+
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ChangedTexts>()
+                .0
+                .last()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn missing_asset_server_hides_images_without_starting_asset_io() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, VoxelHudPlugin));
+        app.world_mut()
+            .resource_mut::<HudRegistry>()
+            .register(HudElementDefinition::new(
+                "icon",
+                HudPresentation::Icon(HudIcon::asset("textures/icon.png")),
+            ))
+            .unwrap();
+        let mut cursor = app
+            .world()
+            .resource::<Messages<HudDiagnostic>>()
+            .get_cursor_current();
+
+        app.update();
+
+        let root = root_for(&mut app, "icon");
+        assert_eq!(
+            *app.world().get::<Visibility>(root).unwrap(),
+            Visibility::Hidden
+        );
+        assert!(app.world().resource::<HudAssetCache>().handles.is_empty());
+        let diagnostics: Vec<_> = cursor
+            .read(app.world().resource::<Messages<HudDiagnostic>>())
+            .cloned()
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(matches!(
+            diagnostics[0].kind,
+            HudDiagnosticKind::AssetUnavailable { .. }
+        ));
+
+        app.update();
+        assert_eq!(
+            cursor
+                .read(app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            0
+        );
     }
 }
