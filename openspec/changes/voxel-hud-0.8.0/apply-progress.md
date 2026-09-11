@@ -12,6 +12,8 @@
 - [x] 3.3 Fingerprint-gated rendering that mutates only changed Bevy UI/text/image state and polls only pending asset loads.
 - [x] 3.4 Explicit `VoxelHudPlugin` resources/messages and `Publish` → `Reconcile` → deferred barrier → `Render` scheduling in `PostStartup` and `Update`.
 - [x] 3.5 Public module/prelude exports, crate rustdoc, and Default Implementation classification without bundle membership.
+- [x] 4.1 Comprehensive inline model/resolution coverage for IDs, stores, revisions, snapshots, scalar formatting/bounds, all presentations, fallbacks, complete theme overrides, all nine anchors, and deterministic ordering.
+- [x] 4.2 Headless `MinimalPlugins` ECS coverage for empty/standalone/coexisting startup, same-frame publication, stable retained identity/structure, selective mutation, definition reconciliation, diagnostic transitions, and zero asset I/O.
 
 ## Implementation
 
@@ -21,7 +23,9 @@
 - Integrated safe image loading through an optional `AssetServer`: absent/failed assets hide with transition-deduplicated diagnostics, pending loads are polled, and unused handles are pruned.
 - Added explicit `VoxelHudPlugin` and chained `HudSystemSet` scheduling in `PostStartup` and `Update`, including an explicit `ApplyDeferred` barrier before render.
 - Exported the Batch 3 API and classified only `VoxelHudPlugin`; `UiPlugin`, `VoxelCorePlugin`, and `VoxelPlugin` remain unchanged.
-- Added focused headless Batch 3 tests for same-frame publication, stable identity, child reconciliation/resizing, deterministic order/reparenting, selective mutation, bar transitions, and zero-I/O missing-asset behavior. Batch 4 remains pending.
+- Added focused headless Batch 3 tests for same-frame publication, stable identity, child reconciliation/resizing, deterministic order/reparenting, selective mutation, bar transitions, and zero-I/O missing-asset behavior; Batch 4 retains and expands this coverage.
+- Completed Batch 4 by extending the inline suite from 25 to 29 HUD tests, including exhaustive nine-anchor/full-style resolution, stable empty startup, real `UiPlugin` coexistence under both feature modes, and ECS diagnostic deduplication with recovery/re-entry.
+- Kept tests domain-neutral and headless: no gameplay semantics, automatic bridges, screenshots, windows, filesystem access, or asset loads were introduced.
 
 ## Validation
 
@@ -44,6 +48,18 @@
 - Confirmed explicit `Publish` → `Reconcile` → `ApplyDeferred` → `Render` behavior, reciprocal root/child query filters, diagnostic transition deduplication, explicit plugin composition, `UiPlugin` coexistence, and absence from convenience bundles.
 - Found no remaining Batch 3 implementation defect and no Batch 4+ product/example/release leakage. The six focused ECS tests are retained as Batch 3 integration evidence; broader Batch 4 coverage remains pending.
 
+## Batch 4 Validation — 2026-09-11
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo test --locked ui::hud::tests --lib` — 29 passed, 0 failed, 245 filtered out.
+- `cargo test --locked --no-default-features ui::hud::tests --lib` — 29 passed, 0 failed, 198 filtered out.
+- `cargo test --locked` — 274 library tests, 19 integration tests, and 110 doctests passed; 3 doctests ignored.
+- `cargo test --locked --no-default-features` — 227 library tests, 19 integration tests, and 87 doctests passed; 3 doctests ignored.
+- `cargo check --locked --all-targets` — passed.
+- `cargo check --locked --no-default-features --all-targets` — passed.
+- `git diff --check` — passed.
+- Documentation generation was not rerun because Batch 4 changed tests and SDD state only. The pre-existing no-default rustdoc link failures remain deferred to final hardening, as required by scope.
+
 ## Remaining
 
-Batch 3 is independently verified and complete. Batches 4 and 5 are now independently ready; no Batch 4+ implementation was included here.
+Batch 4 is complete. Batch 5 remains independently ready; Batch 6 follows Batch 5, then Batch 7 validation and independent verification. No Batch 5+ example, documentation, version, or release work was included.
