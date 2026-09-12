@@ -27,9 +27,9 @@ tasks_progress:
     - "5.1"
     - "5.2"
     - "6.1"
-  pending:
     - "7.1"
     - "7.2"
     - "7.3"
+  pending:
     - "7.4"
 last_updated: 2026-09-11

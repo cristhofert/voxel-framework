@@ -118,9 +118,14 @@ impl Default for MiningState {
 
 /// Active-tool statistics derived from the hotbar selection each frame.
 ///
-/// [`MiningInputPlugin`] keeps this resource up to date via
-/// `hotbar_to_tool_system`. Game code that calls [`tick_mining`] directly
-/// can read or override it as needed.
+#[cfg_attr(
+    feature = "items",
+    doc = "[`MiningInputPlugin`] keeps this resource up to date via `hotbar_to_tool_system`. Game code that calls [`tick_mining`] directly can read or override it as needed."
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "Game code that calls [`tick_mining`] directly can read or override this resource as needed. The automatic input adapter requires the `items` feature."
+)]
 #[derive(Resource, Debug, Clone)]
 pub struct ToolStats {
     /// Minimum tool level required to mine a voxel.
@@ -592,11 +597,22 @@ pub fn hotbar_to_tool_system<I: ItemType>(
     }
 }
 
-/// System added by [`MiningInputPlugin`].
+#[cfg_attr(feature = "items", doc = "System added by [`MiningInputPlugin`].")]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "Mining input system; its automatic plugin adapter requires the `items` feature."
+)]
 ///
 /// Raycasts from the camera and drives [`tick_mining`] / [`stop_mining`] based
-/// on left-mouse-button state and [`ToolStats`]. Added automatically — do not
-/// add this system manually when using [`MiningInputPlugin`].
+/// on left-mouse-button state and [`ToolStats`].
+#[cfg_attr(
+    feature = "items",
+    doc = "Added automatically by [`MiningInputPlugin`] — do not add this system manually when using that plugin."
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "Without the `items` feature, add this system explicitly and initialize or supply [`ToolStats`] from game-owned code."
+)]
 pub fn mining_input_system<V: VoxelType>(
     buttons: Res<ButtonInput<MouseButton>>,
     camera_q: Query<&GlobalTransform, With<Camera3d>>,

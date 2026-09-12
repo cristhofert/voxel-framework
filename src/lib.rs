@@ -215,8 +215,14 @@ use world::{WorldConfigPlugin, WorldPlugin};
 ///
 /// - [`generator::GeneratorPlugin`] — requires the caller to supply a
 ///   [`generator::GeneratorResource`].
-/// - [`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`], [`HotbarPlugin`],
-///   [`UiPlugin`] — presentation/gameplay defaults included by [`VoxelPlugin`].
+#[cfg_attr(
+    feature = "items",
+    doc = "- [`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`], [`HotbarPlugin`], and [`UiPlugin`] — presentation/gameplay defaults included by [`VoxelPlugin`]."
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "- [`FragmentPlugin`], [`SkyboxPlugin`], [`SfxPlugin`], and [`UiPlugin`] — presentation defaults included by [`VoxelPlugin`]. `HotbarPlugin` additionally requires the `items` feature."
+)]
 ///
 /// # Example
 ///
@@ -291,7 +297,14 @@ impl<V: VoxelType> Plugin for VoxelCorePlugin<V> {
 /// | [`FragmentPlugin`] | Floating voxel debris entities ejected on mining |
 /// | [`SkyboxPlugin`] | Procedural starfield and skybox rendering |
 /// | [`SfxPlugin`] | Positional audio effects for mining and placement |
-/// | [`HotbarPlugin`] | Player hotbar, item switching, and held-item state |
+#[cfg_attr(
+    feature = "items",
+    doc = "| [`HotbarPlugin`] | Player hotbar, item switching, and held-item state |"
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "| `HotbarPlugin` *(feature `items`)* | Player hotbar, item switching, and held-item state |"
+)]
 /// | [`UiPlugin`] | Crosshair, loading screen, and HUD overlays |
 ///
 /// # Generator not included
