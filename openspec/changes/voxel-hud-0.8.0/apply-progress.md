@@ -105,6 +105,62 @@
 - `git diff --check` — passed.
 - These commands are scoped implementation confidence only; Batch 7 tasks remain unchecked and no independent verification report was created.
 
+## Batch 7 Hardening — 2026-09-11
+
+- [x] 7.1 Formatting, default/all-feature checks and tests, all-feature docs,
+  and the repository release matrix passed.
+- [x] 7.2 No-default checks/tests, no-default rustdoc, and the HUD example
+  passed. Eleven links to `items`-gated APIs now use feature-conditional
+  rustdoc text without changing runtime or public API behavior.
+- [x] 7.3 Offline package listing/creation passed. The 121-file archive includes
+  `src/ui/hud.rs`, `docs/hud.md`, and `examples/hud.rs`, and excludes
+  `openspec/`, `.github/`, and `docs/sdd/` workflow/state material.
+- [ ] 7.4 Independent scenario/non-goal review and `git diff --check` passed.
+  `./scripts/release-preflight.sh 0.8.0` also passed with
+  `RELEASE_PREFLIGHT_ALLOW_DIRTY=1`, but `docs/releasing.md` explicitly says
+  that override cannot approve a release. The required clean-tree invocation
+  remains pending because this batch was explicitly forbidden from committing.
+
+### Final Matrix
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo check --locked --all-targets` — passed.
+- `cargo check --locked --no-default-features --all-targets` — passed.
+- `cargo check --locked --all-features --all-targets` — passed.
+- `cargo test --locked` — 274 library, 19 integration, and 110 doctests passed;
+  3 doctests ignored.
+- `cargo test --locked --no-default-features` — 227 library, 19 integration,
+  and 87 doctests passed; 3 doctests ignored.
+- `cargo test --locked --all-features` — 274 library, 19 integration, and 110
+  doctests passed; 3 doctests ignored.
+- `cargo test --locked --examples` — six example targets passed.
+- `cargo test --locked --no-default-features --examples` — three eligible
+  example targets passed.
+- `cargo doc --locked --no-deps`, `cargo doc --locked --no-default-features
+  --no-deps`, and `cargo doc --locked --all-features --no-deps` — passed.
+- HUD example checks and headless runs with default and no-default features —
+  passed with four definitions, two changed frames, and unchanged third-frame
+  revisions.
+- Local Markdown targets — 27 targets across 47 tracked Markdown files passed.
+- Offline package list/create — passed; 121 files, 3.6 MiB (1.5 MiB compressed).
+- `git diff --check` — passed.
+
+### Independent Verification
+
+- Traced all ten specification scenarios to concrete model/ECS tests and the
+  neutral example/docs; all have coverage.
+- Confirmed the production HUD module has no content/stats/effects/items/player
+  dependency and `VoxelHudPlugin` remains explicit and outside `UiPlugin`,
+  `VoxelCorePlugin`, and `VoxelPlugin`.
+- Confirmed Batch 7 source changes are documentation attributes/comments only;
+  stripping documentation leaves non-documentation source identical to HEAD.
+- Corrected one misleading recovered sentence: without `items`,
+  `mining_input_system` must be added explicitly and supplied `ToolStats`; it
+  is not installed automatically.
+
 ## Remaining
 
-Batch 6 is complete. Batch 7 hardening and independent verification remain pending; no verification report, archive, merge, commit, tag, or publish work was included.
+Task 7.4 needs one clean-tree `./scripts/release-preflight.sh 0.8.0` run before
+all 19 tasks can be marked complete and formal `sdd-verify` can begin. No
+verification report, archive, merge, commit, push, tag, or publish work was
+included.

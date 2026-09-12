@@ -12,13 +12,26 @@
 //! | [`CrosshairPlugin`] | Center-screen crosshair rendered as four `Node` quads |
 //! | [`LoadingScreenPlugin`] | Full-screen overlay with progress bar while the world loads |
 //! | `HotbarUiPlugin` *(feature `items`)* | Bottom-center row of inventory slots |
-//! | [`PickupNotificationPlugin`] | Timed top-right pop-up text on item pickup |
+#![cfg_attr(
+    feature = "items",
+    doc = "| [`PickupNotificationPlugin`] | Timed top-right pop-up text on item pickup |"
+)]
+#![cfg_attr(
+    not(feature = "items"),
+    doc = "| `PickupNotificationPlugin` *(feature `items`)* | Timed top-right pop-up text on item pickup |"
+)]
 //! | [`VoxelHudPlugin`] | Retained, game-neutral text, bar, icon, and segment elements |
 //!
 //! # Choosing between [`UiPlugin`] and individual plugins
 //!
-//! Use [`UiPlugin`] when your game uses [`DefaultItem`] and wants all four HUD
-//! elements with zero configuration:
+#![cfg_attr(
+    feature = "items",
+    doc = "Use [`UiPlugin`] when your game uses [`DefaultItem`] and wants all four HUD elements with zero configuration:"
+)]
+#![cfg_attr(
+    not(feature = "items"),
+    doc = "Use [`UiPlugin`] with the default `items` feature when your game uses `DefaultItem` and wants all four HUD elements with zero configuration:"
+)]
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
@@ -985,16 +998,32 @@ impl Plugin for DebugOverlayPlugin {
 #[cfg(feature = "items")]
 use crate::items::inventory::DefaultItem;
 
-/// Umbrella plugin that adds all four HUD sub-plugins with [`DefaultItem`].
+#[cfg_attr(
+    feature = "items",
+    doc = "Umbrella plugin that adds all four HUD sub-plugins with [`DefaultItem`]."
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "Umbrella plugin for the built-in HUD sub-plugins; item-specific overlays require the `items` feature."
+)]
 ///
-/// Equivalent to adding [`CrosshairPlugin`], [`LoadingScreenPlugin`],
-/// [`HotbarUiPlugin`], and [`PickupNotificationPlugin::<DefaultItem>`] in one
-/// call. Configuration resources for each sub-plugin can still be inserted
-/// individually before `UiPlugin` is added to override their defaults.
+#[cfg_attr(
+    feature = "items",
+    doc = "Equivalent to adding [`CrosshairPlugin`], [`LoadingScreenPlugin`], [`HotbarUiPlugin`], and [`PickupNotificationPlugin::<DefaultItem>`] in one call. Configuration resources for each sub-plugin can still be inserted individually before `UiPlugin` is added to override their defaults."
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "Without the `items` feature, this adds [`CrosshairPlugin`] and [`LoadingScreenPlugin`]. Configuration resources for each sub-plugin can still be inserted individually before `UiPlugin` is added to override their defaults."
+)]
 ///
-/// To use a custom item type for pickup notifications, skip `UiPlugin` and add
-/// [`PickupNotificationPlugin::<YourItem>::new()`] alongside the other plugins
-/// individually.
+#[cfg_attr(
+    feature = "items",
+    doc = "To use a custom item type for pickup notifications, skip `UiPlugin` and add [`PickupNotificationPlugin::<YourItem>::new()`] alongside the other plugins individually."
+)]
+#[cfg_attr(
+    not(feature = "items"),
+    doc = "Enable the `items` feature before configuring item-specific pickup notifications or hotbar UI."
+)]
 ///
 /// # Example
 ///

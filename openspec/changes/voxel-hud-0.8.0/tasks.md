@@ -39,7 +39,13 @@
 
 ## Batch 7: Validation and independent verification
 
-- [ ] 7.1 Run `cargo fmt --all -- --check`, `cargo test --locked`, `cargo check --locked --all-targets`, and `cargo doc --locked --no-deps --all-features`.
-- [ ] 7.2 Run `cargo test --locked --no-default-features`, `cargo check --locked --no-default-features --all-targets`, and `cargo check --locked --no-default-features --example hud`.
-- [ ] 7.3 Run `cargo package --locked --offline --allow-dirty --list` and `cargo package --locked --offline --allow-dirty --no-verify`; confirm HUD example/docs ship and workflow/OpenSpec state does not.
+- [x] 7.1 Run `cargo fmt --all -- --check`, `cargo test --locked`, `cargo check --locked --all-targets`, and `cargo doc --locked --no-deps --all-features`.
+- [x] 7.2 Run `cargo test --locked --no-default-features`, `cargo check --locked --no-default-features --all-targets`, and `cargo check --locked --no-default-features --example hud`.
+- [x] 7.3 Run `cargo package --locked --offline --allow-dirty --list` and `cargo package --locked --offline --allow-dirty --no-verify`; confirm HUD example/docs ship and workflow/OpenSpec state does not.
 - [ ] 7.4 Have an independent verifier trace every spec scenario/non-goal to code/tests, inspect `git diff --check` for scope creep, and run `./scripts/release-preflight.sh 0.8.0` once the tree is clean.
+
+Task 7.4 is partially evidenced: the independent trace and `git diff --check`
+passed, and the complete script passed with `RELEASE_PREFLIGHT_ALLOW_DIRTY=1`.
+The repository release convention explicitly forbids using that override as
+release approval, so the clean-tree invocation remains pending while commits
+are prohibited.
