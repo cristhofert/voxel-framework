@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new Cargo feature, and adds no vertical presets, automatic domain bridges or
   player discovery, gameplay rules, persistence, or JSON/config DSL.
 
+### Fixed
+
+- Corrected the advertised Rust MSRV from 1.85 to **1.89**, required by Bevy
+  and `bevy_ecs` 0.18.1; default and no-default library checks pass on Rust 1.89.0.
+- HUD images now recover after successful same-path reloads and enter a safe
+  state after failed reloads without requiring values to be republished.
+
 ## [0.7.0] - 2026-09-06
 
 ### Added

@@ -2,7 +2,7 @@
 
 > A reusable Bevy 0.18 library for building voxel games: chunk storage, procedural generation, greedy meshing, world streaming, PBR rendering, mining/placement, and an optional 6DOF player. It is a library, not a game — games depend on it and compose its plugins.
 
-Release status: version 0.4.x is an early public release for real Bevy consumer crates, not a 1.0 stability promise. Target Bevy 0.18 and Rust MSRV 1.85. Public APIs and persistence format may still change across 0.x minor releases.
+Release status: version 0.4.x is an early public release for real Bevy consumer crates, not a 1.0 stability promise. Target Bevy 0.18; the current 0.8 line has Rust MSRV 1.89 (Bevy 0.18.1 requires 1.89.0). Public APIs and persistence format may still change across 0.x minor releases.
 
 Key mental model: implement (or use the built-in `DefaultVoxel`) the `VoxelType` trait; pick `VoxelCorePlugin` (pure engine) or `VoxelPlugin` (batteries-included); add `GeneratorPlugin` + `PersistencePlugin` opt-in with a `GeneratorResource`. Critical runtime contracts: update `ViewerPosition` every frame or nothing streams; generators run on background threads and must not touch the Bevy `World`; mining/placement are pure functions you call from your own systems.
 

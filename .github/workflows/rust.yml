@@ -20,6 +20,33 @@ permissions:
   contents: read
 
 jobs:
+  msrv:
+    name: MSRV (Rust 1.89.0, library)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.89.0
+        uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Install audio development dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Cargo.lock is not tracked by this library; resolve once on the MSRV.
+      - name: Resolve CI lockfile
+        run: cargo generate-lockfile
+
+      - name: Check library with default features on MSRV
+        run: cargo check --locked --lib
+
+      - name: Check library without default features on MSRV
+        run: cargo check --locked --lib --no-default-features
+
   check:
     name: Check (${{ matrix.mode }})
     runs-on: ubuntu-latest
