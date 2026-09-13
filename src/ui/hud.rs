@@ -1290,6 +1290,8 @@ struct HudRuntimeState {
     render_all: bool,
     pending_assets: bool,
     asset_server_present: bool,
+    image_events: bevy::ecs::message::MessageCursor<bevy::asset::AssetEvent<Image>>,
+    image_failures: bevy::ecs::message::MessageCursor<bevy::asset::AssetLoadFailedEvent<Image>>,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -1842,6 +1844,8 @@ fn render_hud_entities(
     values: Res<HudValueSet>,
     theme: Res<HudTheme>,
     asset_server: Option<Res<AssetServer>>,
+    image_events: Option<Res<Messages<bevy::asset::AssetEvent<Image>>>>,
+    image_failures: Option<Res<Messages<bevy::asset::AssetLoadFailedEvent<Image>>>>,
     mut asset_cache: ResMut<HudAssetCache>,
     mut runtime: ResMut<HudRuntimeState>,
     mut tracker: ResMut<HudDiagnosticTracker>,
@@ -1873,9 +1877,40 @@ fn render_hud_entities(
     >,
 ) {
     let asset_server_present = asset_server.is_some();
+    // Failed loads stop pending polling, but are not permanently unavailable:
+    // AssetServer::reload can add the same Image later without any HUD edits.
+    // Consume only events for cached handles; unrelated assets do not render HUD.
+    let assets_changed = image_events.as_ref().is_some_and(|events| {
+        runtime
+            .image_events
+            .read(events)
+            .fold(false, |changed, event| {
+                let relevant = asset_cache.handles.values().any(|handle| {
+                    event.is_added(handle.id())
+                        || event.is_modified(handle.id())
+                        || event.is_removed(handle.id())
+                        || event.is_loaded_with_dependencies(handle.id())
+                });
+                changed || relevant
+            })
+    });
+    let assets_failed = image_failures.as_ref().is_some_and(|events| {
+        runtime
+            .image_failures
+            .read(events)
+            .fold(false, |changed, event| {
+                let relevant = asset_cache
+                    .handles
+                    .values()
+                    .any(|handle| handle.id() == event.id);
+                changed || relevant
+            })
+    });
     if !runtime.render_all
         && runtime.value_revision == Some(values.revision())
         && !runtime.pending_assets
+        && !assets_changed
+        && !assets_failed
         && runtime.asset_server_present == asset_server_present
     {
         return;
@@ -2748,7 +2783,7 @@ mod tests {
 
     use super::*;
 
-    fn text_definition(id: &str, value: &str) -> HudElementDefinition {
+    pub(super) fn text_definition(id: &str, value: &str) -> HudElementDefinition {
         HudElementDefinition::new(id, HudPresentation::Text(HudText::new(value)))
     }
 
@@ -3614,7 +3649,7 @@ mod tests {
         assert_message::<HudDiagnostic>();
     }
 
-    fn root_for(app: &mut App, id: &str) -> Entity {
+    pub(super) fn root_for(app: &mut App, id: &str) -> Entity {
         let mut query = app.world_mut().query::<(Entity, &HudElementRoot)>();
         let matches: Vec<_> = query
             .iter(app.world())
@@ -3624,7 +3659,7 @@ mod tests {
         matches[0]
     }
 
-    fn children_for(app: &mut App, id: &str) -> Vec<(HudChildKind, Entity)> {
+    pub(super) fn children_for(app: &mut App, id: &str) -> Vec<(HudChildKind, Entity)> {
         let mut query = app.world_mut().query::<(Entity, &HudChildIdentity)>();
         let mut matches: Vec<_> = query
             .iter(app.world())
@@ -4109,5 +4144,577 @@ mod tests {
                 .count(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod asset_runtime_tests {
+    use super::tests::{children_for, root_for, text_definition};
+    use super::*;
+    use bevy::asset::io::{
+        AssetSourceBuilder, Reader,
+        memory::{Dir, MemoryAssetReader},
+    };
+    use bevy::asset::{AssetApp, AssetLoader, AssetPlugin, LoadContext, RenderAssetUsages};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use std::{
+        path::Path,
+        sync::{Arc, Mutex},
+        task::{Poll, Waker},
+        time::{Duration, Instant},
+    };
+
+    #[derive(Default)]
+    struct Gate {
+        open: bool,
+        waker: Option<Waker>,
+    }
+
+    #[derive(TypePath)]
+    struct TestImageLoader {
+        gate: Arc<Mutex<Gate>>,
+        loads: Arc<Mutex<Vec<String>>>,
+    }
+
+    // A genuine async AssetLoader returning Image assets, with an explicit latch
+    // instead of timing-dependent sleeps to hold the pending state.
+    impl AssetLoader for TestImageLoader {
+        type Asset = Image;
+        type Settings = ();
+        type Error = std::io::Error;
+
+        async fn load(
+            &self,
+            reader: &mut dyn Reader,
+            _: &(),
+            context: &mut LoadContext<'_>,
+        ) -> Result<Image, Self::Error> {
+            let path = context.path().path().to_string_lossy().into_owned();
+            self.loads.lock().unwrap().push(path.clone());
+            if path == "slow.hudimage" {
+                std::future::poll_fn(|cx| {
+                    let mut gate = self.gate.lock().unwrap();
+                    if gate.open {
+                        Poll::Ready(())
+                    } else {
+                        gate.waker = Some(cx.waker().clone());
+                        Poll::Pending
+                    }
+                })
+                .await;
+            }
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await?;
+            if bytes.len() != 4 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "expected one RGBA pixel",
+                ));
+            }
+            Ok(Image::new_fill(
+                Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                &bytes,
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::default(),
+            ))
+        }
+        fn extensions(&self) -> &[&str] {
+            &["hudimage"]
+        }
+    }
+
+    #[derive(Resource, Default)]
+    struct ImageWrites(Vec<Entity>);
+
+    fn record_image_writes(
+        mut writes: ResMut<ImageWrites>,
+        images: Query<Entity, Changed<ImageNode>>,
+    ) {
+        writes.0 = images.iter().collect();
+    }
+
+    struct Fixture {
+        app: App,
+        dir: Dir,
+        gate: Arc<Mutex<Gate>>,
+        loads: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let dir = Dir::default();
+            let reader_dir = dir.clone();
+            let gate = Arc::new(Mutex::new(Gate::default()));
+            let loads = Arc::new(Mutex::new(Vec::new()));
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .register_asset_source(
+                    "hud-test",
+                    AssetSourceBuilder::new(move || {
+                        Box::new(MemoryAssetReader {
+                            root: reader_dir.clone(),
+                        })
+                    }),
+                )
+                .add_plugins(AssetPlugin::default())
+                .init_asset::<Image>()
+                .register_asset_loader(TestImageLoader {
+                    gate: gate.clone(),
+                    loads: loads.clone(),
+                })
+                .register_asset_loader(bevy::image::ImageLoader::new(
+                    bevy::image::CompressedImageFormats::NONE,
+                ))
+                .add_plugins(VoxelHudPlugin)
+                .init_resource::<ImageWrites>()
+                .add_systems(Update, record_image_writes.after(HudSystemSet::Render));
+            Self {
+                app,
+                dir,
+                gate,
+                loads,
+            }
+        }
+        fn put(&self, path: &str, rgba: [u8; 4]) {
+            self.dir.insert_asset(Path::new(path), rgba.to_vec());
+        }
+        fn release(&self) {
+            let mut gate = self.gate.lock().unwrap();
+            gate.open = true;
+            if let Some(waker) = gate.waker.take() {
+                waker.wake();
+            }
+        }
+        fn register(&mut self, definition: HudElementDefinition) {
+            self.app
+                .world_mut()
+                .resource_mut::<HudRegistry>()
+                .register(definition)
+                .unwrap();
+        }
+        fn value(&mut self, id: &str, value: impl Into<HudValue>) {
+            self.app
+                .world_mut()
+                .resource_mut::<HudValueSet>()
+                .insert_or_replace(id, value);
+        }
+        fn handle(&self, name: &str) -> Handle<Image> {
+            self.app
+                .world()
+                .resource::<AssetServer>()
+                .load(format!("hud-test://{name}"))
+        }
+        fn poll(&mut self, label: &str, mut predicate: impl FnMut(&mut App) -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                self.app.update();
+                if predicate(&mut self.app) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for {label}");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        fn visible(app: &mut App, id: &str) -> bool {
+            let root = root_for(app, id);
+            *app.world().get::<Visibility>(root).unwrap() == Visibility::Inherited
+        }
+        fn image(app: &mut App, id: &str) -> Handle<Image> {
+            let child = children_for(app, id)[0].1;
+            app.world().get::<ImageNode>(child).unwrap().image.clone()
+        }
+    }
+
+    #[test]
+    fn real_asset_failed_icon_recovers_on_same_path_reload_without_publication() {
+        let mut f = Fixture::new();
+        f.register(HudElementDefinition::new(
+            "icon",
+            HudPresentation::Icon(HudIcon::asset("hud-test://repair.hudimage")),
+        ));
+        let handle = f.handle("repair.hudimage");
+        f.poll("real read failure", |app| {
+            matches!(
+                app.world()
+                    .resource::<AssetServer>()
+                    .load_state(handle.id()),
+                LoadState::Failed(_)
+            )
+        });
+        f.app.update();
+        assert!(!Fixture::visible(&mut f.app, "icon"));
+        let root = root_for(&mut f.app, "icon");
+        let children = children_for(&mut f.app, "icon");
+        let revision = f.app.world().resource::<HudValueSet>().revision();
+        f.put("repair.hudimage", [20, 200, 80, 255]);
+        f.app
+            .world()
+            .resource::<AssetServer>()
+            .reload("hud-test://repair.hudimage");
+        f.poll("same-path Image asset reload", |app| {
+            matches!(
+                app.world()
+                    .resource::<AssetServer>()
+                    .load_state(handle.id()),
+                LoadState::Loaded
+            )
+        });
+        f.app.update();
+        assert!(
+            f.app
+                .world()
+                .resource::<Assets<Image>>()
+                .contains(handle.id())
+        );
+        assert!(
+            Fixture::visible(&mut f.app, "icon"),
+            "loaded recovery must invalidate the hidden fingerprint without value changes"
+        );
+        assert_eq!(Fixture::image(&mut f.app, "icon"), handle);
+        assert_eq!(root_for(&mut f.app, "icon"), root);
+        assert_eq!(children_for(&mut f.app, "icon"), children);
+        assert_eq!(f.app.world().resource::<HudValueSet>().revision(), revision);
+        for _ in 0..3 {
+            f.app.update();
+        }
+        f.dir.insert_asset(Path::new("repair.hudimage"), vec![0]);
+        f.app
+            .world()
+            .resource::<AssetServer>()
+            .reload("hud-test://repair.hudimage");
+        f.poll("previously loaded asset fails on reload", |app| {
+            matches!(
+                app.world()
+                    .resource::<AssetServer>()
+                    .load_state(handle.id()),
+                LoadState::Failed(_)
+            )
+        });
+        f.app.update();
+        assert!(
+            !Fixture::visible(&mut f.app, "icon"),
+            "failed reload must invalidate the visible fingerprint without value changes"
+        );
+        f.put("repair.hudimage", [20, 200, 80, 255]);
+        f.app
+            .world()
+            .resource::<AssetServer>()
+            .reload("hud-test://repair.hudimage");
+        f.poll("second recovery on unchanged path", |app| {
+            Fixture::visible(app, "icon")
+        });
+        assert_eq!(Fixture::image(&mut f.app, "icon"), handle);
+        assert_eq!(root_for(&mut f.app, "icon"), root);
+        assert_eq!(children_for(&mut f.app, "icon"), children);
+    }
+
+    #[test]
+    fn real_asset_pending_failure_fallback_and_value_recovery_preserve_identity() {
+        let mut f = Fixture::new();
+        f.put("slow.hudimage", [255, 40, 10, 255]);
+        f.put("fallback.hudimage", [10, 40, 255, 255]);
+        f.dir.insert_asset(Path::new("invalid.hudimage"), vec![0]);
+        f.register(
+            HudElementDefinition::new("icon", HudPresentation::Icon(HudIcon::bound("path")))
+                .fallback(HudValue::icon("hud-test://fallback.hudimage")),
+        );
+        f.value("path", HudValue::icon("hud-test://slow.hudimage"));
+        let slow = f.handle("slow.hudimage");
+        let fallback = f.handle("fallback.hudimage");
+        let mut cursor = f
+            .app
+            .world()
+            .resource::<Messages<HudDiagnostic>>()
+            .get_cursor_current();
+        let mut observed = Vec::new();
+        f.poll("loaded fallback while primary is gated", |app| {
+            observed.extend(
+                cursor
+                    .read(app.world().resource::<Messages<HudDiagnostic>>())
+                    .cloned(),
+            );
+            Fixture::visible(app, "icon") && Fixture::image(app, "icon") == fallback
+        });
+        assert!(matches!(
+            f.app
+                .world()
+                .resource::<AssetServer>()
+                .load_state(slow.id()),
+            LoadState::Loading
+        ));
+        assert!(
+            f.app
+                .world()
+                .resource::<Assets<Image>>()
+                .contains(fallback.id())
+        );
+        assert!(observed.iter().any(|d| matches!(&d.kind, HudDiagnosticKind::AssetUnavailable { path } if path.to_string() == "hud-test://slow.hudimage")));
+        let root = root_for(&mut f.app, "icon");
+        let children = children_for(&mut f.app, "icon");
+        assert!(
+            f.app
+                .world()
+                .get::<HudResolvedFingerprint>(root)
+                .unwrap()
+                .0
+                .as_ref()
+                .unwrap()
+                .used_fallback
+        );
+        f.app.update();
+        assert_eq!(
+            cursor
+                .read(f.app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            0
+        );
+        f.release();
+        f.poll("primary replaces fallback", |app| {
+            Fixture::image(app, "icon") == slow
+        });
+        assert!(Fixture::visible(&mut f.app, "icon"));
+        assert!(
+            f.app
+                .world()
+                .resource::<Assets<Image>>()
+                .contains(slow.id())
+        );
+        assert!(
+            !f.app
+                .world()
+                .get::<HudResolvedFingerprint>(root)
+                .unwrap()
+                .0
+                .as_ref()
+                .unwrap()
+                .used_fallback
+        );
+        let invalid = f.handle("invalid.hudimage");
+        f.value("path", HudValue::icon("hud-test://invalid.hudimage"));
+        f.poll("loader failure and loaded fallback", |app| {
+            matches!(
+                app.world()
+                    .resource::<AssetServer>()
+                    .load_state(invalid.id()),
+                LoadState::Failed(_)
+            ) && Fixture::image(app, "icon") == fallback
+        });
+        assert!(Fixture::visible(&mut f.app, "icon"));
+        // Recover by publication, then fail again: the same diagnostic must reemit.
+        f.value("path", HudValue::icon("hud-test://slow.hudimage"));
+        f.app.update();
+        assert_eq!(Fixture::image(&mut f.app, "icon"), slow);
+        cursor
+            .read(f.app.world().resource::<Messages<HudDiagnostic>>())
+            .for_each(drop);
+        f.value("path", HudValue::icon("hud-test://invalid.hudimage"));
+        f.app.update();
+        let diagnostics: Vec<_> = cursor
+            .read(f.app.world().resource::<Messages<HudDiagnostic>>())
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            matches!(&diagnostics[0].kind, HudDiagnosticKind::AssetUnavailable { path } if path.to_string() == "hud-test://invalid.hudimage")
+        );
+        f.app.update();
+        assert_eq!(
+            cursor
+                .read(f.app.world().resource::<Messages<HudDiagnostic>>())
+                .count(),
+            0
+        );
+        assert_eq!(root_for(&mut f.app, "icon"), root);
+        assert_eq!(children_for(&mut f.app, "icon"), children);
+    }
+
+    #[test]
+    fn real_assets_render_and_update_all_four_presentations_and_reuse_cached_handles() {
+        let mut f = Fixture::new();
+        f.put("full.hudimage", [240, 180, 30, 255]);
+        f.put("empty.hudimage", [30, 50, 70, 255]);
+        f.register(text_definition("text", "text"));
+        f.register(HudElementDefinition::new(
+            "bar",
+            HudPresentation::Bar(HudBar::new("ratio")),
+        ));
+        f.register(HudElementDefinition::new(
+            "icon",
+            HudPresentation::Icon(HudIcon::bound("path")),
+        ));
+        f.register(HudElementDefinition::new(
+            "segments",
+            HudPresentation::Segments(
+                HudSegments::new("count", 3)
+                    .filled_asset("hud-test://full.hudimage")
+                    .empty_asset("hud-test://empty.hudimage"),
+            ),
+        ));
+        f.value("text", "first");
+        f.value("ratio", HudScalar::new(1.0, 0.0, 4.0).unwrap());
+        f.value("path", HudValue::icon("hud-test://full.hudimage"));
+        f.value("count", 1_u32);
+        let full = f.handle("full.hudimage");
+        let empty = f.handle("empty.hudimage");
+        f.poll("all four visible", |app| {
+            ["text", "bar", "icon", "segments"]
+                .into_iter()
+                .all(|id| Fixture::visible(app, id))
+        });
+        let identities: Vec<_> = ["text", "bar", "icon", "segments"]
+            .into_iter()
+            .map(|id| (id, root_for(&mut f.app, id), children_for(&mut f.app, id)))
+            .collect();
+        assert_eq!(Fixture::image(&mut f.app, "icon"), full);
+        let check_segments = |app: &mut App, filled: u32| {
+            for (kind, entity) in children_for(app, "segments") {
+                let HudChildKind::Segment(index) = kind else {
+                    panic!("not a segment")
+                };
+                assert_eq!(
+                    app.world().get::<ImageNode>(entity).unwrap().image,
+                    if index < filled {
+                        full.clone()
+                    } else {
+                        empty.clone()
+                    }
+                );
+                assert_eq!(
+                    app.world().get::<BackgroundColor>(entity).unwrap().0,
+                    Color::NONE
+                );
+            }
+        };
+        check_segments(&mut f.app, 1);
+        for handle in [&full, &empty] {
+            assert!(
+                f.app
+                    .world()
+                    .resource::<Assets<Image>>()
+                    .contains(handle.id())
+            );
+        }
+        assert_eq!(f.app.world().resource::<HudAssetCache>().handles.len(), 2);
+        f.value("text", "second");
+        f.value("ratio", HudScalar::new(3.0, 0.0, 4.0).unwrap());
+        f.value("path", HudValue::icon("hud-test://empty.hudimage"));
+        f.value("count", 2_u32);
+        f.app.update();
+        assert_eq!(Fixture::image(&mut f.app, "icon"), empty);
+        check_segments(&mut f.app, 2);
+        let text = children_for(&mut f.app, "text")[0].1;
+        assert_eq!(f.app.world().get::<Text>(text).unwrap().0, "second");
+        let fill = children_for(&mut f.app, "bar")
+            .into_iter()
+            .find(|(kind, _)| *kind == HudChildKind::BarFill)
+            .unwrap()
+            .1;
+        assert_eq!(
+            f.app.world().get::<Node>(fill).unwrap().width,
+            Val::Px(HudTheme::default().bar_size[0] * 0.75)
+        );
+        let loads = f.loads.lock().unwrap().clone();
+        assert_eq!(loads.iter().filter(|p| *p == "full.hudimage").count(), 1);
+        assert_eq!(loads.iter().filter(|p| *p == "empty.hudimage").count(), 1);
+        for _ in 0..4 {
+            f.app.update();
+        }
+        for (id, root, children) in &identities {
+            assert_eq!(root_for(&mut f.app, id), *root);
+            assert_eq!(children_for(&mut f.app, id), *children);
+        }
+        assert_eq!(*f.loads.lock().unwrap(), loads);
+        assert!(f.app.world().resource::<ImageWrites>().0.is_empty());
+        // A real unrelated asset emits Added/Loaded events; no HUD image rewrites.
+        f.put("unrelated.hudimage", [20, 30, 40, 255]);
+        let unrelated = f.handle("unrelated.hudimage");
+        f.poll("unrelated image loading", |app| {
+            app.world()
+                .resource::<Assets<Image>>()
+                .contains(unrelated.id())
+        });
+        f.app.update();
+        assert!(f.app.world().resource::<ImageWrites>().0.is_empty());
+
+        // Removing the only full-texture user prunes it; shared empty stays cached.
+        f.app
+            .world_mut()
+            .resource_mut::<HudRegistry>()
+            .remove("segments")
+            .unwrap();
+        f.app.update();
+        let cache = f.app.world().resource::<HudAssetCache>();
+        assert_eq!(cache.handles.len(), 1);
+        assert_eq!(
+            cache.handle(&AssetPath::from("hud-test://empty.hudimage")),
+            Some(empty)
+        );
+        f.app
+            .world_mut()
+            .resource_mut::<HudRegistry>()
+            .remove("icon")
+            .unwrap();
+        f.app.update();
+        assert!(f.app.world().resource::<HudAssetCache>().handles.is_empty());
+    }
+
+    #[test]
+    fn real_png_loader_and_gated_icon_show_expected_image_nodes_without_gpu() {
+        let mut f = Fixture::new();
+        // Valid one-pixel RGBA PNG: exercised by Bevy's stock ImageLoader, not
+        // our controlled loader and not Assets::add or a resolver predicate.
+        let png: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 120, 150,
+            34, 247, 31, 0, 6, 4, 2, 104, 229, 197, 141, 181, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66,
+            96, 130,
+        ];
+        f.dir.insert_asset(Path::new("actual.png"), png.to_vec());
+        f.put("slow.hudimage", [120, 220, 50, 255]);
+        f.register(HudElementDefinition::new(
+            "png",
+            HudPresentation::Icon(HudIcon::asset("hud-test://actual.png")),
+        ));
+        f.register(HudElementDefinition::new(
+            "pending",
+            HudPresentation::Icon(HudIcon::asset("hud-test://slow.hudimage")),
+        ));
+        let png_handle = f.handle("actual.png");
+        let slow = f.handle("slow.hudimage");
+        f.app.update();
+        let root = root_for(&mut f.app, "pending");
+        let children = children_for(&mut f.app, "pending");
+        assert!(!Fixture::visible(&mut f.app, "pending"));
+        assert_eq!(
+            Fixture::image(&mut f.app, "pending"),
+            ImageNode::default().image
+        );
+        f.poll("stock PNG decode", |app| Fixture::visible(app, "png"));
+        assert_eq!(Fixture::image(&mut f.app, "png"), png_handle);
+        let image = f
+            .app
+            .world()
+            .resource::<Assets<Image>>()
+            .get(&png_handle)
+            .unwrap();
+        assert_eq!(image.width(), 1);
+        assert_eq!(image.height(), 1);
+        assert_eq!(image.data.as_deref(), Some(&[230, 100, 30, 255][..]));
+        f.release();
+        f.poll("gated icon becomes visible", |app| {
+            Fixture::visible(app, "pending")
+        });
+        assert_eq!(Fixture::image(&mut f.app, "pending"), slow);
+        assert_eq!(root_for(&mut f.app, "pending"), root);
+        assert_eq!(children_for(&mut f.app, "pending"), children);
+        // No stale handles or tree rebuilding on an unchanged loaded frame.
+        let png_children = children_for(&mut f.app, "png");
+        f.app.update();
+        assert_eq!(children_for(&mut f.app, "png"), png_children);
+        assert_eq!(Fixture::image(&mut f.app, "png"), png_handle);
     }
 }
