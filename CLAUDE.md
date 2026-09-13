@@ -23,6 +23,12 @@ cargo run --example basic_world
 
 `voxel-framework` is a reusable **Bevy 0.18** library crate. Games depend on it and compose its plugins. It is **not** a game — there is no `main.rs`.
 
+The 0.8 line has **Rust MSRV 1.89**: Bevy 0.18.1 and `bevy_ecs` declare
+1.89.0. Verify with `cargo +1.89.0 check --locked --lib` and
+`cargo +1.89.0 check --locked --lib --no-default-features`, not latest stable.
+The dedicated Linux CI lane resolves its own lockfile because `Cargo.lock` is
+ignored; a local locked check proves only that local dependency resolution.
+
 ### Plugin composition
 
 The public architecture is a **flat Bevy plugin catalog**, not a hierarchy of

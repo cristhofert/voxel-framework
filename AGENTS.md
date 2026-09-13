@@ -14,9 +14,9 @@ non-obvious runtime contracts. For the deep API, read the rustdoc
 
 `voxel-framework` 0.8 is the current package line intended for real Bevy
 consumer crates, examples, and experiments. It targets Bevy 0.18 and Rust MSRV
-1.85. Treat it as useful but pre-1.0: public APIs and the local persistence
-format may still change across 0.x minor releases. Package metadata may be
-prepared before the corresponding crate and tag are published.
+1.89 (Bevy 0.18.1 requires 1.89.0). Treat it as useful but pre-1.0: public APIs
+and the local persistence format may still change across 0.x minor releases.
+Package metadata may be prepared before the corresponding crate and tag are published.
 
 It is not a standalone game/editor, and it does not currently include
 multiplayer/networking or long-term 1.0 save compatibility guarantees.

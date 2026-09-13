@@ -36,9 +36,15 @@ Compatibility target:
 |---|---|
 | Crate version | `0.8.x` |
 | Bevy version | `0.18` |
-| Rust version | MSRV `1.85` |
+| Rust version | MSRV `1.89` |
 | Stability | Public API can still change across `0.x` minor releases |
 | Distribution | crates.io for released versions; git tags for pinned source installs |
+
+Bevy 0.18.1 and `bevy_ecs` require Rust 1.89.0. The MSRV CI lane uses
+Rust 1.89.0 for `cargo check --locked --lib` with default features and with
+`--no-default-features` on Linux. Since this library does not track `Cargo.lock`,
+CI resolves a fresh lockfile on that toolchain before the locked checks;
+consumer dependency resolutions and other targets may require newer Rust.
 
 Before each release, the project validates formatting, feature combinations,
 doctests, integration tests, documentation, package contents, and `cargo publish

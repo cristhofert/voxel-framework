@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Stack: Rust 2024 (rust-version 1.85), Bevy 0.18 plugin-based engine.
+  Stack: Rust 2024 (rust-version 1.89), Bevy 0.18 plugin-based engine.
   Architecture: reusable library crate (no main.rs); plugins generic over `V: VoxelType`;
     chunks 16³ flat-array; greedy meshing with 2 LOD levels (threshold 200u);
     pure-function APIs for mining/placement; persistence via serde/toml/binary chunk format.
@@ -29,8 +29,9 @@ rules:
     - Use hierarchical numbering (1.1, 1.2, etc.).
     - Keep tasks completable in one session.
   apply:
-    - Follow existing patterns: plugins generic over `V: VoxelType`, pure-function APIs where possible.
-    - Run `cargo check` (and `cargo check --example basic_world` for example-relevant changes) — NEVER `cargo build`.
+    instructions:
+      - "Follow existing patterns: plugins generic over `V: VoxelType`, pure-function APIs where possible."
+      - Run `cargo check` (and `cargo check --example basic_world` for example-relevant changes) — NEVER `cargo build`.
     tdd: false
     test_command: "cargo test"
   verify:

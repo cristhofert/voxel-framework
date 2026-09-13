@@ -49,3 +49,10 @@ passed, and the complete script passed with `RELEASE_PREFLIGHT_ALLOW_DIRTY=1`.
 The repository release convention explicitly forbids using that override as
 release approval, so the clean-tree invocation remains pending while commits
 are prohibited.
+
+
+Formal reconciliation (2026-09-13):7.4 remains unchecked,18/19, solely for
+complete clean-preflight evidence on the separately committed candidate.
+Combined fixes independently reviewed: corrected1.89 minimum verified on
+actual compiler, real image lifecycle/consumer acceptance proven,10/10
+scenarios compliant. See `verify-report.md`; do not claim19/19 yet.

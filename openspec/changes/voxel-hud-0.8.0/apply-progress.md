@@ -164,3 +164,24 @@ Task 7.4 needs one clean-tree `./scripts/release-preflight.sh 0.8.0` run before
 all 19 tasks can be marked complete and formal `sdd-verify` can begin. No
 verification report, archive, merge, commit, push, tag, or publish work was
 included.
+
+
+## Formal Verification Audit — 2026-09-13
+
+- Verdict: **INCOMPLETE**, not release/archive approval. See `verify-report.md`.
+- Audited initial progress-only diff on exact HEAD `48d236b7b91ebdcaf5bc0ad98bb2fe14a563e63d`. No historical clean-preflight logs remain in `/tmp`; the 19/19 summary claim is not accepted. Task 7.4 remains pending: **18/19**. Prior full-matrix results above are recorded historical claims, not newly grounded clean-gate evidence.
+- Fresh focused tests: 29/29 default and 29/29 no-default passed, both HUD example checks/runs passed, formatting/package listing/diff checks passed. Logs: `/tmp/voxel-hud-formal-48d236b/`.
+- Existing 121-file package archive names exact HEAD without dirty flag and byte-matches reviewed HUD sources/docs/example/metadata; this grounds package contents only, not completion of the entire clean gate.
+- Nine scenarios compliant in headless scope; Follow the example is partial because actual loaded icon rendering is not exercised.
+- Confirmed release compatibility blocker: public MSRV 1.85 conflicts with locked Bevy/bevy_ecs 0.18.1 minimum 1.89.0. Root Cargo.lock is local/ignored, not tracked in HEAD.
+- No production code/docs/metadata or Git state was changed. No archive/release action performed.
+
+
+## Independent Blocker-Fix Reconciliation — 2026-09-13
+
+- Current combined worktree review passes; formal verdict remains **INCOMPLETE only for clean preflight7.4**, progress **18/19**. Earlier audit/MSRV/asset warnings above describe pre-fix history and are superseded by this section.
+- Fresh33 HUD tests default and33 no-default pass; actual Rust1.89.0 locked/offline library checks both modes pass against final HUD SHA256 `eac2e1ac931100249dee26bf360445bf31fa5606c502fa32aa3e136e8b8aad08`. Logs `/tmp/voxel-hud-combined-review/`.
+- Independently reviewed source event/failure invalidation, all four real asset regressions, both real PNG consumer screenshots and raw graphical log. All10 spec scenarios now compliant; MSRV and loaded-image consumer blockers closed. Asset-free composition, query disjointness, same-frame scheduling, stable roots/children and selective mutation remain intact.
+- Final OpenSpec/CI/state YAML parses; current0.8 changelog notes MSRV/reload corrections, historical0.7 and older unchanged. Config/changelog were worker edits, only reviewed here.
+- Base-HEAD archive/full historical matrix is not evidence for final dirty candidate. No clean preflight was run/claimed, no19/19 or release/archive approval. Orchestrator must commit separately then run complete clean gate on new candidate.
+- Residual visual/assets/platform and pre-existing documentation drift detailed in updated `verify-report.md`; no new concrete production defect found and no production edits performed by verifier.

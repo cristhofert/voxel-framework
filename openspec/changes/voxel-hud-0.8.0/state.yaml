@@ -1,5 +1,5 @@
 change: voxel-hud-0.8.0
-phase: apply
+phase: verify
 artifact_store: hybrid
 artifacts:
   exploration: true
@@ -8,7 +8,7 @@ artifacts:
   design: true
   tasks: true
   apply-progress: true
-  verify-report: false
+  verify-report: true
   archive-report: false
 tasks_progress:
   completed:
@@ -32,4 +32,20 @@ tasks_progress:
     - "7.3"
   pending:
     - "7.4"
-last_updated: 2026-09-11
+last_updated: 2026-09-13
+verification:
+  verdict: INCOMPLETE
+  approval: false
+  head: 48d236b7b91ebdcaf5bc0ad98bb2fe14a563e63d
+  source_state: reviewed-uncommitted-blocker-fixes
+  hud_sha256: eac2e1ac931100249dee26bf360445bf31fa5606c502fa32aa3e136e8b8aad08
+  implementation_review: PASS
+  scenarios_compliant: 10
+  scenarios_partial: 0
+  clean_preflight_evidence: pending
+  blockers:
+    - "7.4: complete clean-preflight on separately committed combined candidate, no dirty override"
+  resolved_blockers:
+    - "MSRV corrected to 1.89, actual 1.89.0 default/no-default lib checks pass"
+    - "All-four real loaded-image consumer rendering/updates proven"
+  evidence_dir: /tmp/voxel-hud-combined-review
