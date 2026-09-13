@@ -42,17 +42,11 @@
 - [x] 7.1 Run `cargo fmt --all -- --check`, `cargo test --locked`, `cargo check --locked --all-targets`, and `cargo doc --locked --no-deps --all-features`.
 - [x] 7.2 Run `cargo test --locked --no-default-features`, `cargo check --locked --no-default-features --all-targets`, and `cargo check --locked --no-default-features --example hud`.
 - [x] 7.3 Run `cargo package --locked --offline --allow-dirty --list` and `cargo package --locked --offline --allow-dirty --no-verify`; confirm HUD example/docs ship and workflow/OpenSpec state does not.
-- [ ] 7.4 Have an independent verifier trace every spec scenario/non-goal to code/tests, inspect `git diff --check` for scope creep, and run `./scripts/release-preflight.sh 0.8.0` once the tree is clean.
-
-Task 7.4 is partially evidenced: the independent trace and `git diff --check`
-passed, and the complete script passed with `RELEASE_PREFLIGHT_ALLOW_DIRTY=1`.
-The repository release convention explicitly forbids using that override as
-release approval, so the clean-tree invocation remains pending while commits
-are prohibited.
+- [x] 7.4 Have an independent verifier trace every spec scenario/non-goal to code/tests, inspect `git diff --check` for scope creep, and run `./scripts/release-preflight.sh 0.8.0` once the tree is clean.
 
 
-Formal reconciliation (2026-09-13):7.4 remains unchecked,18/19, solely for
-complete clean-preflight evidence on the separately committed candidate.
-Combined fixes independently reviewed: corrected1.89 minimum verified on
-actual compiler, real image lifecycle/consumer acceptance proven,10/10
-scenarios compliant. See `verify-report.md`; do not claim19/19 yet.
+Task7.4 complete: independent scenario/non-goal review/diff check and full
+clean preflight on799ab9130ce8e19d30d84da02a1da2682b31cd5d without dirty
+override exit0. Full log `/tmp/voxel-0.8.0-799ab91-clean-preflight.log`;
+publish dry-run and supplemental no-default docs also exit0. Formal PASS,
+19/19,10/10 scenarios. See `verify-report.md`; no actual publish/archive.
