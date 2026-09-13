@@ -115,11 +115,7 @@
 - [x] 7.3 Offline package listing/creation passed. The 121-file archive includes
   `src/ui/hud.rs`, `docs/hud.md`, and `examples/hud.rs`, and excludes
   `openspec/`, `.github/`, and `docs/sdd/` workflow/state material.
-- [ ] 7.4 Independent scenario/non-goal review and `git diff --check` passed.
-  `./scripts/release-preflight.sh 0.8.0` also passed with
-  `RELEASE_PREFLIGHT_ALLOW_DIRTY=1`, but `docs/releasing.md` explicitly says
-  that override cannot approve a release. The required clean-tree invocation
-  remains pending because this batch was explicitly forbidden from committing.
+- [x] 7.4 Independent scenario/non-goal review and diff check passed; complete clean preflight without dirty override passed on committed799ab9130ce8e19d30d84da02a1da2682b31cd5d. Current formal result **PASS,19/19 tasks**; complete final evidence below supersedes the earlier pending-gate history.
 
 ### Final Matrix
 
@@ -160,11 +156,7 @@
 
 ## Remaining
 
-Task 7.4 needs one clean-tree `./scripts/release-preflight.sh 0.8.0` run before
-all 19 tasks can be marked complete and formal `sdd-verify` can begin. No
-verification report, archive, merge, commit, push, tag, or publish work was
-included.
-
+No implementation/verification tasks remain:19/19, formal PASS. The historical audits below document how blockers were discovered/closed; final committed-gate reconciliation supersedes their pending claims. No actual publication/archive/commit by verifier.
 
 ## Formal Verification Audit — 2026-09-13
 
@@ -185,3 +177,13 @@ included.
 - Final OpenSpec/CI/state YAML parses; current0.8 changelog notes MSRV/reload corrections, historical0.7 and older unchanged. Config/changelog were worker edits, only reviewed here.
 - Base-HEAD archive/full historical matrix is not evidence for final dirty candidate. No clean preflight was run/claimed, no19/19 or release/archive approval. Orchestrator must commit separately then run complete clean gate on new candidate.
 - Residual visual/assets/platform and pre-existing documentation drift detailed in updated `verify-report.md`; no new concrete production defect found and no production edits performed by verifier.
+
+
+## Final Committed Clean-Gate Reconciliation — 2026-09-13
+
+- **PASS,19/19 tasks,10/10 scenarios, no pending blocker.** Task7.4 clean gate complete at799ab9130ce8e19d30d84da02a1da2682b31cd5d; worker initial/final tree clean, finalizer observed clean tree before excluded OpenSpec artifact edits. No dirty override (logged package commands omit --allow-dirty); unchanged reviewed product hashes.
+- Complete `/tmp/voxel-0.8.0-799ab91-clean-preflight.log` read/audited:exit0; default/allfeatures278unit+19integration+110doctests each, no-default231+19+87;3ignored profile doctests per mode, no ignored HUD tests. Formatting/checks/allfeature docs and six0-test example harnesses pass.
+- `/tmp/voxel-0.8.0-799ab91-publish-dry-run.log`:initial DNS failure101, authorized escalated retry exit0; upload explicitly aborted due to dry run. `/tmp/voxel-0.8.0-799ab91-doc-no-default-features.log`:exit0. No actual publish; no yanked warning.
+- Current package121files3.6MiB(1.5compressed),clean799ab91 VCS, reviewed HUD/source/docs/metadata/local lock byte-match; workflow/OpenSpec excluded. Audits `/tmp/voxel-hud-final-799ab91/`.
+- Residual exhaustive layout/DPI/overlay/font/backend/window/platform/asset-watcher limitations remain explicit in verify-report; not approval blockers. Root lock remains ignored/local, exact1.89 proof limited to Linux library default/no-default.
+- Only four package-excluded OpenSpec progress/report files changed by finalizer; tested799ab91 product unchanged. Final resulting tree naturally dirty in artifacts, not evidence of a new clean rerun. No production/config/Cargo/Git writes, archive or publish action.

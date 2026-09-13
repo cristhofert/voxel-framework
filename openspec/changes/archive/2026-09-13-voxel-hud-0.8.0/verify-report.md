@@ -1,19 +1,19 @@
 # Formal Verification Report: voxel-hud-0.8.0
 
-**Verdict: INCOMPLETE — clean preflight pending; no release/archive approval.**
+**Verdict: PASS — formal SDD verification complete, with documented residual limitations.**
 **Implementation/scenario review: PASS, 10/10 scenarios compliant.**
 **Date:** 2026-09-13. **Backend:** HYBRID.
-**Checkout:** `/home/cris/Projects/voxel-framework`, branch `codex/voxel-hud-0.8.0`, base HEAD `48d236b7b91ebdcaf5bc0ad98bb2fe14a563e63d` **plus reviewed uncommitted blocker fixes**. This is not verification of a new clean commit.
+**Checkout:** `/home/cris/Projects/voxel-framework`, branch `codex/voxel-hud-0.8.0`, tested committed HEAD `799ab9130ce8e19d30d84da02a1da2682b31cd5d`. The gate ran on a clean tree; final report edits change only package-excluded OpenSpec artifacts, not the tested product.
 
 ## Executive summary
 
-Independently reviewed the combined MSRV, image lifecycle, CI/docs and final YAML/changelog changes. Both previous implementation blockers are resolved on this worktree: the minimum is truthfully 1.89 and actual Rust 1.89.0 library checks pass with/without defaults; genuine AssetServer regressions and a real PNG graphical consumer prove loaded images and all-four updates. Thirty-three HUD tests pass in each feature mode. No new concrete production defect or public-domain boundary regression was found. Task 7.4 remains pending, 18/19; only the complete clean-preflight gate remains an approval blocker.
+Independently reviewed the combined MSRV, image lifecycle, CI/docs and final YAML/changelog changes. Both previous implementation blockers are resolved on this worktree: the minimum is truthfully 1.89 and actual Rust 1.89.0 library checks pass with/without defaults; genuine AssetServer regressions and a real PNG graphical consumer prove loaded images and all-four updates. Thirty-three HUD tests pass in each feature mode. No new concrete production defect or public-domain boundary regression was found. The complete clean preflight and supplemental publish dry-run/no-default rustdoc evidence now close task7.4: **19/19 tasks,10/10 scenarios, no pending approval blockers**. PASS is verification only, not actual publication or an archive operation.
 
 ## Inputs and evidence provenance
 
 Loaded verification/memory skills and shared conventions; read CLAUDE, project config and local proposal/spec/design/tasks/progress/state. Full Engram planning observations recovered in the initial review: #712 proposal, #716 spec, #718 design, #723 tasks, #728 apply-progress, #713 state; full current report #786/state/progress recovered for reconciliation. The actual spec's ten scenarios remain authoritative.
 
-The initial review rejected progress-only assertions of 19/19 because historical `/tmp` preflight logs were unavailable. Nothing in the blocker-fix evidence supplies that missing complete clean gate. The old archived package names clean base HEAD, but it does not prove the full script's command/exit/override environment. It now also predates the image/MSRV changes. No dirty override or preflight invocation was performed here. The orchestrator plans to commit separately, then run the full preflight; evidence must name that eventual candidate commit, not silently reuse base HEAD.
+The initial review correctly rejected ungrounded19/19 summaries. That historical gap is now closed by the new complete committed-candidate logs, not by retroactively accepting the original claims. Independent finalization observed clean HEAD799ab91 before artifact writes; worker #808 records initial/final clean status. The current archive VCS names799ab91 without a dirty flag and byte-matches the tested source/docs/metadata/local lock. All previously independently reviewed product hashes match this commit. The script unconditionally adds --allow-dirty to package commands if RELEASE_PREFLIGHT_ALLOW_DIRTY=1; both logged package commands omit that flag, corroborating no override. Script's clean-tree protection and complete exit0 output therefore support the clean gate. See final evidence below. No expensive command rerun or publication was performed by the finalizer.
 
 Reviewed actual production diff, raw final logs (including earlier failure logs), test assertions, graphical probe source and both screenshots. `/tmp/voxel-msrv-0.8/verification-summary.txt` correctly includes earlier failed checks followed by successful final rechecks, not only success claims. Its earlier HUD hash differs from the final asset worker hash; therefore fresh inexpensive cached 1.89 checks were run on the exact combined HUD source. Source SHA256 at this review: `eac2e1ac931100249dee26bf360445bf31fa5606c502fa32aa3e136e8b8aad08`, matching `/tmp/hud-loaded-image/results.md`.
 
@@ -22,14 +22,14 @@ Reviewed actual production diff, raw final logs (including earlier failure logs)
 | Metric | Value |
 |---|---:|
 | Planned tasks | 19 |
-| Recorded complete | 18 |
-| Pending | 7.4 |
+| Recorded complete | 19 |
+| Pending | None |
 | Compliant scenarios | 10/10 |
 | Partial/failing scenarios | 0/0 |
 
-Independent review and diff check portions of 7.4 pass. Its complete clean-tree `./scripts/release-preflight.sh 0.8.0` portion has NOT passed or been run by this review. Historical 7.1–7.3 recorded completion is bookkeeping for the earlier base; it does not certify the combined worktree full matrix or current package archive. Do not increment to 19/19 yet.
+Task7.4 is complete: independent scenario/non-goal/invariants review, diff check, and complete clean-tree preflight pass on committed799ab91. Recorded historical matrix claims are no longer needed as substitutes for raw final evidence. No task remains pending.
 
-## Fresh focused execution
+## Prior independent focused execution (product hashes unchanged)
 
 Commands run against the combined worktree; exit status 0 appears in each log:
 
@@ -44,7 +44,7 @@ Commands run against the combined worktree; exit status 0 appears in each log:
 
 Exact minimum compiler: rustc `1.89.0 (29483883e 2025-08-04)`, cargo `1.89.0 (c24e10642 2025-06-23)`, Linux x86_64-unknown-linux-gnu. Focused tests use current stable 1.94.1. Root lockfile is ignored/untracked, not committed; locked checks prove the current local dependency graph. No broad dependency update occurred.
 
-`openspec/config.yaml` parses with Python YAML: configured test command cargo test, check command cargo check, coverage threshold 0 (disabled). Fresh execution deliberately targets HUD and minimum-compiler risks; no cargo build, full expensive historical matrix, all-features suite, rustdoc suite, package recreation or publish dry-run rerun. Unrelated tests are filtered, not passed.
+`openspec/config.yaml` parses with Python YAML: configured test command cargo test, check command cargo check, coverage threshold 0 (disabled). Those earlier focused runs target HUD and minimum-compiler risks; their unrelated tests were filtered. The final complete matrix is separately evidenced below, including unfiltered suites, package recreation and publish dry-run. The finalizer did not rerun any expensive command or run cargo build. Coverage remains unmeasured/disabled.
 
 ## Grounded worker evidence reused
 
@@ -57,7 +57,7 @@ Exact minimum compiler: rustc `1.89.0 (29483883e 2025-08-04)`, cargo `1.89.0 (c2
 
 ## Specification compliance matrix
 
-Original model/ECS tests below are in `/home/cris/Projects/voxel-framework/src/ui/hud.rs`, `ui::hud::tests`; new lifecycle tests are in `ui::hud::asset_runtime_tests`. All 33 passed in BOTH fresh combined-review logs. The same four presentation types remain headless-testable; visual consumer evidence is additional.
+Original model/ECS tests below are in `/home/cris/Projects/voxel-framework/src/ui/hud.rs`, `ui::hud::tests`; new lifecycle tests are in `ui::hud::asset_runtime_tests`. All33 passed in the prior independent combined-review logs AND in each of default/no-default/all-feature suites of the final clean-preflight log. The same four presentation types remain headless-testable; visual consumer evidence is additional.
 
 | # | Requirement / exact scenario | Behavioral evidence | Result |
 |---|---|---|---|
@@ -84,24 +84,51 @@ Original model/ECS tests below are in `/home/cris/Projects/voxel-framework/src/u
 - Final `/home/cris/Projects/voxel-framework/openspec/config.yaml` syntax repair preserves apply instructions under an instructions list while retaining tdd/test fields and verify rules. Parsed config/state/CI YAML successfully (`metadata-review.log`). Config and changelog were read after their worker updated them; this reviewer edited neither.
 - Final 0.8 CHANGELOG Fixed section accurately states corrected1.89 minimum and both image reload outcomes. Historical0.7 and older changelog sections byte-identical to HEAD. Date/version/install conditional-publication guidance remains unchanged; no publication/tag availability asserted.
 
-## Approval blocker and remaining work
+## Final committed clean-gate evidence
 
-**Only pending approval gate: task7.4 clean full preflight.** Orchestrator must separately commit the stabilized combined changes, run `./scripts/release-preflight.sh 0.8.0` without RELEASE_PREFLIGHT_ALLOW_DIRTY, and retain complete exit0 output plus exact new commit/clean-tree provenance. The new run must validate the complete matrix/docs/package for that candidate. This report does not approve release/archive or claim19/19.
+The finalizer read all1427 preflight lines and both supplemental logs, audited all commands/summaries, all33 HUD successes in each mode, and the package listing. Only individual successful/ignored unrelated test lines were suppressed in the displayed audit; none were skipped in reading. No failing or unexpected test status was found.
 
-Previous MSRV mismatch and loaded-image consumer blockers are CLOSED by reviewed corrections and independent execution. YAML syntax/release-note repairs are also reviewed and complete. No concrete additional production defect identified; reviewer made no production edits.
+| Evidence / command | Result |
+|---|---|
+| `./scripts/release-preflight.sh 0.8.0` | **PREFLIGHT_EXIT_STATUS=0**, complete final success line, no dirty override |
+| Formatting; default/all-feature all-target checks; no-default check | Passed |
+| Default tests |278 unit +19 integration +110 doctests passed;3 doctests ignored |
+| No-default tests |231 unit +19 integration +87 doctests passed;3 doctests ignored |
+| All-feature tests |278 unit +19 integration +110 doctests passed;3 doctests ignored |
+| `cargo test --locked --examples` |Six eligible harnesses passed,0tests each; not a graphical playtest |
+| `cargo doc --locked --no-deps --all-features` |Passed in preflight |
+| `cargo package --locked --offline --list` and `--no-verify` |Passed without --allow-dirty;121files,3.6MiB(1.5MiB compressed) |
+| `cargo publish --dry-run` supplemental |Initial restricted DNS failure101; authorized escalated retry **PUBLISH_DRY_RUN_ESCALATED_EXIT_STATUS=0**, archive compilation/verification succeeded, upload explicitly aborted due to dry run |
+| `cargo doc --locked --no-default-features --no-deps` supplemental |**DOC_NO_DEFAULT_FEATURES_EXIT_STATUS=0** |
+
+Complete raw logs:
+- `/tmp/voxel-0.8.0-799ab91-clean-preflight.log` (1427lines; SHA256 `6df2a696887e1535a3552014de410daca834fa452d5d4999bdddd07b1b9da36b`).
+- `/tmp/voxel-0.8.0-799ab91-publish-dry-run.log` (includes both failed DNS attempt and successful retry).
+- `/tmp/voxel-0.8.0-799ab91-doc-no-default-features.log`.
+
+Main gate uses rustc/cargo1.94.1; the prior actual1.89.0 default/no-default library checks remain grounded because product/source/local-lock hashes match the tested799ab91 commit. Three ignored doctests in every mode are `/home/cris/Projects/voxel-framework/src/profile.rs` examples at lines17,28,49, outside HUD; no HUD test ignored and no library/integration test filtered in the clean gate. No preflight/rustdoc/yanked-dependency warnings found. Dry-run warnings are the initial DNS retries and the expected aborted-upload notice, not a successful actual upload.
+
+**Current package audit:** `/home/cris/Projects/voxel-framework/target/package/voxel-framework-0.8.0.crate`,121files, SHA256 `5385944d6626b6be85fcdf703e5620015e5b8bcf735e278c5dde3821b9784d6c`. Archive .cargo_vcs_info.json names799ab9130ce8e19d30d84da02a1da2682b31cd5d with no dirty flag. HUD source/docs/example, Cargo metadata/local lock, README/AGENTS/CHANGELOG/llms byte-match tested product. OpenSpec/.github/docs/sdd excluded. Generated Cargo.toml.orig is standard Cargo package metadata. Audit `/tmp/voxel-hud-final-799ab91/package-audit.log`.
+
+## Approval blockers / verdict
+
+**None pending. PASS; task7.4 complete;19/19 tasks;10/10 scenarios compliant.** All earlier MSRV/loaded-image/YAML/clean-gate blockers resolved with evidence. Retained-renderer identity/reconciliation, same-frame barrier/query-disjointness, asset-free horizontal boundaries and explicit plugin installation remain as independently reviewed above. PASS permits the orchestrator to proceed with its workflow; it is not an actual publish, tag, commit or archive performed by this verifier.
+
 
 ## Residual risks / warnings (not scenario blockers)
 
 - Visual tests cover the observed default-font text and four placements on one NVIDIA/Vulkan single-camera/window scene. Still untested: exhaustive nine-anchor/direction multi-widget stacking, DPI/scaling matrix, overlay/loading/debug ZIndex overlap, custom font/Unicode shaping, multiple cameras/windows, visual failure/fallback transitions, other GPUs/backends/compressed textures. Do NOT describe all font/layout/GPU behavior as untested now.
 - Asset lifecycle coverage now includes genuine loading/failure/fallback/recovery, same-path explicit reloads, path publication updates, textured segments, shared caching/pruning and stock PNG decode. OS file-watcher-triggered hot reload, broad formats, multiple asset sources/server replacement and generalized direct Assets removal are not independently tested. Controlled explicit reload tests are not a full filesystem-watcher matrix.
-- Current package was not recreated: prior archive121 files proves base-HEAD package inclusion/exclusions only, NOT final HUD/MSRV/docs contents. Final full preflight must package candidate fixes. Prior archive/audit `/home/cris/Projects/voxel-framework/target/package/voxel-framework-0.8.0.crate`, `/tmp/voxel-hud-formal-48d236b/archive-audit.log`.
+- Package contents and compilation are now verified for799ab91; this does not add broad platform/visual coverage or guarantee future dependency resolutions.
 - Pre-existing docs drift remains nonblocking: llms.txt still introduces old0.4 release status/core “pure engine” language despite corrected current0.8 MSRV; config distribution text still says explicitly not crates.io while public docs describe future released installs; README CI-mirrors-publish-dry-run wording exceeds actual CI/preflight commands. No unauthorized documentation scope expansion performed.
-- Minimum checks prove local locked Linux library graph, not all examples/features/platforms on1.89. CI fresh lock resolution and ignored local lockfile mean dependencies are not determined by Git HEAD alone. Full historical matrix not redundantly reproduced here.
+- Minimum checks prove local locked Linux library graph, not all examples/features/platforms on1.89. CI fresh lock resolution and ignored local lockfile mean dependencies are not determined by Git HEAD alone. Final matrix is grounded in complete logs rather than redundantly rerun; exact1.89 coverage remains library/default/no-default only, not all targets/features/platforms.
 
-## Persistence / audit artifacts
+## Persistence / tested-product boundary
 
-Report `/home/cris/Projects/voxel-framework/openspec/changes/voxel-hud-0.8.0/verify-report.md`, state/apply-progress/tasks reconciled to10 compliant and18/19 with7.4 pending; corresponding Engram canonical topics synchronized. Archive-report remains false, approval false.
+Report `/home/cris/Projects/voxel-framework/openspec/changes/voxel-hud-0.8.0/verify-report.md`, tasks.md, apply-progress.md and state.yaml now record PASS,19/19 and10/10; synchronized canonical Engram topics. Phase remains verify; archive-report false. No production/config/Cargo/lock edit, Git write, archive, tag or actual publication by the finalizer.
 
-Combined diff and source provenance `/tmp/voxel-hud-combined-review/combined-production.diff`, `review-start-hashes.log`, `review-final-hashes.log`, `metadata-review.log`, focused logs above; prior report preserved at `/tmp/voxel-hud-combined-review/prior-verify-report.md`. Original clean-gate audit evidence remains `/tmp/voxel-hud-formal-48d236b/initial-progress.diff` and `initial-status.log`.
+The worker's gate began/ended clean on799ab91; this finalizer independently observed the clean tree before artifact edits. After these four excluded OpenSpec files are updated, the checkout is naturally dirty **only in those artifacts**. The report refers to unchanged tested product at799ab91, not a fictional clean run after report writes or a future commit.
 
-**Next recommended:** orchestrator-controlled candidate commit then complete clean preflight; reconcile formal approval only after valid evidence. No commit/Git writes, publish/tag/archive, config/changelog or production edits by this reviewer.
+Final provenance/audits `/tmp/voxel-hud-final-799ab91/{initial-clean-provenance,product-provenance,package-audit,evidence-sha256}.log`; pre-final report preserved at `/tmp/voxel-hud-final-799ab91/pre-final-verify-report.md`. Earlier focused/screenshot evidence remains under `/tmp/voxel-hud-combined-review/` and `/tmp/hud-loaded-image/` as cited above.
+
+**Next recommended:** orchestrator may proceed to its requested next phase; no remaining verification blocker. No commit/archive/publication executed here.

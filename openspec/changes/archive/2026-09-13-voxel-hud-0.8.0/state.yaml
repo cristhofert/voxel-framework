@@ -1,0 +1,67 @@
+change: voxel-hud-0.8.0
+phase: archive
+artifact_store: hybrid
+artifacts:
+  exploration: true
+  proposal: true
+  specs: true
+  design: true
+  tasks: true
+  apply-progress: true
+  verify-report: true
+  archive-report: true
+tasks_progress:
+  completed:
+    - "1.1"
+    - "1.2"
+    - "1.3"
+    - "2.1"
+    - "2.2"
+    - "3.1"
+    - "3.2"
+    - "3.3"
+    - "3.4"
+    - "3.5"
+    - "4.1"
+    - "4.2"
+    - "5.1"
+    - "5.2"
+    - "6.1"
+    - "7.1"
+    - "7.2"
+    - "7.3"
+    - "7.4"
+  pending: []
+last_updated: 2026-09-13
+verification:
+  verdict: PASS
+  approval: true
+  head: 799ab9130ce8e19d30d84da02a1da2682b31cd5d
+  source_state: tested-clean-commit-with-subsequent-excluded-artifact-edits
+  hud_sha256: eac2e1ac931100249dee26bf360445bf31fa5606c502fa32aa3e136e8b8aad08
+  implementation_review: PASS
+  scenarios_compliant: 10
+  scenarios_partial: 0
+  clean_preflight_evidence: passed
+  clean_preflight_exit_status: 0
+  dirty_override: false
+  blockers: []
+  resolved_blockers:
+    - "MSRV corrected/verified on actual Rust1.89.0 Linux library in both modes"
+    - "All-four real loaded-image consumer rendering/updates proven"
+    - "Complete committed799ab91 clean-preflight plus dry-run/no-default rustdoc evidence"
+  evidence_dir: /tmp/voxel-hud-final-799ab91
+  preflight_log: /tmp/voxel-0.8.0-799ab91-clean-preflight.log
+  publish_dry_run_log: /tmp/voxel-0.8.0-799ab91-publish-dry-run.log
+  no_default_docs_log: /tmp/voxel-0.8.0-799ab91-doc-no-default-features.log
+  actual_publish: false
+archive:
+  status: archived
+  date: 2026-09-13
+  path: openspec/changes/archive/2026-09-13-voxel-hud-0.8.0
+  report: openspec/changes/archive/2026-09-13-voxel-hud-0.8.0/archive-report.md
+  main_spec: openspec/specs/hud/spec.md
+  tested_product_unchanged: true
+  package_excluded: true
+  actual_publish: false
+  release_operations_pending: true
