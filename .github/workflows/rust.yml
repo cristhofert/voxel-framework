@@ -79,6 +79,10 @@ jobs:
   test:
     name: Test (${{ matrix.mode }})
     runs-on: ubuntu-latest
+    # Keep Bevy test artifacts within the hosted runner's disk budget.
+    env:
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     strategy:
       fail-fast: false
       matrix:
