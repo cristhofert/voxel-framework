@@ -70,8 +70,8 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install audio and Wayland development dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libwayland-dev
+      - name: Install native development dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libwayland-dev libudev-dev
 
       - name: Run cargo check
         run: ${{ matrix.command }}
@@ -101,8 +101,8 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install audio and Wayland development dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libwayland-dev
+      - name: Install native development dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libwayland-dev libudev-dev
 
       - name: Run cargo test
         run: ${{ matrix.command }}
