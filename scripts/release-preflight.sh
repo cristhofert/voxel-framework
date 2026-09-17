@@ -151,6 +151,15 @@ run cargo test --locked
 run cargo test --locked --no-default-features
 run cargo test --locked --all-features
 run cargo test --locked --examples
+# Verify this package line on its exact declared minimum, not just stable.
+# The 1.89.0 toolchain must already be installed; do not silently substitute it.
+run rustc +1.89.0 --version
+run cargo +1.89.0 check --locked --lib
+run cargo +1.89.0 check --locked --lib --no-default-features
+run cargo +1.89.0 check --locked --lib --all-features
+run cargo +1.89.0 test --locked --lib --no-default-features --features items,crafting items::inventory::tests
+run cargo +1.89.0 test --locked --lib --no-default-features --features items,crafting items::persistence::tests
+run cargo +1.89.0 test --locked --lib --no-default-features --features items,crafting crafting::tests
 run cargo doc --locked --no-deps --all-features
 
 package_dirty_args=()
@@ -161,4 +170,5 @@ run cargo package --locked --offline --list "${package_dirty_args[@]}"
 run cargo package --locked --offline --no-verify "${package_dirty_args[@]}"
 
 printf '\nRelease preflight passed for voxel-framework %s.\n' "$release_version"
+printf 'Local gates only: targeted Windows inventory-persistence CI must also pass on this exact candidate ref.\n'
 printf 'No crate was published, no tag was created, and no GitHub Release was created.\n'

@@ -17,6 +17,46 @@ use bevy::prelude::*;
 
 // ─── Container trait ─────────────────────────────────────────────────────────
 
+/// Neutral failure reasons for an atomic container exchange.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ContainerExchangeError {
+    /// A positive sentinel quantity or an overflowing quantity list.
+    InvalidRequest,
+    /// The container's shape, live stacks, or totals are invalid.
+    InvalidContainer,
+    /// The container cannot supply every requested item.
+    InsufficientItems,
+    /// The post-consumption outputs exceed slot or numeric capacity.
+    CapacityExceeded,
+}
+
+/// Normalize by item equality, retaining first-occurrence order (not byte identity).
+pub(crate) fn normalize_quantities<I: ItemType>(
+    quantities: &[(I, u32)],
+) -> Result<Vec<(I, u32)>, ContainerExchangeError> {
+    let mut normalized: Vec<(I, u32)> = Vec::new();
+    for &(item, count) in quantities {
+        if count == 0 {
+            continue;
+        }
+        if item == I::default() || item.is_empty() {
+            return Err(ContainerExchangeError::InvalidRequest);
+        }
+        if let Some((_, total)) = normalized
+            .iter_mut()
+            .find(|(existing, _)| *existing == item)
+        {
+            *total = total
+                .checked_add(count)
+                .ok_or(ContainerExchangeError::InvalidRequest)?;
+        } else {
+            normalized.push((item, count));
+        }
+    }
+    Ok(normalized)
+}
+
 /// Abstraction over slot-based item storage.
 ///
 /// Any type that holds items in indexed slots can implement this trait to be
@@ -50,6 +90,23 @@ pub trait Container<I: ItemType> {
     /// Returns the slot at `index`, or `None` if the index is out of bounds or
     /// the slot is empty.  Never panics.
     fn slot_at(&self, index: usize) -> Option<&InventorySlot<I>>;
+
+    /// Optionally consume and produce a complete exchange atomically.
+    ///
+    /// `None` means unsupported; `None` and `Some(Err(_))` MUST leave the
+    /// container unchanged. `Some(Ok(()))` means every quantity was exchanged.
+    /// Normalize duplicates by equality in first-occurrence order, ignore zero
+    /// quantities, allow empty lists, and reject positive default/empty sentinels
+    /// and checked `u32` sums that overflow. Evaluate capacity after consumption.
+    /// The default keeps existing implementors compatible; legacy crafting may
+    /// partially mutate when their individual operations fail.
+    fn try_exchange_atomic(
+        &mut self,
+        _remove: &[(I, u32)],
+        _add: &[(I, u32)],
+    ) -> Option<Result<(), ContainerExchangeError>> {
+        None
+    }
 }
 
 // ─── ItemType trait ───────────────────────────────────────────────────────────
@@ -210,6 +267,58 @@ pub struct Inventory<I: ItemType> {
 }
 
 impl<I: ItemType> Inventory<I> {
+    /// Check publicly writable fields before transactional use or persistence.
+    pub(crate) fn validate_integrity(&self) -> Result<(), ContainerExchangeError> {
+        if self.capacity != self.slots.len() {
+            return Err(ContainerExchangeError::InvalidContainer);
+        }
+        let quantities: Vec<_> = self
+            .slots
+            .iter()
+            .flatten()
+            .map(|slot| (slot.item, slot.count))
+            .collect();
+        if quantities.iter().any(|(_, count)| *count == 0) {
+            return Err(ContainerExchangeError::InvalidContainer);
+        }
+        normalize_quantities(&quantities)
+            .map(|_| ())
+            .map_err(|_| ContainerExchangeError::InvalidContainer)
+    }
+
+    fn exchange_atomic(
+        &mut self,
+        remove: &[(I, u32)],
+        add: &[(I, u32)],
+    ) -> Result<(), ContainerExchangeError> {
+        let remove = normalize_quantities(remove)?;
+        let add = normalize_quantities(add)?;
+        self.validate_integrity()?;
+        if remove
+            .iter()
+            .any(|&(item, count)| self.count_of(item) < count)
+        {
+            return Err(ContainerExchangeError::InsufficientItems);
+        }
+        // Copy only private staging data: no extra Clone bound on item/container.
+        let mut staged = Self {
+            slots: self.slots.clone(),
+            capacity: self.capacity,
+        };
+        for (item, count) in remove {
+            if staged.remove(item, count) != count {
+                return Err(ContainerExchangeError::InsufficientItems);
+            }
+        }
+        for (item, count) in add {
+            if staged.add(item, count) != 0 {
+                return Err(ContainerExchangeError::CapacityExceeded);
+            }
+        }
+        self.slots = staged.slots;
+        Ok(())
+    }
+
     /// Creates a new empty inventory with the given slot capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -222,9 +331,18 @@ impl<I: ItemType> Inventory<I> {
     ///
     /// Items are stacked onto existing slots of the same type first, then into
     /// empty slots. Returns the number of items that could **not** be added
-    /// because the inventory is full.
+    /// because slot capacity or the per-item `u32` representational ceiling is
+    /// exceeded. This is not an author-configured stack limit. Invalid public
+    /// fields or positive default/empty sentinels are rejected without mutation.
     pub fn add(&mut self, item: I, count: u32) -> u32 {
-        let mut remaining = count;
+        if count == 0 {
+            return 0;
+        }
+        if item == I::default() || item.is_empty() || self.validate_integrity().is_err() {
+            return count;
+        }
+        let accepted = count.min(u32::MAX - self.count_of(item));
+        let mut remaining = accepted;
 
         // First pass: fill existing stacks.
         for slot in self.slots.iter_mut().flatten() {
@@ -253,7 +371,7 @@ impl<I: ItemType> Inventory<I> {
             }
         }
 
-        remaining
+        (count - accepted) + remaining
     }
 
     /// Removes up to `count` of `item` from the inventory.
@@ -284,14 +402,14 @@ impl<I: ItemType> Inventory<I> {
         removed
     }
 
-    /// Returns the total number of `item` across all slots.
+    /// Returns the total number of `item`, defensively saturating for invalid
+    /// publicly modified fields rather than wrapping or panicking.
     pub fn count_of(&self, item: I) -> u32 {
         self.slots
             .iter()
             .flatten()
             .filter(|s| s.item == item)
-            .map(|s| s.count)
-            .sum()
+            .fold(0u32, |total, slot| total.saturating_add(slot.count))
     }
 
     /// Returns `true` if every slot is occupied.
@@ -310,6 +428,14 @@ impl<I: ItemType> Default for Inventory<I> {
 // ─── Container impl for Inventory ────────────────────────────────────────────
 
 impl<I: ItemType> Container<I> for Inventory<I> {
+    fn try_exchange_atomic(
+        &mut self,
+        remove: &[(I, u32)],
+        add: &[(I, u32)],
+    ) -> Option<Result<(), ContainerExchangeError>> {
+        Some(self.exchange_atomic(remove, add))
+    }
+
     fn add(&mut self, item: I, count: u32) -> u32 {
         Inventory::add(self, item, count)
     }
@@ -373,6 +499,14 @@ impl<I: ItemType> ContainerComponent<I> {
 }
 
 impl<I: ItemType> Container<I> for ContainerComponent<I> {
+    fn try_exchange_atomic(
+        &mut self,
+        remove: &[(I, u32)],
+        add: &[(I, u32)],
+    ) -> Option<Result<(), ContainerExchangeError>> {
+        Container::try_exchange_atomic(&mut self.0, remove, add)
+    }
+
     fn add(&mut self, item: I, count: u32) -> u32 {
         self.0.add(item, count)
     }
@@ -752,5 +886,327 @@ mod tests {
     fn container_component_slot_at_oob_no_panic() {
         let cc = ContainerComponent::<DefaultItem>::new(9);
         assert!(cc.slot_at(100).is_none());
+    }
+
+    fn stack(item: DefaultItem, count: u32) -> Option<InventorySlot<DefaultItem>> {
+        Some(InventorySlot { item, count })
+    }
+
+    #[test]
+    fn exchange_normalizes_duplicates_and_uses_freed_capacity() {
+        let mut inv = Inventory::new(1);
+        inv.add(DefaultItem::IronOre, 4);
+        assert_eq!(
+            inv.try_exchange_atomic(
+                &[(DefaultItem::IronOre, 2), (DefaultItem::IronOre, 2)],
+                &[(DefaultItem::Crystal, 1), (DefaultItem::Crystal, 2)],
+            ),
+            Some(Ok(()))
+        );
+        assert_eq!(inv.slots, vec![stack(DefaultItem::Crystal, 3)]);
+        assert_eq!(inv.capacity, 1);
+    }
+
+    #[test]
+    fn exchange_failure_preserves_exact_sparse_layout() {
+        let original = Inventory {
+            capacity: 4,
+            slots: vec![
+                stack(DefaultItem::IronOre, 2),
+                None,
+                stack(DefaultItem::IronOre, 1),
+                stack(DefaultItem::Crystal, 7),
+            ],
+        };
+        let requests = [
+            (
+                vec![(DefaultItem::IronOre, 2), (DefaultItem::IronOre, 2)],
+                vec![],
+                ContainerExchangeError::InsufficientItems,
+            ),
+            (
+                vec![(DefaultItem::IronOre, 1)],
+                vec![(DefaultItem::Wood, 1), (DefaultItem::Sand, 1)],
+                ContainerExchangeError::CapacityExceeded,
+            ),
+            (
+                vec![(DefaultItem::IronOre, 1)],
+                vec![(DefaultItem::Crystal, u32::MAX)],
+                ContainerExchangeError::CapacityExceeded,
+            ),
+            (
+                vec![(DefaultItem::IronOre, u32::MAX), (DefaultItem::IronOre, 1)],
+                vec![],
+                ContainerExchangeError::InvalidRequest,
+            ),
+            (
+                vec![],
+                vec![(DefaultItem::Crystal, u32::MAX), (DefaultItem::Crystal, 1)],
+                ContainerExchangeError::InvalidRequest,
+            ),
+            (
+                vec![(DefaultItem::Empty, 1)],
+                vec![],
+                ContainerExchangeError::InvalidRequest,
+            ),
+            (
+                vec![],
+                vec![(DefaultItem::Empty, 1)],
+                ContainerExchangeError::InvalidRequest,
+            ),
+        ];
+        for (remove, add, error) in requests {
+            let mut inv = original.clone();
+            assert_eq!(inv.try_exchange_atomic(&remove, &add), Some(Err(error)));
+            assert_eq!(inv.slots, original.slots);
+            assert_eq!(inv.capacity, original.capacity);
+        }
+    }
+
+    #[test]
+    fn exchange_same_input_outputs_and_existing_duplicate_stacks() {
+        let mut inv = Inventory {
+            capacity: 4,
+            slots: vec![
+                stack(DefaultItem::IronOre, 2),
+                None,
+                stack(DefaultItem::IronOre, 3),
+                stack(DefaultItem::Crystal, 4),
+            ],
+        };
+        assert_eq!(
+            inv.try_exchange_atomic(
+                &[(DefaultItem::IronOre, 4)],
+                &[
+                    (DefaultItem::IronOre, 2),
+                    (DefaultItem::Crystal, 1),
+                    (DefaultItem::IronOre, 3)
+                ],
+            ),
+            Some(Ok(()))
+        );
+        assert_eq!(
+            inv.slots,
+            vec![
+                None,
+                None,
+                stack(DefaultItem::IronOre, 6),
+                stack(DefaultItem::Crystal, 5)
+            ]
+        );
+    }
+
+    #[test]
+    fn add_bounds_aggregate_headroom_and_returns_every_leftover() {
+        let mut inv = Inventory {
+            capacity: 3,
+            slots: vec![
+                stack(DefaultItem::Crystal, u32::MAX - 10),
+                None,
+                stack(DefaultItem::Crystal, 5),
+            ],
+        };
+        assert_eq!(inv.add(DefaultItem::Crystal, 8), 3);
+        assert_eq!(inv.count_of(DefaultItem::Crystal), u32::MAX);
+        assert_eq!(inv.slots[0], stack(DefaultItem::Crystal, u32::MAX - 5));
+        assert_eq!(inv.slots[2], stack(DefaultItem::Crystal, 5));
+        assert!(inv.slots[1].is_none());
+        let before = inv.slots.clone();
+        assert_eq!(inv.add(DefaultItem::Crystal, u32::MAX), u32::MAX);
+        assert_eq!(inv.slots, before);
+        let mut full = Inventory::new(1);
+        full.add(DefaultItem::IronOre, 1);
+        assert_eq!(full.add(DefaultItem::Crystal, u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn malformed_sources_reject_exchange_and_add_without_mutation() {
+        let invalid = [
+            Inventory {
+                capacity: 2,
+                slots: vec![None],
+            },
+            Inventory {
+                capacity: 0,
+                slots: vec![None],
+            },
+            Inventory {
+                capacity: 1,
+                slots: vec![stack(DefaultItem::IronOre, 0)],
+            },
+            Inventory {
+                capacity: 1,
+                slots: vec![stack(DefaultItem::Empty, 1)],
+            },
+            Inventory {
+                capacity: 2,
+                slots: vec![
+                    stack(DefaultItem::IronOre, u32::MAX),
+                    stack(DefaultItem::IronOre, 1),
+                ],
+            },
+        ];
+        for mut inv in invalid {
+            let before = inv.slots.clone();
+            let capacity = inv.capacity;
+            assert_eq!(
+                inv.validate_integrity(),
+                Err(ContainerExchangeError::InvalidContainer)
+            );
+            assert_eq!(
+                inv.try_exchange_atomic(&[], &[]),
+                Some(Err(ContainerExchangeError::InvalidContainer))
+            );
+            assert_eq!(inv.add(DefaultItem::Crystal, 5), 5);
+            assert_eq!(inv.slots, before);
+            assert_eq!(inv.capacity, capacity);
+        }
+    }
+
+    #[test]
+    fn count_of_defensively_saturates_invalid_totals() {
+        let inv = Inventory {
+            capacity: 3,
+            slots: vec![
+                stack(DefaultItem::Crystal, u32::MAX),
+                stack(DefaultItem::Crystal, u32::MAX),
+                stack(DefaultItem::IronOre, 3),
+            ],
+        };
+        assert_eq!(inv.count_of(DefaultItem::Crystal), u32::MAX);
+        assert_eq!(inv.count_of(DefaultItem::IronOre), 3);
+    }
+
+    #[test]
+    fn empty_lists_zero_quantities_and_zero_capacity_are_valid() {
+        let mut inv = Inventory::<DefaultItem>::new(0);
+        assert_eq!(inv.validate_integrity(), Ok(()));
+        assert_eq!(inv.try_exchange_atomic(&[], &[]), Some(Ok(())));
+        assert_eq!(
+            inv.try_exchange_atomic(&[(DefaultItem::Empty, 0)], &[(DefaultItem::Empty, 0)]),
+            Some(Ok(()))
+        );
+        assert_eq!(inv.add(DefaultItem::Empty, 0), 0);
+        assert_eq!(inv.add(DefaultItem::Empty, 1), 1);
+        assert_eq!(inv.add(DefaultItem::Crystal, 1), 1);
+        assert!(inv.slots.is_empty());
+    }
+
+    #[test]
+    fn normalization_uses_equality_not_serialized_bytes_and_keeps_order() {
+        assert_eq!(
+            DefaultItem::IronOre.to_byte(),
+            DefaultItem::IronOreItem.to_byte()
+        );
+        assert_ne!(DefaultItem::IronOre, DefaultItem::IronOreItem);
+        assert_eq!(
+            normalize_quantities(&[
+                (DefaultItem::Empty, 0),
+                (DefaultItem::IronOreItem, 1),
+                (DefaultItem::Crystal, 0),
+                (DefaultItem::IronOre, 2),
+                (DefaultItem::IronOreItem, 3),
+                (DefaultItem::Crystal, 5),
+            ]),
+            Ok(vec![
+                (DefaultItem::IronOreItem, 4),
+                (DefaultItem::IronOre, 2),
+                (DefaultItem::Crystal, 5)
+            ])
+        );
+    }
+
+    // Deliberately no Debug/Serialize derives and no is_empty override for Default.
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+    enum MinimalItem {
+        #[default]
+        DefaultSentinel,
+        OtherSentinel,
+        Live,
+    }
+
+    impl ItemType for MinimalItem {
+        fn name(&self) -> &'static str {
+            "minimal"
+        }
+        fn color(&self) -> [f32; 4] {
+            [1.0; 4]
+        }
+        fn to_byte(&self) -> u8 {
+            1
+        }
+        fn from_byte(_: u8) -> Self {
+            Self::default()
+        }
+        fn is_empty(&self) -> bool {
+            *self == Self::OtherSentinel
+        }
+    }
+
+    #[test]
+    fn exchange_requires_no_new_item_bounds_and_rejects_both_sentinels() {
+        let mut inv = Inventory::<MinimalItem>::new(1);
+        assert_eq!(inv.add(MinimalItem::DefaultSentinel, 1), 1);
+        assert_eq!(inv.add(MinimalItem::OtherSentinel, 1), 1);
+        assert_eq!(
+            inv.try_exchange_atomic(&[], &[(MinimalItem::Live, 1)]),
+            Some(Ok(()))
+        );
+        for sentinel in [MinimalItem::DefaultSentinel, MinimalItem::OtherSentinel] {
+            assert_eq!(
+                inv.try_exchange_atomic(&[(sentinel, 1)], &[]),
+                Some(Err(ContainerExchangeError::InvalidRequest))
+            );
+            assert_eq!(
+                inv.try_exchange_atomic(&[], &[(sentinel, 1)]),
+                Some(Err(ContainerExchangeError::InvalidRequest))
+            );
+            assert_eq!(
+                inv.try_exchange_atomic(&[(sentinel, 0)], &[(sentinel, 0)]),
+                Some(Ok(()))
+            );
+            let invalid = Inventory {
+                capacity: 1,
+                slots: vec![Some(InventorySlot {
+                    item: sentinel,
+                    count: 1,
+                })],
+            };
+            assert_eq!(
+                invalid.validate_integrity(),
+                Err(ContainerExchangeError::InvalidContainer)
+            );
+        }
+        assert_eq!(inv.count_of(MinimalItem::Live), 1);
+    }
+
+    #[test]
+    fn component_atomic_exchange_matches_inventory_success_and_failure() {
+        let mut inv = Inventory::new(1);
+        inv.add(DefaultItem::IronOre, 4);
+        let mut component = ContainerComponent(inv.clone());
+        for (remove, add) in [
+            (
+                vec![(DefaultItem::IronOre, 4)],
+                vec![(DefaultItem::Crystal, 3)],
+            ),
+            (vec![], vec![(DefaultItem::Wood, 1)]),
+            (vec![(DefaultItem::Crystal, 4)], vec![]),
+            (vec![], vec![(DefaultItem::Empty, 1)]),
+        ] {
+            assert_eq!(
+                component.try_exchange_atomic(&remove, &add),
+                inv.try_exchange_atomic(&remove, &add)
+            );
+            assert_eq!(component.0.slots, inv.slots);
+            assert_eq!(component.capacity(), inv.capacity);
+        }
+        component.0.capacity = 2;
+        let before = component.0.slots.clone();
+        assert_eq!(
+            component.try_exchange_atomic(&[], &[]),
+            Some(Err(ContainerExchangeError::InvalidContainer))
+        );
+        assert_eq!(component.0.slots, before);
     }
 }
