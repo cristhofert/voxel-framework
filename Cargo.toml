@@ -1,6 +1,6 @@
 [package]
 name = "voxel-framework"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 rust-version = "1.89"
 description = "A reusable voxel engine framework built on Bevy"
@@ -34,7 +34,7 @@ all-features = true
 [features]
 default = ["items", "crafting", "mobs"]
 # Items, inventory, drops, hotbar, and item-pickup UI.
-items = []
+items = ["dep:tempfile", "dep:windows-sys"]
 # Crafting recipes and registry. Recipes consume items, so this implies `items`.
 crafting = ["items"]
 # Hostile/passive mob entities (AI, pathing, damage). Independent of `items`.
@@ -54,12 +54,19 @@ bevy = { version = "0.18", default-features = false, features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = { version = "=3.27.0", optional = true }
 toml = "0.8"
 # Profiling deps — pulled in only via the `tracing` / `tracy` features.
 # Versions match what Bevy 0.18 transitively resolves to (tracing 0.1, tracing-subscriber 0.3).
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true }
 tracing-tracy = { version = "0.11", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", optional = true, features = [
+    "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemServices",
+] }
 
 [dev-dependencies]
 bevy = { version = "0.18", features = ["bevy_winit", "wayland", "bevy_mesh", "bevy_audio", "vorbis"] }

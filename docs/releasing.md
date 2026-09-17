@@ -6,8 +6,12 @@ creates or pushes a tag, or creates a GitHub Release.
 
 ## Prepare the release
 
-1. Update the package version in `Cargo.toml` and let Cargo update the root
-   package entry in `Cargo.lock`.
+1. Update the package version in `Cargo.toml`. `Cargo.lock` is ignored by this
+   library: after all candidate workers finish, prepare a lockfile for the exact
+   candidate and retain it as verification evidence. Install Rust **1.89.0**
+   as well as stable before running the gate; the preflight does not substitute
+   stable for the minimum toolchain. Dependency resolution on that exact minimum
+   must be checked, including the optional `tempfile =3.27.0` used by `items`.
 2. Add a dated `## [X.Y.Z] - YYYY-MM-DD` heading and release notes to
    `CHANGELOG.md`.
 3. From a clean working tree, run the complete local gate:
@@ -16,9 +20,18 @@ creates or pushes a tag, or creates a GitHub Release.
    ./scripts/release-preflight.sh X.Y.Z
    ```
 
-4. Open and merge the release preparation pull request after normal Rust CI is
-   green. The **Release preflight** workflow may also be run manually for the
-   candidate ref with the same unprefixed version; it calls the local script as
+4. Require normal Rust CI, including **Windows inventory persistence (items
+   only)**, on the same exact candidate ref. The local script checks the Linux
+   feature matrix, exact Rust 1.89.0 default/no-default/all-features library
+   checks and focused inventory/persistence/crafting tests, docs, and package
+   contents; it cannot supply Windows execution evidence. Inspect native
+   permission/symlink test exclusions rather than treating Linux results or a
+   filtered zero-test run as Windows proof. Metadata, a dated changelog, or
+   local preflight success alone does not make a candidate ready.
+5. Any integration or publication is a separate human-controlled decision after
+   the exact candidate gates pass. The **Release preflight** workflow may also
+   be run manually for the candidate ref with the same unprefixed version; it
+   calls the local script as
    its single source of truth. The workflow checks out without persisting GitHub
    credentials and has read-only repository permissions.
 
@@ -28,6 +41,14 @@ cached. Only the final package listing and package creation are forced offline;
 they deliberately use the dependencies fetched by the earlier validation steps.
 `RELEASE_PREFLIGHT_ALLOW_DIRTY=1` exists only to test changes to the preflight
 itself and must never be used to approve a release.
+
+For the prepared **0.8.1** candidate, use `0.8.1` as the preflight version, but
+do not assume that a 0.8.1 crate or `v0.8.1` tag already exists. Candidate work
+must stop without merging, pushing, tagging, publishing, or dispatching
+automation unless separately authorized. The scope is crafting, inventory,
+and inventory JSON persistence only. Save replacement promises whole-file
+visibility and preservation before replacement failure, not universal power-cut
+durability or preservation of ownership, ACLs, or extended attributes.
 
 ## Publish and announce manually
 

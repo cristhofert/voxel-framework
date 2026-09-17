@@ -10,8 +10,9 @@
 //! # Crafting logic
 //!
 //! [`try_craft`] is a pure function: it verifies that the inventory holds
-//! enough of every ingredient, consumes them atomically, and produces the
-//! outputs. [`can_craft`] performs the read-only check without side effects.
+//! enough of every ingredient and produces the outputs. Built-in containers
+//! exchange atomically; legacy external containers may partially mutate on
+//! failure. [`can_craft`] checks ingredients only, without side effects.
 //!
 //! # UI
 //!
@@ -44,7 +45,9 @@ use std::marker::PhantomData;
 use bevy::prelude::*;
 
 use crate::items::ItemType;
-use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
+use crate::items::inventory::{
+    Container, ContainerComponent, ContainerExchangeError, PrimaryContainer, normalize_quantities,
+};
 
 // ─── Data layer ───────────────────────────────────────────────────────────────
 
@@ -61,7 +64,9 @@ pub struct CraftingIngredient<I> {
 /// produce [`outputs`](CraftingRecipe::outputs).
 ///
 /// "Shapeless" means arrangement in a crafting grid is not modelled — only item
-/// types and counts matter.
+/// types and counts matter. Duplicate entries aggregate by item equality in
+/// first-occurrence order with checked `u32` totals. Zero entries are ignored;
+/// empty recipes are allowed. Positive default/empty sentinels are invalid.
 #[derive(Debug, Clone)]
 pub struct CraftingRecipe<I> {
     /// Short human-readable name shown in the crafting menu.
@@ -94,82 +99,138 @@ impl<I: ItemType> CraftingRegistry<I> {
 /// Reason a craft attempt failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CraftingError {
-    /// No recipe exists at the given index.
+    /// The index is missing, or the recipe contains a sentinel or quantity overflow.
     InvalidRecipe,
     /// The inventory does not hold enough of one or more ingredients.
     InsufficientIngredients,
-    /// The inventory does not have room for the produced outputs.
+    /// The container is invalid or lacks slot/numeric capacity for the outputs.
     InventoryFull,
 }
 
-/// Returns `true` if the container satisfies all ingredients of `recipe_index`.
+// Both lists are validated before ingredients or capacity are considered.
+fn normalized_recipe<I: ItemType>(
+    recipe: &CraftingRecipe<I>,
+) -> Result<NormalizedRecipe<I>, CraftingError> {
+    let normalize = |entries: &[CraftingIngredient<I>]| {
+        let quantities: Vec<_> = entries
+            .iter()
+            .map(|entry| (entry.item, entry.count))
+            .collect();
+        normalize_quantities(&quantities).map_err(|_| CraftingError::InvalidRecipe)
+    };
+    Ok(NormalizedRecipe {
+        remove: normalize(&recipe.ingredients)?,
+        add: normalize(&recipe.outputs)?,
+    })
+}
+
+struct NormalizedRecipe<I> {
+    remove: Vec<(I, u32)>,
+    add: Vec<(I, u32)>,
+}
+
+/// Returns `true` for a valid recipe whose aggregate ingredients are available.
 ///
-/// Does **not** mutate the container.
+/// Does **not** mutate or check output capacity. Invalid outputs still make the
+/// recipe invalid, even though this check otherwise concerns ingredients only.
 pub fn can_craft<I: ItemType>(
     registry: &CraftingRegistry<I>,
     inventory: &impl Container<I>,
     recipe_index: usize,
 ) -> bool {
-    let Some(recipe) = registry.recipes.get(recipe_index) else {
-        return false;
-    };
-    recipe
-        .ingredients
-        .iter()
-        .all(|ing| inventory.count_of(ing.item) >= ing.count)
+    registry
+        .recipes
+        .get(recipe_index)
+        .and_then(|recipe| normalized_recipe(recipe).ok())
+        .is_some_and(|recipe| {
+            recipe
+                .remove
+                .iter()
+                .all(|&(item, count)| inventory.count_of(item) >= count)
+        })
 }
 
-/// Attempts to craft recipe `recipe_index`, consuming ingredients and producing
-/// outputs.
+/// Attempts to craft a normalized recipe, consuming ingredients and producing outputs.
 ///
 /// # Atomicity
 ///
-/// All preconditions are checked before any mutation:
-/// - The recipe must exist.
-/// - The container must hold enough of every ingredient.
-/// - The container must have enough free slots for output item types not yet
-///   present.
+/// Built-in containers and external containers opting into
+/// [`Container::try_exchange_atomic`] complete the whole exchange or leave the
+/// container unchanged, evaluating capacity after consumption.
 ///
-/// Returns `Ok(())` on success and a [`CraftingError`] without modifying the
-/// container on failure.
+/// Legacy containers returning `None` use conservative **current** free space
+/// (no credit for slots consumption might free). All preflight checks happen
+/// before mutation, but a subsequent short removal or leftover output returns
+/// an error immediately and **may leave partial mutation**. No rollback is
+/// invented for arbitrary external storage. Success requires exact removal and
+/// insertion returns for every normalized quantity.
 pub fn try_craft<I: ItemType>(
     registry: &CraftingRegistry<I>,
     inventory: &mut impl Container<I>,
     recipe_index: usize,
 ) -> Result<(), CraftingError> {
-    let recipe = registry
-        .recipes
-        .get(recipe_index)
-        .ok_or(CraftingError::InvalidRecipe)?;
+    let recipe = normalized_recipe(
+        registry
+            .recipes
+            .get(recipe_index)
+            .ok_or(CraftingError::InvalidRecipe)?,
+    )?;
 
-    // Pre-check: enough ingredients?
-    for ing in &recipe.ingredients {
-        if inventory.count_of(ing.item) < ing.count {
+    if let Some(result) = inventory.try_exchange_atomic(&recipe.remove, &recipe.add) {
+        // The public neutral enum is extensible; future errors remain failures.
+        #[allow(unreachable_patterns)]
+        return result.map_err(|error| match error {
+            ContainerExchangeError::InvalidRequest => CraftingError::InvalidRecipe,
+            ContainerExchangeError::InsufficientItems => CraftingError::InsufficientIngredients,
+            ContainerExchangeError::InvalidContainer | ContainerExchangeError::CapacityExceeded => {
+                CraftingError::InventoryFull
+            }
+            _ => CraftingError::InventoryFull,
+        });
+    }
+
+    for &(item, count) in &recipe.remove {
+        if inventory.count_of(item) < count {
             return Err(CraftingError::InsufficientIngredients);
         }
     }
-
-    // Pre-check: free slots for new output types.
-    let free_slots = inventory.capacity() - inventory.iter_slots().filter(|s| s.is_some()).count();
+    let occupied = inventory.iter_slots().filter(|slot| slot.is_some()).count();
+    let free_slots = inventory
+        .capacity()
+        .checked_sub(occupied)
+        .ok_or(CraftingError::InventoryFull)?;
     let new_types = recipe
-        .outputs
+        .add
         .iter()
-        .filter(|out| inventory.count_of(out.item) == 0)
+        .filter(|&&(item, _)| inventory.count_of(item) == 0)
         .count();
     if new_types > free_slots {
         return Err(CraftingError::InventoryFull);
     }
-
-    // Consume ingredients.
-    for ing in &recipe.ingredients {
-        inventory.remove(ing.item, ing.count);
+    for &(item, count) in &recipe.add {
+        let removed = recipe
+            .remove
+            .iter()
+            .find(|&&(input, _)| input == item)
+            .map_or(0, |&(_, count)| count);
+        let projected = u64::from(inventory.count_of(item))
+            .checked_sub(u64::from(removed))
+            .ok_or(CraftingError::InsufficientIngredients)?
+            + u64::from(count);
+        if projected > u64::from(u32::MAX) {
+            return Err(CraftingError::InventoryFull);
+        }
     }
-
-    // Produce outputs.
-    for out in &recipe.outputs {
-        inventory.add(out.item, out.count);
+    for (item, count) in recipe.remove {
+        if inventory.remove(item, count) != count {
+            return Err(CraftingError::InsufficientIngredients);
+        }
     }
-
+    for (item, count) in recipe.add {
+        if inventory.add(item, count) != 0 {
+            return Err(CraftingError::InventoryFull);
+        }
+    }
     Ok(())
 }
 
@@ -635,15 +696,574 @@ mod tests {
     #[test]
     fn try_craft_inventory_full_returns_error() {
         let registry = make_registry();
-        // Fill all slots with RockFragment so no room for Crystal output.
+        // Retaining an ingredient stack leaves no slot for the new output.
         let mut inv = Inventory::new(1);
-        inv.add(DefaultItem::IronOre, 4); // occupies the 1 slot
+        inv.add(DefaultItem::IronOre, 5); // one remains after consumption
 
         // Now inventory is full (1 slot used).
         // Crystal is a new type — needs a free slot, but none available.
         let result = try_craft(&registry, &mut inv, 0);
         assert_eq!(result, Err(CraftingError::InventoryFull));
         // Ingredients not consumed.
-        assert_eq!(inv.count_of(DefaultItem::IronOre), 4);
+        assert_eq!(inv.count_of(DefaultItem::IronOre), 5);
+    }
+
+    fn registry_for<I: ItemType>(remove: &[(I, u32)], add: &[(I, u32)]) -> CraftingRegistry<I> {
+        let mut registry = CraftingRegistry::default();
+        let entries = |quantities: &[(I, u32)]| {
+            quantities
+                .iter()
+                .map(|&(item, count)| CraftingIngredient { item, count })
+                .collect()
+        };
+        registry.add(CraftingRecipe {
+            name: "regression",
+            ingredients: entries(remove),
+            outputs: entries(add),
+        });
+        registry
+    }
+
+    #[test]
+    fn duplicate_ingredients_require_aggregate_and_failure_preserves_layout() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 2), (DefaultItem::IronOre, 2)],
+            &[(DefaultItem::Crystal, 1)],
+        );
+        let mut inv = Inventory::new(2);
+        inv.add(DefaultItem::IronOre, 3);
+        let before = inv.slots.clone();
+        assert!(!can_craft(&registry, &inv, 0));
+        assert_eq!(
+            try_craft(&registry, &mut inv, 0),
+            Err(CraftingError::InsufficientIngredients)
+        );
+        assert_eq!(inv.slots, before);
+        inv.add(DefaultItem::IronOre, 1);
+        assert!(can_craft(&registry, &inv, 0));
+        assert_eq!(try_craft(&registry, &mut inv, 0), Ok(()));
+        assert_eq!(inv.count_of(DefaultItem::IronOre), 0);
+        assert_eq!(inv.count_of(DefaultItem::Crystal), 1);
+    }
+
+    #[test]
+    fn full_builtin_consumption_frees_slot_for_duplicate_outputs() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 4)],
+            &[(DefaultItem::Crystal, 1), (DefaultItem::Crystal, 2)],
+        );
+        let mut inv = Inventory::new(1);
+        inv.add(DefaultItem::IronOre, 4);
+        assert!(can_craft(&registry, &inv, 0));
+        assert_eq!(try_craft(&registry, &mut inv, 0), Ok(()));
+        assert_eq!(inv.count_of(DefaultItem::Crystal), 3);
+        assert_eq!(inv.capacity, 1);
+    }
+
+    #[test]
+    fn existing_output_stacks_and_same_input_use_post_consumption_headroom() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 4)],
+            &[
+                (DefaultItem::IronOre, 2),
+                (DefaultItem::IronOre, 2),
+                (DefaultItem::Crystal, 3),
+            ],
+        );
+        let mut inv = Inventory::new(2);
+        inv.add(DefaultItem::IronOre, u32::MAX);
+        inv.add(DefaultItem::Crystal, 1);
+        assert_eq!(try_craft(&registry, &mut inv, 0), Ok(()));
+        assert_eq!(inv.count_of(DefaultItem::IronOre), u32::MAX);
+        assert_eq!(inv.count_of(DefaultItem::Crystal), 4);
+    }
+
+    #[test]
+    fn projected_overflow_or_late_capacity_failure_is_atomic_builtin() {
+        for outputs in [
+            vec![(DefaultItem::Crystal, 1)],
+            vec![(DefaultItem::Wood, 1), (DefaultItem::Sand, 1)],
+        ] {
+            let registry = registry_for(&[(DefaultItem::IronOre, 1)], &outputs);
+            let mut inv = Inventory::new(3);
+            inv.add(DefaultItem::IronOre, 2);
+            inv.add(DefaultItem::Crystal, u32::MAX);
+            let before = inv.slots.clone();
+            assert!(can_craft(&registry, &inv, 0));
+            assert_eq!(
+                try_craft(&registry, &mut inv, 0),
+                Err(CraftingError::InventoryFull)
+            );
+            assert_eq!(inv.slots, before);
+        }
+    }
+
+    #[test]
+    fn recipe_overflow_and_positive_sentinels_are_invalid_before_mutation() {
+        let invalid_lists = [
+            vec![(DefaultItem::Empty, 1)],
+            vec![(DefaultItem::IronOre, u32::MAX), (DefaultItem::IronOre, 1)],
+        ];
+        for invalid in invalid_lists {
+            for registry in [registry_for(&invalid, &[]), registry_for(&[], &invalid)] {
+                let mut inv = Inventory::new(1);
+                inv.add(DefaultItem::IronOre, u32::MAX);
+                let before = inv.slots.clone();
+                assert!(!can_craft(&registry, &inv, 0));
+                assert_eq!(
+                    try_craft(&registry, &mut inv, 0),
+                    Err(CraftingError::InvalidRecipe)
+                );
+                assert_eq!(inv.slots, before);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_and_empty_recipe_semantics_and_ingredients_only_check() {
+        let mut inv = Inventory::<DefaultItem>::new(0);
+        for registry in [
+            registry_for(&[], &[]),
+            registry_for(&[(DefaultItem::Empty, 0)], &[(DefaultItem::Empty, 0)]),
+        ] {
+            assert!(can_craft(&registry, &inv, 0));
+            assert_eq!(try_craft(&registry, &mut inv, 0), Ok(()));
+        }
+        let registry = registry_for(&[], &[(DefaultItem::Crystal, 1)]);
+        assert!(can_craft(&registry, &inv, 0));
+        assert_eq!(
+            try_craft(&registry, &mut inv, 0),
+            Err(CraftingError::InventoryFull)
+        );
+    }
+
+    #[test]
+    fn malformed_inventory_maps_to_inventory_full_without_mutation() {
+        let registry = registry_for(&[], &[]);
+        let mut inv = Inventory::<DefaultItem>::new(1);
+        inv.capacity = 2;
+        let before = inv.slots.clone();
+        assert_eq!(
+            try_craft(&registry, &mut inv, 0),
+            Err(CraftingError::InventoryFull)
+        );
+        assert_eq!(inv.slots, before);
+        assert_eq!(inv.capacity, 2);
+    }
+
+    // A legacy implementor with no Clone/Debug/Serialize or exchange method.
+    struct LegacyContainer {
+        inventory: Inventory<DefaultItem>,
+        remove_limit: Option<u32>,
+        add_limit: Option<u32>,
+        removes: Vec<(DefaultItem, u32)>,
+        adds: Vec<(DefaultItem, u32)>,
+        reported_capacity: Option<usize>,
+    }
+
+    impl LegacyContainer {
+        fn new(capacity: usize) -> Self {
+            Self {
+                inventory: Inventory::new(capacity),
+                remove_limit: None,
+                add_limit: None,
+                removes: vec![],
+                adds: vec![],
+                reported_capacity: None,
+            }
+        }
+    }
+
+    impl Container<DefaultItem> for LegacyContainer {
+        fn add(&mut self, item: DefaultItem, count: u32) -> u32 {
+            self.adds.push((item, count));
+            let accepted = count.min(self.add_limit.unwrap_or(count));
+            count - accepted + self.inventory.add(item, accepted)
+        }
+        fn remove(&mut self, item: DefaultItem, count: u32) -> u32 {
+            self.removes.push((item, count));
+            self.inventory
+                .remove(item, count.min(self.remove_limit.unwrap_or(count)))
+        }
+        fn count_of(&self, item: DefaultItem) -> u32 {
+            self.inventory.count_of(item)
+        }
+        fn capacity(&self) -> usize {
+            self.reported_capacity.unwrap_or(self.inventory.capacity)
+        }
+        fn is_full(&self) -> bool {
+            self.inventory.is_full()
+        }
+        fn iter_slots(
+            &self,
+        ) -> impl Iterator<Item = Option<&crate::items::InventorySlot<DefaultItem>>> {
+            self.inventory.slots.iter().map(Option::as_ref)
+        }
+        fn slot_at(&self, index: usize) -> Option<&crate::items::InventorySlot<DefaultItem>> {
+            self.inventory.slots.get(index).and_then(Option::as_ref)
+        }
+    }
+
+    #[test]
+    fn legacy_default_hook_is_nonmutating_and_normalized_fallback_succeeds() {
+        let mut legacy = LegacyContainer::new(2);
+        legacy.inventory.add(DefaultItem::IronOre, 4);
+        let before = legacy.inventory.slots.clone();
+        assert_eq!(
+            legacy.try_exchange_atomic(&[(DefaultItem::IronOre, 4)], &[]),
+            None
+        );
+        assert_eq!(legacy.inventory.slots, before);
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 2), (DefaultItem::IronOre, 2)],
+            &[(DefaultItem::Crystal, 1), (DefaultItem::Crystal, 2)],
+        );
+        assert_eq!(try_craft(&registry, &mut legacy, 0), Ok(()));
+        assert_eq!(legacy.removes, vec![(DefaultItem::IronOre, 4)]);
+        assert_eq!(legacy.adds, vec![(DefaultItem::Crystal, 3)]);
+        assert_eq!(legacy.count_of(DefaultItem::Crystal), 3);
+    }
+
+    #[test]
+    fn legacy_preflight_is_conservative_and_ingredients_remain_aggregate() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 2), (DefaultItem::IronOre, 2)],
+            &[(DefaultItem::Crystal, 1)],
+        );
+        let mut legacy = LegacyContainer::new(1);
+        legacy.inventory.add(DefaultItem::IronOre, 3);
+        let before = legacy.inventory.slots.clone();
+        assert_eq!(
+            try_craft(&registry, &mut legacy, 0),
+            Err(CraftingError::InsufficientIngredients)
+        );
+        assert_eq!(legacy.inventory.slots, before);
+        legacy.inventory.add(DefaultItem::IronOre, 1);
+        let before = legacy.inventory.slots.clone();
+        assert!(can_craft(&registry, &legacy, 0));
+        assert_eq!(
+            try_craft(&registry, &mut legacy, 0),
+            Err(CraftingError::InventoryFull)
+        );
+        assert_eq!(legacy.inventory.slots, before);
+        assert!(legacy.removes.is_empty());
+        assert!(legacy.adds.is_empty());
+    }
+
+    #[test]
+    fn legacy_short_removal_stops_before_later_inputs_or_any_outputs() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 4), (DefaultItem::Wood, 1)],
+            &[(DefaultItem::Crystal, 1)],
+        );
+        let mut legacy = LegacyContainer::new(3);
+        legacy.inventory.add(DefaultItem::IronOre, 4);
+        legacy.inventory.add(DefaultItem::Wood, 1);
+        legacy.remove_limit = Some(2);
+        assert_eq!(
+            try_craft(&registry, &mut legacy, 0),
+            Err(CraftingError::InsufficientIngredients)
+        );
+        assert_eq!(legacy.removes, vec![(DefaultItem::IronOre, 4)]);
+        assert!(legacy.adds.is_empty());
+        assert_eq!(legacy.count_of(DefaultItem::IronOre), 2); // No invented rollback.
+        assert_eq!(legacy.count_of(DefaultItem::Wood), 1);
+    }
+
+    #[test]
+    fn legacy_partial_add_stops_before_later_outputs_without_false_success() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 4)],
+            &[(DefaultItem::Crystal, 3), (DefaultItem::Wood, 1)],
+        );
+        let mut legacy = LegacyContainer::new(3);
+        legacy.inventory.add(DefaultItem::IronOre, 4);
+        legacy.add_limit = Some(1);
+        assert_eq!(
+            try_craft(&registry, &mut legacy, 0),
+            Err(CraftingError::InventoryFull)
+        );
+        assert_eq!(legacy.removes, vec![(DefaultItem::IronOre, 4)]);
+        assert_eq!(legacy.adds, vec![(DefaultItem::Crystal, 3)]);
+        assert_eq!(legacy.count_of(DefaultItem::IronOre), 0);
+        assert_eq!(legacy.count_of(DefaultItem::Crystal), 1);
+        assert_eq!(legacy.count_of(DefaultItem::Wood), 0);
+    }
+
+    #[test]
+    fn legacy_numeric_and_capacity_preflight_fail_without_mutation() {
+        let registry = registry_for(&[], &[(DefaultItem::Crystal, 1)]);
+        let mut legacy = LegacyContainer::new(1);
+        legacy.inventory.add(DefaultItem::Crystal, u32::MAX);
+        let before = legacy.inventory.slots.clone();
+        assert_eq!(
+            try_craft(&registry, &mut legacy, 0),
+            Err(CraftingError::InventoryFull)
+        );
+        assert_eq!(legacy.inventory.slots, before);
+        legacy.reported_capacity = Some(0); // checked subtraction, no panic.
+        let empty = registry_for(&[], &[]);
+        assert_eq!(
+            try_craft(&empty, &mut legacy, 0),
+            Err(CraftingError::InventoryFull)
+        );
+        assert!(legacy.removes.is_empty());
+        assert!(legacy.adds.is_empty());
+    }
+
+    #[test]
+    fn legacy_same_input_outputs_and_duplicate_existing_outputs() {
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 4)],
+            &[
+                (DefaultItem::IronOre, 1),
+                (DefaultItem::Crystal, 2),
+                (DefaultItem::IronOre, 3),
+                (DefaultItem::Crystal, 1),
+            ],
+        );
+        let mut legacy = LegacyContainer::new(2);
+        legacy.inventory.add(DefaultItem::IronOre, u32::MAX);
+        legacy.inventory.add(DefaultItem::Crystal, 1);
+        assert_eq!(try_craft(&registry, &mut legacy, 0), Ok(()));
+        assert_eq!(legacy.removes, vec![(DefaultItem::IronOre, 4)]);
+        assert_eq!(
+            legacy.adds,
+            vec![(DefaultItem::IronOre, 4), (DefaultItem::Crystal, 3)]
+        );
+        assert_eq!(legacy.count_of(DefaultItem::IronOre), u32::MAX);
+        assert_eq!(legacy.count_of(DefaultItem::Crystal), 4);
+    }
+
+    struct OptedInContainer {
+        legacy: LegacyContainer,
+        error: Option<ContainerExchangeError>,
+        exchanges: Vec<(Vec<(DefaultItem, u32)>, Vec<(DefaultItem, u32)>)>,
+    }
+
+    impl Container<DefaultItem> for OptedInContainer {
+        fn add(&mut self, item: DefaultItem, count: u32) -> u32 {
+            self.legacy.add(item, count)
+        }
+        fn remove(&mut self, item: DefaultItem, count: u32) -> u32 {
+            self.legacy.remove(item, count)
+        }
+        fn count_of(&self, item: DefaultItem) -> u32 {
+            self.legacy.count_of(item)
+        }
+        fn capacity(&self) -> usize {
+            self.legacy.capacity()
+        }
+        fn is_full(&self) -> bool {
+            self.legacy.is_full()
+        }
+        fn iter_slots(
+            &self,
+        ) -> impl Iterator<Item = Option<&crate::items::InventorySlot<DefaultItem>>> {
+            self.legacy.iter_slots()
+        }
+        fn slot_at(&self, index: usize) -> Option<&crate::items::InventorySlot<DefaultItem>> {
+            self.legacy.slot_at(index)
+        }
+        fn try_exchange_atomic(
+            &mut self,
+            remove: &[(DefaultItem, u32)],
+            add: &[(DefaultItem, u32)],
+        ) -> Option<Result<(), ContainerExchangeError>> {
+            self.exchanges.push((remove.to_vec(), add.to_vec()));
+            if let Some(error) = self.error {
+                Some(Err(error))
+            } else {
+                self.legacy.inventory.try_exchange_atomic(remove, add)
+            }
+        }
+    }
+
+    #[test]
+    fn opted_in_hook_gets_normalized_lists_and_bypasses_legacy_mutators() {
+        let mut container = OptedInContainer {
+            legacy: LegacyContainer::new(1),
+            error: None,
+            exchanges: vec![],
+        };
+        container.legacy.inventory.add(DefaultItem::IronOre, 4);
+        let registry = registry_for(
+            &[(DefaultItem::IronOre, 2), (DefaultItem::IronOre, 2)],
+            &[
+                (DefaultItem::Crystal, 1),
+                (DefaultItem::Empty, 0),
+                (DefaultItem::Crystal, 2),
+            ],
+        );
+        assert_eq!(try_craft(&registry, &mut container, 0), Ok(()));
+        assert_eq!(
+            container.exchanges,
+            vec![(
+                vec![(DefaultItem::IronOre, 4)],
+                vec![(DefaultItem::Crystal, 3)]
+            )]
+        );
+        assert!(container.legacy.removes.is_empty());
+        assert!(container.legacy.adds.is_empty());
+        assert_eq!(container.count_of(DefaultItem::Crystal), 3);
+    }
+
+    #[test]
+    fn all_neutral_hook_errors_map_to_the_existing_three_crafting_variants() {
+        // Deliberately exhaustive: adding a CraftingError variant breaks compatibility.
+        fn exhaustive(error: CraftingError) -> u8 {
+            match error {
+                CraftingError::InvalidRecipe => 0,
+                CraftingError::InsufficientIngredients => 1,
+                CraftingError::InventoryFull => 2,
+            }
+        }
+        let registry = registry_for(&[], &[]);
+        for (error, expected) in [
+            (
+                ContainerExchangeError::InvalidRequest,
+                CraftingError::InvalidRecipe,
+            ),
+            (
+                ContainerExchangeError::InsufficientItems,
+                CraftingError::InsufficientIngredients,
+            ),
+            (
+                ContainerExchangeError::InvalidContainer,
+                CraftingError::InventoryFull,
+            ),
+            (
+                ContainerExchangeError::CapacityExceeded,
+                CraftingError::InventoryFull,
+            ),
+        ] {
+            let mut container = OptedInContainer {
+                legacy: LegacyContainer::new(1),
+                error: Some(error),
+                exchanges: vec![],
+            };
+            container.legacy.inventory.add(DefaultItem::IronOre, 1);
+            let before = container.legacy.inventory.slots.clone();
+            let actual = try_craft(&registry, &mut container, 0).unwrap_err();
+            assert_eq!(actual, expected);
+            assert_eq!(exhaustive(actual), exhaustive(expected));
+            assert_eq!(container.legacy.inventory.slots, before);
+            assert!(container.legacy.removes.is_empty());
+            assert!(container.legacy.adds.is_empty());
+        }
+    }
+
+    #[test]
+    fn component_crafting_matches_resource_atomicity() {
+        let registry = registry_for(&[(DefaultItem::IronOre, 4)], &[(DefaultItem::Crystal, 1)]);
+        for count in [3, 4, 5] {
+            let mut inv = Inventory::new(1);
+            inv.add(DefaultItem::IronOre, count);
+            let mut component = ContainerComponent(inv.clone());
+            assert_eq!(
+                try_craft(&registry, &mut component, 0),
+                try_craft(&registry, &mut inv, 0)
+            );
+            assert_eq!(component.0.slots, inv.slots);
+        }
+    }
+
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+    enum MinimalItem {
+        #[default]
+        DefaultSentinel,
+        OtherSentinel,
+        Live,
+    }
+
+    // No Debug or serde bounds, and Default is not reported by is_empty().
+    impl ItemType for MinimalItem {
+        fn name(&self) -> &'static str {
+            "minimal"
+        }
+        fn color(&self) -> [f32; 4] {
+            [1.0; 4]
+        }
+        fn to_byte(&self) -> u8 {
+            1
+        }
+        fn from_byte(_: u8) -> Self {
+            Self::default()
+        }
+        fn is_empty(&self) -> bool {
+            *self == Self::OtherSentinel
+        }
+    }
+
+    #[test]
+    fn crafting_adds_no_item_bounds_and_rejects_default_or_is_empty_sentinels() {
+        let mut inv = Inventory::<MinimalItem>::new(1);
+        assert_eq!(inv.add(MinimalItem::Live, 2), 0);
+        for sentinel in [MinimalItem::DefaultSentinel, MinimalItem::OtherSentinel] {
+            for registry in [
+                registry_for(&[(sentinel, 1)], &[]),
+                registry_for(&[], &[(sentinel, 1)]),
+            ] {
+                assert!(!can_craft(&registry, &inv, 0));
+                assert_eq!(
+                    try_craft(&registry, &mut inv, 0),
+                    Err(CraftingError::InvalidRecipe)
+                );
+                assert_eq!(inv.count_of(MinimalItem::Live), 2);
+            }
+            let registry = registry_for(
+                &[(sentinel, 0), (MinimalItem::Live, 1)],
+                &[(sentinel, 0), (MinimalItem::Live, 1)],
+            );
+            assert!(can_craft(&registry, &inv, 0));
+            assert_eq!(try_craft(&registry, &mut inv, 0), Ok(()));
+            assert_eq!(inv.count_of(MinimalItem::Live), 2);
+        }
+    }
+
+    #[test]
+    fn invalid_recipe_never_reaches_opted_in_hook_or_legacy_mutators() {
+        let registry = registry_for(&[(DefaultItem::IronOre, 1)], &[(DefaultItem::Empty, 1)]);
+        let mut container = OptedInContainer {
+            legacy: LegacyContainer::new(1),
+            error: None,
+            exchanges: vec![],
+        };
+        // Invalid recipe takes precedence over insufficient ingredients.
+        assert_eq!(
+            try_craft(&registry, &mut container, 0),
+            Err(CraftingError::InvalidRecipe)
+        );
+        assert!(container.exchanges.is_empty());
+        assert!(container.legacy.removes.is_empty());
+        assert!(container.legacy.adds.is_empty());
+    }
+
+    #[test]
+    fn output_first_occurrence_order_is_retained_in_builtin_slots() {
+        let registry = registry_for(
+            &[],
+            &[
+                (DefaultItem::Wood, 1),
+                (DefaultItem::Crystal, 1),
+                (DefaultItem::Wood, 2),
+                (DefaultItem::Sand, 1),
+            ],
+        );
+        let mut inv = Inventory::new(3);
+        assert_eq!(try_craft(&registry, &mut inv, 0), Ok(()));
+        let actual: Vec<_> = inv
+            .iter_slots()
+            .flatten()
+            .map(|slot| (slot.item, slot.count))
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                (DefaultItem::Wood, 3),
+                (DefaultItem::Crystal, 1),
+                (DefaultItem::Sand, 1)
+            ]
+        );
     }
 }

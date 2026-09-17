@@ -30,6 +30,11 @@ framework. It is intended to be usable by real consumer crates, examples, and
 experiments, but it is not a 1.0 stability promise yet. Package metadata and
 guidance may be prepared before the corresponding crate and tag are published.
 
+This checkout prepares candidate **0.8.1** for crafting, inventory, and inventory
+JSON integrity fixes. It does not announce a published 0.8.1 crate or tag.
+Candidate readiness requires evidence on the exact candidate snapshot, including
+the targeted Windows inventory-persistence tests; metadata alone is not a gate.
+
 Compatibility target:
 
 | Area | Current status |
@@ -41,15 +46,18 @@ Compatibility target:
 | Distribution | crates.io for released versions; git tags for pinned source installs |
 
 Bevy 0.18.1 and `bevy_ecs` require Rust 1.89.0. The MSRV CI lane uses
-Rust 1.89.0 for `cargo check --locked --lib` with default features and with
-`--no-default-features` on Linux. Since this library does not track `Cargo.lock`,
+Rust 1.89.0 for `cargo check --locked --lib` with default, no-default, and
+all features, plus focused inventory, crafting, and persistence tests on Linux.
+Since this library does not track `Cargo.lock`,
 CI resolves a fresh lockfile on that toolchain before the locked checks;
 consumer dependency resolutions and other targets may require newer Rust.
 
-Before each release, the project validates formatting, feature combinations,
-doctests, integration tests, documentation, package contents, and `cargo publish
---dry-run`. The CI workflow in `.github/workflows/rust.yml` mirrors those
-release gates without using `cargo build`.
+The candidate gate covers formatting, feature combinations, doctests, integration
+tests, exact Rust 1.89.0 checks, documentation, package contents, and targeted
+Windows inventory-persistence tests. The CI workflow in `.github/workflows/rust.yml`
+supports these gates without using `cargo build`. Candidate preparation does not
+publish, push, tag, or integrate the candidate; publication is a separate human
+decision after validation.
 
 ## Known Limitations
 
@@ -129,11 +137,13 @@ App::new()
 
 ## Quick Start
 
-Add the dependency to your `Cargo.toml`. Use crates.io for released versions, or pin the repository when you need an unreleased commit/tag:
+Add the dependency to your `Cargo.toml`. Use crates.io for released versions;
+for unreleased candidate development, use a local checkout or an explicitly
+chosen repository revision. Do not assume candidate metadata implies a tag.
 
 ```toml
 [dependencies]
-# Option A — crates.io after 0.8.0 is published (recommended for consumers):
+# Option A — released 0.8 line (recommended for consumers):
 voxel-framework = "0.8"
 
 # Option B — local clone side-by-side (development):
@@ -676,6 +686,69 @@ App::new()
     .add_plugins(WorldConfigPlugin)
     .run();
 ```
+
+## Inventory and Crafting
+
+With `items`, `Inventory<I>` and `ContainerComponent<I>` implement
+`Container<I>` using the ordinary Rust API. With `crafting`, recipe input and
+output quantities are aggregated by `ItemType` equality in first-occurrence
+order, not by serialized bytes. Zero quantities are ignored, empty recipes are
+allowed, and positive default/`is_empty()` items or totals above `u32::MAX` make
+a recipe invalid. `can_craft` checks ingredients only, not output capacity.
+
+Built-in containers stage consumption and production privately, then commit
+only a complete exchange. Capacity is evaluated **after consumption**, so an
+ingredient can free a slot for a different output. Failed exchanges leave the
+inventory unchanged. Live stacks must be positive and non-empty, `capacity`
+must equal `slots.len()`, and each item's aggregate quantity must fit `u32`.
+`add` returns all unaccepted quantities, including representational overflow;
+`count_of` defensively saturates for malformed public fields. There is no new
+author-configured stack limit.
+
+Custom containers can opt into the defaulted method
+`Container::try_exchange_atomic(&mut self, remove: &[(I, u32)], add: &[(I, u32)])`
+returning `Option<Result<(), ContainerExchangeError>>`. `None` and `Some(Err(_))`
+must not mutate; `Some(Ok(()))` means the entire exchange completed. The neutral,
+public `#[non_exhaustive]` error is available through `items` and the prelude:
+`InvalidRequest`, `InvalidContainer`, `InsufficientItems`, and `CapacityExceeded`.
+No new trait bounds or mandatory methods are required.
+
+`try_craft` keeps its three errors: invalid requests/recipes become
+`InvalidRecipe`, missing ingredients become `InsufficientIngredients`, and
+invalid containers or output-capacity failures become `InventoryFull`.
+Legacy containers returning `None` use a conservative **non-atomic fallback**:
+it checks current space without crediting slots that consumption might free,
+deduplicates requests, and checks actual removal/addition returns. It stops on
+the first failure, never reports false success, and does not invent rollback.
+Such a failure **may leave partial consumption or production**; implement the
+atomic hook when all-or-nothing crafting is required.
+
+### Inventory JSON persistence
+
+`save_inventory` and `load_inventory` keep their existing signatures and JSON
+schema. Saving a malformed source returns an `InvalidInput` I/O error. Loading
+rejects a capacity/slot-length mismatch or per-item aggregate overflow with
+`InvalidData`; malformed JSON is also an error. Zero-count entries and item
+bytes decoded as unknown/default/`is_empty()` become `None` at the same indexes.
+Valid holes, duplicate stacks, and slot order are preserved, including
+zero-capacity inventories. No save migration or arbitrary capacity ceiling is
+introduced.
+
+Saving serializes first, writes a private sibling temporary file with
+`write_all`, applies existing `Permissions`, syncs the file, and replaces the
+destination atomically. Any failure before replacement preserves the previous
+bytes and cleans up the temporary file; there is no delete-old-first or direct
+write fallback. New files retain private temporary-file permissions. Existing
+symlinks are followed while preserving the link; dangling symlinks, non-regular
+or read-only targets, and multiply hard-linked files on Unix are rejected.
+
+These guarantees concern whole-file visibility and pre-replacement failure,
+**not universal power-cut durability**. Existing `Permissions` are preserved,
+but ownership, ACLs, extended attributes, and protection against hostile parent
+namespace races are not guaranteed. Concurrent successful writers leave one
+whole last-writer snapshot, not transaction isolation. These inventory-JSON
+guarantees do not change chunk/world persistence or add automatic game-state
+saving.
 
 ## Persistence
 

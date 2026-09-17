@@ -1,0 +1,184 @@
+change: patch08-integrity
+artifact_store: hybrid
+branch: codex/patch08-integrity
+base_branch: dev
+base_commit: 1a82c7e66dfcadde7996de03c4d9ae6218ee1b2e
+base_was_clean: true
+current_package_version: 0.8.1
+candidate_version: 0.8.1
+phase: verify_pending
+artifacts_ready: true
+implementation_started: true
+implementation_complete: true
+verification_complete: false
+candidate_ready: false
+last_updated: 2026-09-17
+artifacts:
+  explore:
+    engram: sdd/patch08-integrity/explore
+    observation_id: 876
+    file: null
+  proposal:
+    engram: sdd/patch08-integrity/proposal
+    observation_id: 883
+    file: proposal.md
+  spec:
+    engram: sdd/patch08-integrity/spec
+    observation_id: 885
+    files:
+      - specs/items/spec.md
+      - specs/crafting/spec.md
+      - specs/inventory-persistence/spec.md
+      - specs/candidate/spec.md
+  design:
+    engram: sdd/patch08-integrity/design
+    observation_id: 879
+    file: design.md
+  tasks:
+    engram: sdd/patch08-integrity/tasks
+    observation_id: 886
+    file: tasks.md
+  apply_progress:
+    engram: sdd/patch08-integrity/apply-progress
+    file: apply-progress.md
+  state:
+    engram: sdd/patch08-integrity/state
+    observation_id: 884
+    file: state.yaml
+tasks_progress:
+  implementation_completed_count: 18
+  implementation_total: 18
+  completed:
+    - "1.1"
+    - "1.2"
+    - "1.3"
+    - "1.4"
+    - "1.5"
+    - "1.6"
+    - "1.7"
+    - "1.8"
+    - "1.9"
+    - "2.1"
+    - "2.2"
+    - "2.3"
+    - "2.4"
+    - "2.5"
+    - "2.6"
+    - "3.1"
+    - "3.2"
+    - "3.3"
+  pending_groups:
+    - "4.1-4.5 verification"
+workers:
+  inventory_crafting:
+    tasks: "1.1-1.9"
+    write_set:
+      - src/items/inventory.rs
+      - src/crafting/mod.rs
+      - src/prelude.rs
+    tests: inline in owned files
+    delivers:
+      - neutral public hook/error and items/prelude reexport
+      - internal normalization and inventory validation contracts
+  persistence:
+    tasks: "2.2-2.6"
+    write_set:
+      - src/items/persistence.rs
+    tests: inline in owned file
+    requires:
+      - inventory validation contract from inventory_crafting
+      - tempfile dependency activation from candidate_ci_docs
+    no_writes_to:
+      - src/items/inventory.rs
+      - Cargo.toml
+  candidate_ci_docs:
+    tasks: "2.1,3.1-3.3"
+    write_set:
+      - Cargo.toml
+      - README.md
+      - CHANGELOG.md
+      - .github/workflows/rust.yml
+    conditional_write_set:
+      - scripts/release-preflight.sh
+      - docs/releasing.md
+    untracked_local_only:
+      - Cargo.lock
+    first_deliverable: optional exact tempfile pin and items activation
+  verifier:
+    tasks: "4.1-4.5"
+    write_set:
+      - openspec/changes/patch08-integrity/verify-report.md
+      - openspec/changes/patch08-integrity/tasks.md
+      - openspec/changes/patch08-integrity/state.yaml
+    source_fixes: route to owning worker; do not overlap writes
+    requires: completed worker changes on exact candidate snapshot
+coordination:
+  launch_order:
+    - inventory_crafting and candidate_ci_docs initial dependency work may run concurrently
+    - persistence after shared helper contract and dependency activation
+    - candidate_ci_docs final docs after implementation contracts stabilize
+    - verifier after all implementation and preparation edits
+  no_workers_launched_in_setup: true
+  state_tasks_owner: orchestrator only until verifier; workers report completed IDs
+shared_internal_contracts:
+  inventory_validator:
+    path: src/items/inventory.rs
+    signature: "pub(crate) fn validate_integrity(&self) -> Result<(), ContainerExchangeError>"
+    owner: inventory_crafting
+    error: InvalidContainer only
+    checks: "capacity==slots.len(); positive non-default/non-is_empty live stacks; equality-based per-item totals<=u32MAX"
+    consumers: "built-in exchange/add; save maps InvalidInput; load maps InvalidData after normalization"
+    public: false
+  normalizer:
+    path: src/items/inventory.rs
+    signature: "pub(crate) fn normalize_quantities<I: ItemType>(quantities: &[(I,u32)]) -> Result<Vec<(I,u32)>, ContainerExchangeError>"
+    owner: inventory_crafting
+    error: InvalidRequest only
+    semantics: "equality, first-occurrence order, zero ignored before sentinel checks, checked u32 aggregation, empty lists allowed"
+    public: false
+approved_limits:
+  behavioral_scope: crafting, inventory, inventory persistence only
+  forbidden_behavior:
+    - mobs/navigation/gamefeatures
+    - chunk/world/spawn/HUD/stats/effects saving
+    - JSON migration or arbitrary capacity ceiling
+    - author-configured stack limits
+  setup_forbidden_operations:
+    - cargo build
+    - dev merge or other automatic integration
+    - push/tag/publication
+    - automation creation/update/dispatch
+    - commit during this setup task
+  current_authorized_operations:
+    - conventional implementation commit of approved source/docs/CI and change artifacts
+    - non-force upstream push only codex/patch08-integrity to origin for candidate CI
+    - at most one candidate-ref Rust CI dispatch only if push has no matching trigger
+  current_forbidden_operations:
+    - cargo build
+    - merge or push dev or any other branch; automatic integration
+    - PR/tag/publication/release creation
+    - unrelated automation changes or duplicate CI dispatch
+  setup_writes: approved Git branch and this change directory plus Engram only
+  future_commits: only if separately needed/authorized; conventional, no AI attribution
+gate_evidence:
+  source_implementation: complete_static_independent_review_pass_p1_p2
+  scoped_integrity_tests: 65_linux_default_pass_frozen_dirty_worktree
+  default_no_default_all_features_check_test: pending_clean_candidate
+  exact_rust_1_89_0: default_and_no_default_pass_focused_all_features_pending_clean_candidate
+  targeted_windows_persistence: native_runtime_pending_stable_items_tests_gnu_cross_check_pass
+  docs: pending_clean_candidate
+  package_list_no_verify: pending_clean_candidate
+  exact_clean_candidate_preflight_0_8_1: pending
+risks:
+  - exact tempfile pin does not freeze transitive MSRV; exact Rust1.89 must verify
+  - Windows persistence evidence is required, not inferred from Linux
+  - legacy None fallback may partially mutate and conservatively reject feasible exchanges
+  - atomic visibility/pre-replace preservation is not universal power-cut durability
+  - existing Permissions preserved, not ownership/ACL/xattrs or hostile namespace race protection
+  - concurrent successful writers yield a whole last-writer snapshot, not transaction isolation
+focused_evidence:
+  report: /tmp/voxel-0.8.1-focused/after-fix/report.md
+  results: /tmp/voxel-0.8.1-focused/after-fix/results.json
+  lock_sha256: 0abec3ecfd7fe79db200d34e68b7956f4396d38c286de936176d09f7ba62e611
+  clean_candidate: false
+next_recommended: authorized candidate commit/push for CI, then formal exact-clean-candidate sdd-verify; no integration/publication

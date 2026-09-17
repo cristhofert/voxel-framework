@@ -121,7 +121,9 @@ pub use crate::skybox::{SkyboxConfig, SkyboxMode, SkyboxPlugin, StarfieldConfig}
 
 // Items system
 #[cfg(feature = "items")]
-pub use crate::items::inventory::{Container, ContainerComponent, PrimaryContainer};
+pub use crate::items::inventory::{
+    Container, ContainerComponent, ContainerExchangeError, PrimaryContainer,
+};
 #[cfg(feature = "items")]
 pub use crate::items::{
     DefaultItem, DropTable, DropTableEntry, DroppedItem, DropsPlugin, HotbarPlugin,

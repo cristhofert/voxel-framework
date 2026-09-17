@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-09-14
+
+Candidate preparation only; this entry does not announce publication or a tag.
+Readiness requires the exact-candidate feature matrix, Rust 1.89.0, targeted
+Windows inventory-persistence, documentation, package, and clean-preflight gates.
+
+### Added
+
+- Optional `Container::try_exchange_atomic` and neutral, non-exhaustive
+  `ContainerExchangeError`, re-exported through items and the prelude, preserve
+  legacy implementors without new bounds or mandatory methods.
+- Pinned optional `tempfile =3.27.0`, enabled only by `items`, supports sibling
+  temporary-file inventory saves. Exact-toolchain compatibility remains part
+  of candidate verification, not an inference from the pin.
+- Targeted Windows inventory-persistence CI and expanded exact Rust 1.89.0
+  checks complement the existing Linux feature matrix.
+
+### Fixed
+
+- Recipe inputs/outputs now aggregate equal items in first-occurrence order
+  with checked quantities; zero entries and empty recipes are supported,
+  sentinel items and overflowing recipes are rejected, and `can_craft`
+  remains ingredients-only.
+- Built-in inventory crafting stages consumption before production, using
+  freed capacity and committing only complete exchanges. Inventory validation,
+  bounded `add` leftovers, and defensive saturated counting prevent invalid
+  layouts and per-item quantity overflow without adding gameplay stack limits.
+- Legacy custom-container crafting checks actual operation returns and stops
+  on failure. Its conservative fallback remains non-atomic and may partially
+  mutate; all-or-nothing behavior requires the optional atomic hook.
+- Inventory JSON saves validate the source and replace through a synced sibling
+  temporary file without truncating the previous save on pre-replacement
+  failure. Existing permissions and followed symlinks are preserved; dangling,
+  non-regular, read-only, and Unix multiply hard-linked targets are rejected.
+  This is whole-file atomic visibility, not universal power-cut durability or
+  preservation of ownership, ACLs, and extended attributes.
+- Inventory loads reject capacity/slot-length mismatches and aggregate overflow,
+  normalize zero/unknown/empty entries at their original indexes, and preserve
+  holes and valid duplicate stacks. Signatures and JSON schema are unchanged.
+
+Only crafting, inventory, and inventory persistence are changed; there are no
+mobs/navigation, chunk/world/spawn, HUD/stats/effects saving, or other game-feature
+changes, and no automatic integration or publication.
+
 ## [0.8.0] - 2026-09-11
 
 ### Added
