@@ -13,6 +13,7 @@ implementation_complete: true
 verification_complete: false
 candidate_ready: false
 last_updated: 2026-09-17
+local_preflight_env_portability_fix: focused_persistence_pass_test_only_production_unchanged
 artifacts:
   explore:
     engram: sdd/patch08-integrity/explore
@@ -163,6 +164,7 @@ approved_limits:
 gate_evidence:
   source_implementation: complete_static_independent_review_pass_p1_p2
   scoped_integrity_tests: 65_linux_default_pass_frozen_dirty_worktree
+  local_preflight_env_portability_fix: unix_socket_and_hardlinks_are_rejected_unchanged_pass_1_filtered_322_test_only_restricted_af_unix_guard
   default_no_default_all_features_check_test: pending_clean_candidate
   exact_rust_1_89_0: default_and_no_default_pass_focused_all_features_pending_clean_candidate
   targeted_windows_persistence: native_runtime_pending_stable_items_tests_gnu_cross_check_pass
