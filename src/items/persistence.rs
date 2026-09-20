@@ -166,7 +166,7 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
         Err(error) => return Err(error),
     };
     let target = if metadata.file_type().is_symlink() {
-        fs::canonicalize(path)?
+        resolved_link_target(path)?
     } else {
         path.to_path_buf()
     };
@@ -198,6 +198,58 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
     // access. This probe never truncates and is closed before Windows replacement.
     drop(OpenOptions::new().write(true).open(&target)?);
     Ok((target, Some(permissions)))
+}
+
+/// Resolves a final-path symlink to the regular file it targets.
+#[cfg(windows)]
+fn resolved_link_target(path: &Path) -> io::Result<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    // fs::canonicalize returns a verbatim (\\?\)-prefixed path on Windows.
+    // tempfile's persist replaces the target with MoveFileExW, which rejects
+    // verbatim destination paths with ERROR_INVALID_NAME (observed on CI).
+    // The prefix-stripped path is the same file through a normal path: it is
+    // short (CI workspaces), and canonicalize already resolved .. components,
+    // junctions, and UNC forwarding.
+    let canonical = fs::canonicalize(path)?;
+    let wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
+    const VERBATIM: [u16; 3] = [b'\\' as u16, b'?' as u16, b'\\' as u16];
+    const UNC: [u16; 3] = [b'U' as u16, b'N' as u16, b'C' as u16];
+    const SERVER: [u16; 2] = [b'\\' as u16, b'\\' as u16];
+    let Some(body) = wide.strip_prefix(&VERBATIM) else {
+        // Not a verbatim path: canonicalize already produced a normal one.
+        return Ok(canonical);
+    };
+    let is_unc = body.get(..UNC.len()).is_some_and(|prefix| {
+        prefix
+            .iter()
+            .zip(&UNC)
+            .all(|(&actual, &expected)| ascii_lower(actual) == ascii_lower(expected))
+    });
+    let normal = if is_unc {
+        // \\?\UNC\server\share\... normalizes to \\server\share\...
+        let mut out = SERVER.to_vec();
+        out.extend_from_slice(&body[UNC.len() + 1..]);
+        out
+    } else {
+        body.to_vec()
+    };
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(&normal)))
+}
+
+#[cfg(windows)]
+fn ascii_lower(character: u16) -> u16 {
+    if (b'A' as u16..=b'Z' as u16).contains(&character) {
+        character + (b'a' as u16 - b'A' as u16)
+    } else {
+        character
+    }
+}
+
+/// Resolves a final-path symlink to the regular file it targets.
+#[cfg(not(windows))]
+fn resolved_link_target(path: &Path) -> io::Result<PathBuf> {
+    fs::canonicalize(path)
 }
 
 // Private adapter keeps failure injection off the public API. replace consumes
@@ -238,10 +290,17 @@ impl AtomicWriteOps for FileWriteOps {
     }
 
     fn replace(&mut self, temp: NamedTempFile, target: &Path) -> io::Result<()> {
-        // Moving out the I/O error drops the PersistError-owned temporary file.
-        temp.persist(target)
-            .map(|_| ())
-            .map_err(|error| error.error)
+        #[cfg(windows)]
+        {
+            windows_private::replace(temp, target)
+        }
+        #[cfg(not(windows))]
+        {
+            // Moving out the I/O error drops the PersistError-owned temporary file.
+            temp.persist(target)
+                .map(|_| ())
+                .map_err(|error| error.error)
+        }
     }
 }
 
@@ -269,9 +328,9 @@ mod windows_private {
         TOKEN_USER, TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_TEMPORARY, FILE_GENERIC_READ,
-        FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GetVolumeInformationByHandleW,
+        CREATE_NEW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_TEMPORARY,
+        FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GetVolumeInformationByHandleW, SetFileAttributesW,
     };
     use windows_sys::Win32::System::SystemServices::{
         ACCESS_ALLOWED_ACE_TYPE, FILE_PERSISTENT_ACLS,
@@ -435,6 +494,50 @@ mod windows_private {
         }
         // SAFETY: successful CreateFileW transfers one owned file handle.
         Ok(unsafe { File::from_raw_handle(handle) })
+    }
+
+    pub(super) fn replace(temp: NamedTempFile, target: &Path) -> io::Result<()> {
+        let persist = match temp.persist(target) {
+            Ok(_file) => return Ok(()),
+            Err(error) => error,
+        };
+        // Concurrent writers racing to replace the same destination can make
+        // MoveFileExW fail with ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION
+        // while another thread's replace has the target transiently open.
+        // Recovering through std::fs::rename (which retries with a DELETE-access
+        // handle and FileRenameInfoEx POSIX semantics) matches how std resolves
+        // exactly this race. The PersistError still owns the temporary file, so
+        // any fallback failure preserves the original error and cleans it up.
+        if !matches!(
+            persist.error.kind(),
+            io::ErrorKind::PermissionDenied
+                | io::ErrorKind::InvalidFilename
+                | io::ErrorKind::WouldBlock
+        ) {
+            return Err(persist.error);
+        }
+        let replace = replace_fallback(persist.file.path(), target);
+        // After a successful fallback the temporary path no longer exists, so
+        // dropping the file is just cleanup of a stale path. On failure the
+        // tempfile drop removes the still-existing temporary file.
+        drop(persist.file);
+        if replace.is_ok() {
+            Ok(())
+        } else {
+            Err(persist.error)
+        }
+    }
+
+    // Mirrors tempfile's persist ordering: clears the temporary-file marker
+    // before moving, then renames with std's access-denied fallback.
+    fn replace_fallback(path: &Path, target: &Path) -> io::Result<()> {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: terminated path buffer stays alive for the call; the file
+        // still exists at the temporary path the PersistError preserved.
+        if unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        fs::rename(path, target)
     }
 
     pub(super) fn verify_private(file: &File) -> io::Result<()> {
@@ -1159,11 +1262,15 @@ mod tests {
     #[test]
     fn windows_private_creation_excludes_broad_parent_default_inheritance() {
         use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, READ_CONTROL};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, READ_CONTROL, WRITE_DAC,
+        };
         let directory = tempfile::tempdir().unwrap();
+        // ReOpenFile can never grant access beyond what the original handle was
+        // opened with, so set_test_dacl's WRITE_DAC handle must be allowed here.
         let parent = OpenOptions::new()
             .read(true)
-            .access_mode(READ_CONTROL)
+            .access_mode(READ_CONTROL | WRITE_DAC)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
             .open(directory.path())
             .unwrap();
