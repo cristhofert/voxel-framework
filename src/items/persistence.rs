@@ -312,6 +312,7 @@ mod windows_private {
     use std::ffi::c_void;
     use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::ptr::null_mut;
     use windows_sys::Win32::Foundation::{
@@ -328,7 +329,8 @@ mod windows_private {
         TOKEN_USER, TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_TEMPORARY,
+        CREATE_NEW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
         FILE_SHARE_WRITE, GetVolumeInformationByHandleW, SetFileAttributesW,
     };
@@ -528,8 +530,16 @@ mod windows_private {
         }
     }
 
-    // Mirrors tempfile's persist ordering: clears the temporary-file marker
-    // before moving, then renames with std's access-denied fallback.
+    // Mirrors tempfile's persist ordering (clears the temporary-file marker
+    // first), then performs the replacement through a file-handle rename that
+    // bypasses MoveFileExW altogether. MoveFileExW rejects the destination
+    // strings derived from canonicalized paths with ERROR_INVALID_NAME even
+    // after the verbatim prefix is stripped, and std::fs::rename only retries
+    // that error case for ERROR_ACCESS_DENIED, so both string-based renames are
+    // useless here. SetFileInformationByHandle(FileRenameInfoEx) renames the
+    // already-open temporary file onto the target with REPLACE_IF_EXISTS and
+    // POSIX semantics — the same mechanism std uses for its access-denied
+    // retry — and only the destination is parsed as a path string.
     fn replace_fallback(path: &Path, target: &Path) -> io::Result<()> {
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         // SAFETY: terminated path buffer stays alive for the call; the file
@@ -537,7 +547,68 @@ mod windows_private {
         if unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        fs::rename(path, target)
+        // DELETE is the only access a rename source requires; the flags keep
+        // the open working on any attributes and reparse points, matching how
+        // std opens rename sources before retrying with FileRenameInfoEx.
+        let handle = OpenOptions::new()
+            .access_mode(DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        rename_with_posix_semantics(&handle, target)
+    }
+
+    // Renames the open source handle onto `target`, replacing an existing file.
+    // Mirrors std's rename fallback layout for the dynamically sized
+    // FILE_RENAME_INFO: offset_of(FileName) + UTF-16 name bytes + the struct's
+    // trailing [u16; 1] placeholder.
+    fn rename_with_posix_semantics(source: &File, target: &Path) -> io::Result<()> {
+        use std::mem::offset_of;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_RENAME_INFO, FileRenameInfoEx, SetFileInformationByHandle,
+        };
+        const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x0000_0001;
+        const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x0000_0002;
+        let name: Vec<u16> = target.as_os_str().encode_wide().collect();
+        // SAFETY: a NUL-free UTF-16 length cannot overflow u32 for any path the
+        // filesystem accepts (32k total wide characters at most).
+        let name_bytes = u32::try_from(name.len() * size_of::<u16>())
+            .map_err(|_| io::Error::from_raw_os_error(123))?;
+        let offset = offset_of!(FILE_RENAME_INFO, FileName) as u32;
+        let struct_size = offset + name_bytes + 2;
+        // u64 storage provides FILE_RENAME_INFO's alignment; the rounded buffer
+        // holds the header plus every name byte.
+        let mut info = vec![0u64; (struct_size as usize).div_ceil(size_of::<u64>())];
+        let header = info.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        // SAFETY: info is aligned with room for the header and the full name;
+        // the kernel reads exactly FileNameLength bytes from the trailing array.
+        unsafe {
+            (*header).Anonymous.Flags =
+                FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+            (*header).RootDirectory = null_mut();
+            (*header).FileNameLength = name_bytes;
+            name.as_ptr()
+                .copy_to_nonoverlapping((*header).FileName.as_mut_ptr(), name.len());
+        }
+        // SAFETY: source is a live eligible handle with DELETE; info describes
+        // the rename and stays valid for the call.
+        if unsafe {
+            SetFileInformationByHandle(
+                source.as_raw_handle(),
+                FileRenameInfoEx,
+                info.as_ptr().cast(),
+                struct_size,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // The temp was created with FILE_ATTRIBUTE_TEMPORARY and the failed
+        // persist restored that marker on it, so the replaced file must not
+        // keep the temporary-file hint. Best-effort: failure leaves the hint.
+        let target_wide: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: terminated path; best-effort normalization of the new file.
+        unsafe { SetFileAttributesW(target_wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) };
+        Ok(())
     }
 
     pub(super) fn verify_private(file: &File) -> io::Result<()> {
@@ -714,6 +785,48 @@ mod windows_private {
         let result = unsafe {
             SetSecurityInfo(
                 writable.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                acl,
+                null_mut(),
+            )
+        };
+        if result != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(result as i32));
+        }
+        Ok(())
+    }
+
+    /// Test-only variant of [`set_test_dacl`] that applies the DACL directly on
+    /// an already opened handle. ReOpenFile can never produce a handle with
+    /// access rights beyond those granted to the original open and is denied on
+    /// directory handles even when READ_CONTROL|WRITE_DAC was requested, so the
+    /// caller opens the directory with the needed rights up front and this
+    /// variant skips reopening entirely.
+    #[cfg(test)]
+    pub(super) fn set_test_dacl_handle(file: &File, sddl: &str) -> io::Result<()> {
+        use windows_sys::Win32::Security::Authorization::SetSecurityInfo;
+        use windows_sys::Win32::Security::PROTECTED_DACL_SECURITY_INFORMATION;
+        let security = descriptor(sddl)?;
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut acl = null_mut();
+        // SAFETY: parsed descriptor is valid and alive; all outputs are writable.
+        if unsafe { GetSecurityDescriptorDacl(security.0, &mut present, &mut acl, &mut defaulted) }
+            == 0
+            || present == 0
+            || acl.is_null()
+        {
+            return Err(denied("test DACL missing"));
+        }
+        // SAFETY: the caller opened the handle with READ_CONTROL|WRITE_DAC; the
+        // ACL is valid and alive. Tests change only their own files/directories;
+        // no SACL, owner or privilege changes.
+        let result = unsafe {
+            SetSecurityInfo(
+                file.as_raw_handle(),
                 SE_FILE_OBJECT,
                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                 null_mut(),
@@ -1266,8 +1379,9 @@ mod tests {
             FILE_FLAG_BACKUP_SEMANTICS, READ_CONTROL, WRITE_DAC,
         };
         let directory = tempfile::tempdir().unwrap();
-        // ReOpenFile can never grant access beyond what the original handle was
-        // opened with, so set_test_dacl's WRITE_DAC handle must be allowed here.
+        // SetSecurityInfo needs WRITE_DAC on the handle it applies, so the open
+        // grants READ_CONTROL|WRITE_DAC up front; the handle variant never
+        // reopens (ReOpenFile grants only rights the original open allowed).
         let parent = OpenOptions::new()
             .read(true)
             .access_mode(READ_CONTROL | WRITE_DAC)
@@ -1275,7 +1389,7 @@ mod tests {
             .open(directory.path())
             .unwrap();
         // Explicit Everyone/full-control inheritance, confined to this tempdir.
-        windows_private::set_test_dacl(&parent, "D:P(A;OICI;FA;;;WD)").unwrap();
+        windows_private::set_test_dacl_handle(&parent, "D:P(A;OICI;FA;;;WD)").unwrap();
         drop(parent);
         let inherited = NamedTempFile::new_in(directory.path()).unwrap();
         assert!(windows_private::verify_private(inherited.as_file()).is_err());
