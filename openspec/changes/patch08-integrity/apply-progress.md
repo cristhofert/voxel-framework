@@ -9,6 +9,9 @@ candidate_ready: false
 ## Existing executed evidence (not rerun by preparation operator)
 Evidence: /tmp/voxel-0.8.1-focused/after-fix/report.md and results.json. Independent static review PASS for P1/P2. Linux focused default tests: inventory 21, crafting 27, persistence 17 = 65 passed, zero failed/ignored. Actual Rust 1.89.0 default and no-default library checks passed. Stable Rust 1.94.1 Windows-GNU items-only library/test cross-check passed; three Windows security test bodies compiled, not executed or linked natively. All commands locked/offline, frozen dirty source and ignored lock unchanged. Lock SHA256: 0abec3ecfd7fe79db200d34e68b7956f4396d38c286de936176d09f7ba62e611. Evidence baseline HEAD: 1a82c7e66dfcadde7996de03c4d9ae6218ee1b2e.
 
+## Local preflight portability fix — 2026-09-17
+The focused persistence test `unix_socket_and_hardlinks_are_rejected_unchanged` passed (1 passed; 322 unit tests filtered). The sole source diff is a test-only guard that skips only AF_UNIX setup denied by restricted environments while retaining hard-link coverage; production persistence code is unchanged. This evidence does not advance formal verification: all 4.1–4.5 and clean-candidate gates remain pending.
+
 ## Pending formal verification
 Tasks 4.1–4.5 remain unchecked. Full exact-candidate default/no-default/all-features check/test and examples; exact Rust 1.89.0 all-features/focused tests; native targeted Windows execution including three security tests; docs/package and clean 0.8.1 preflight are pending. Dirty focused evidence and cross-check are not clean-candidate or Windows runtime proof. Formal verifier owns verify-report.md.
 

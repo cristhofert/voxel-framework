@@ -1,6 +1,9 @@
 # Tasks: patch08-integrity
 Implementation tasks 1.1–3.3 are complete (18/18), with independent static P1/P2 review PASS and focused Linux inventory 21 + crafting 27 + persistence 17 = 65 PASS on the frozen dirty worktree. Verification tasks 4.1–4.5 remain pending: candidate 0.8.1 is NOT ready until native Windows runtime evidence and the exact clean-candidate full gate pass. Requirement IDs refer to specs. Writesets/dependencies: state.yaml.
 
+## Local preflight — 2026-09-17
+- [x] Focused `unix_socket_and_hardlinks_are_rejected_unchanged` passed locally after the test-only restricted-Unix-socket portability guard. This is environment-portability evidence only; verification tasks 4.1–4.5 and every clean-candidate gate remain pending.
+
 ## 1. Inventory API / crafting
 - [x] 1.1 src/items/inventory.rs: implement neutral error/default hook, internal ordered normalization and validate_integrity; no new bounds (I1/I2).
 - [x] 1.2 src/items/inventory.rs: stage consume/produce, exact-return checks, atomic commit; delegate Component (I1).
