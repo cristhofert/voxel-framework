@@ -34,8 +34,13 @@
 //!   slot layout. Zero counts and bytes decoded as default/empty become `None`
 //!   at the same index; malformed layout or overflowing item totals are rejected.
 //! * Existing regular-file permissions are preserved. Final symlinks are followed
-//!   without replacing the link. Dangling links, nonregular/read-only targets,
-//!   and Unix multiply hard-linked targets are rejected.
+//!   without replacing the link, on both save and load. Follow-through resolves
+//!   the link manually (see [`resolved_link_target`]) instead of letting the
+//!   kernel open through the reparse point: CI runners whose `%TEMP%` mixes the
+//!   8.3 short name (`RUNNER~1`) with long names return `ERROR_INVALID_NAME`
+//!   (123) exactly when opening through a relative-target link. Dangling links,
+//!   nonregular/read-only targets, and Unix multiply hard-linked targets are
+//!   rejected.
 //! * Replacement provides whole-snapshot visibility, not transaction isolation
 //!   between writers or universal power-cut durability. Parent directories must
 //!   be trusted: hostile namespace races and preservation of existing ownership,
@@ -901,9 +906,25 @@ mod windows_private {
 pub fn load_inventory<I: ItemType + for<'de> Deserialize<'de>>(
     path: &str,
 ) -> Result<Inventory<I>, Box<dyn std::error::Error>> {
-    let json = fs::read_to_string(path)?;
+    let json = fs::read_to_string(load_target(Path::new(path))?)?;
     let dto: InventoryDto = serde_json::from_str(&json)?;
     Ok(decode_inventory::<I>(&dto, io::ErrorKind::InvalidData)?)
+}
+
+/// Path `load_inventory` reads, following a final-component symlink with the
+/// same manual resolution [`prepare_target`] uses. Plain `fs::read_to_string`
+/// follows such a link in-kernel, which fails with `ERROR_INVALID_NAME` (123)
+/// on CI runners whose `%TEMP%` mixes the 8.3 short name (`RUNNER~1`) with
+/// long names when the link target is relative (`..`); reading the manually
+/// resolved path keeps dangling/nonregular semantics (`read_to_string` still
+/// surfaces them) without opening through the reparse point.
+fn load_target(path: &Path) -> io::Result<PathBuf> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => resolved_link_target(path),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(error) => Err(error),
+    }
 }
 
 fn decode_inventory<I: ItemType>(
