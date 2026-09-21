@@ -170,7 +170,32 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
     } else {
         path.to_path_buf()
     };
-    let metadata = fs::metadata(&target)?;
+    // TEMP-DIAG: reveal the exact resolved path bytes on Windows so the
+    // error-123 origin (malformed path here vs. replace below) is decidable.
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        eprintln!(
+            "TEMP-DIAG prepare_target: original={:?} resolved={:?} resolved_wide={:?}",
+            path,
+            target,
+            target.as_os_str().encode_wide().collect::<Vec<u16>>()
+        );
+    }
+    let metadata = match fs::metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            // TEMP-DIAG: the resolved path failed to open as metadata.
+            #[cfg(windows)]
+            eprintln!(
+                "TEMP-DIAG prepare_target fs::metadata err: kind={:?} code={:?} target={:?}",
+                error.kind(),
+                error.raw_os_error(),
+                target
+            );
+            return Err(error);
+        }
+    };
     if !metadata.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -196,7 +221,18 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
     }
     // Replacement needs parent access, but also honor the existing file's write
     // access. This probe never truncates and is closed before Windows replacement.
-    drop(OpenOptions::new().write(true).open(&target)?);
+    let opened = OpenOptions::new().write(true).open(&target);
+    // TEMP-DIAG: this probe is the last prepare_target step before replace.
+    #[cfg(windows)]
+    if let Err(ref error) = opened {
+        eprintln!(
+            "TEMP-DIAG prepare_target write-probe err: kind={:?} code={:?} target={:?}",
+            error.kind(),
+            error.raw_os_error(),
+            target
+        );
+    }
+    drop(opened?);
     Ok((target, Some(permissions)))
 }
 
@@ -503,6 +539,15 @@ mod windows_private {
             Ok(_file) => return Ok(()),
             Err(error) => error,
         };
+        // TEMP-DIAG: the error the caller currently sees; the fallback error
+        // below is what actually enforced this result.
+        eprintln!(
+            "TEMP-DIAG replace: persist err kind={:?} code={:?} target={:?} temp={:?}",
+            persist.error.kind(),
+            persist.error.raw_os_error(),
+            target,
+            persist.file.path()
+        );
         // Concurrent writers racing to replace the same destination can make
         // MoveFileExW fail with ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION
         // while another thread's replace has the target transiently open.
@@ -519,6 +564,15 @@ mod windows_private {
             return Err(persist.error);
         }
         let replace = replace_fallback(persist.file.path(), target);
+        // TEMP-DIAG: unhide the fallback's real result and re-raise it, since
+        // the original persist error is known at this point.
+        if let Err(error) = &replace {
+            eprintln!(
+                "TEMP-DIAG replace: fallback err kind={:?} code={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+        }
         // After a successful fallback the temporary path no longer exists, so
         // dropping the file is just cleanup of a stale path. On failure the
         // tempfile drop removes the still-existing temporary file.
@@ -545,15 +599,36 @@ mod windows_private {
         // SAFETY: terminated path buffer stays alive for the call; the file
         // still exists at the temporary path the PersistError preserved.
         if unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) } == 0 {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            // TEMP-DIAG
+            eprintln!(
+                "TEMP-DIAG replace_fallback SetFileAttributesW err: kind={:?} code={:?} path={:?}",
+                error.kind(),
+                error.raw_os_error(),
+                path
+            );
+            return Err(error);
         }
         // DELETE is the only access a rename source requires; the flags keep
         // the open working on any attributes and reparse points, matching how
         // std opens rename sources before retrying with FileRenameInfoEx.
-        let handle = OpenOptions::new()
+        let handle = match OpenOptions::new()
             .access_mode(DELETE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)?;
+            .open(path)
+        {
+            Ok(handle) => handle,
+            Err(error) => {
+                // TEMP-DIAG
+                eprintln!(
+                    "TEMP-DIAG replace_fallback open err: kind={:?} code={:?} path={:?}",
+                    error.kind(),
+                    error.raw_os_error(),
+                    path
+                );
+                return Err(error);
+            }
+        };
         rename_with_posix_semantics(&handle, target)
     }
 
@@ -600,7 +675,18 @@ mod windows_private {
             )
         } == 0
         {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            // TEMP-DIAG
+            eprintln!(
+                "TEMP-DIAG rename_with_posix_semantics err: kind={:?} code={:?} target={:?} target_wide={:?} struct_size={} name_bytes={}",
+                error.kind(),
+                error.raw_os_error(),
+                target,
+                name,
+                struct_size,
+                name_bytes
+            );
+            return Err(error);
         }
         // The temp was created with FILE_ATTRIBUTE_TEMPORARY and the failed
         // persist restored that marker on it, so the replaced file must not
