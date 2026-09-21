@@ -116,12 +116,6 @@ fn save_inventory_with_ops<I: ItemType + Serialize>(
     path: &Path,
     ops: &mut impl AtomicWriteOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // TEMP-DIAG: entry marker with the exact input path bytes.
-    #[cfg(windows)]
-    eprintln!(
-        "TEMP-DIAG save_inventory_with_ops entry: path={:?}",
-        path
-    );
     inventory
         .validate_integrity()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid inventory source"))?;
@@ -149,14 +143,6 @@ fn save_inventory_with_ops<I: ItemType + Serialize>(
     ops.write_all(temp.as_file_mut(), &json)?;
     if let Some(permissions) = permissions {
         if let Err(error) = temp.as_file().set_permissions(permissions) {
-            // TEMP-DIAG
-            #[cfg(windows)]
-            eprintln!(
-                "TEMP-DIAG save_inventory_with_ops set_permissions err: kind={:?} code={:?} temp={:?}",
-                error.kind(),
-                error.raw_os_error(),
-                temp.path()
-            );
             return Err(error.into());
         }
     }
@@ -172,10 +158,6 @@ fn parent_directory(path: &Path) -> &Path {
 }
 
 fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
-    // TEMP-DIAG: entry marker — the success unwrap at the test never saw any
-    // diagnostic, so the failing call is before the first print.
-    #[cfg(windows)]
-    eprintln!("TEMP-DIAG prepare_target entry: path={:?}", path);
     // symlink_metadata distinguishes an absent destination from a dangling link.
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -183,48 +165,16 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
             fs::create_dir_all(parent_directory(path))?;
             return Ok((path.to_path_buf(), None));
         }
-        Err(error) => {
-            // TEMP-DIAG
-            #[cfg(windows)]
-            eprintln!(
-                "TEMP-DIAG prepare_target symlink_metadata err: kind={:?} code={:?} path={:?}",
-                error.kind(),
-                error.raw_os_error(),
-                path
-            );
-            return Err(error);
-        }
+        Err(error) => return Err(error),
     };
     let target = if metadata.file_type().is_symlink() {
         resolved_link_target(path)?
     } else {
         path.to_path_buf()
     };
-    // TEMP-DIAG: reveal the exact resolved path bytes on Windows so the
-    // error-123 origin (malformed path here vs. replace below) is decidable.
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        eprintln!(
-            "TEMP-DIAG prepare_target: original={:?} resolved={:?} resolved_wide={:?}",
-            path,
-            target,
-            target.as_os_str().encode_wide().collect::<Vec<u16>>()
-        );
-    }
     let metadata = match fs::metadata(&target) {
         Ok(metadata) => metadata,
-        Err(error) => {
-            // TEMP-DIAG: the resolved path failed to open as metadata.
-            #[cfg(windows)]
-            eprintln!(
-                "TEMP-DIAG prepare_target fs::metadata err: kind={:?} code={:?} target={:?}",
-                error.kind(),
-                error.raw_os_error(),
-                target
-            );
-            return Err(error);
-        }
+        Err(error) => return Err(error),
     };
     if !metadata.is_file() {
         return Err(io::Error::new(
@@ -251,89 +201,74 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
     }
     // Replacement needs parent access, but also honor the existing file's write
     // access. This probe never truncates and is closed before Windows replacement.
-    let opened = OpenOptions::new().write(true).open(&target);
-    // TEMP-DIAG: this probe is the last prepare_target step before replace.
-    #[cfg(windows)]
-    if let Err(ref error) = opened {
-        eprintln!(
-            "TEMP-DIAG prepare_target write-probe err: kind={:?} code={:?} target={:?}",
-            error.kind(),
-            error.raw_os_error(),
-            target
-        );
-    }
-    drop(opened?);
+    drop(OpenOptions::new().write(true).open(&target)?);
     Ok((target, Some(permissions)))
 }
 
 /// Resolves a final-path symlink to the regular file it targets.
+///
+/// `fs::canonicalize` is deliberately avoided here. On the Windows CI runner
+/// `%TEMP%` mixes the 8.3 short name (`RUNNER~1`) with long-name components,
+/// and canonicalizing a path that also crosses a relative symlink target is
+/// the one place `GetFinalPathNameByHandleW` fails with `ERROR_INVALID_NAME`
+/// (123). The target is instead resolved manually: the link text is read
+/// verbatim, joined onto the link's directory when relative, and then cleaned
+/// purely lexically (`.` dropped, `..` collapsed against the component stack).
+/// No kernel round-trip, no case rewriting, no verbatim re-encoding. Lexical
+/// normalization is semantically exact here because every component before a
+/// `..` is a real directory — `prepare_target` already verified the link
+/// parent with `symlink_metadata` before resolving.
 #[cfg(windows)]
 fn resolved_link_target(path: &Path) -> io::Result<PathBuf> {
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-
-    // TEMP-DIAG
-    eprintln!(
-        "TEMP-DIAG resolved_link_target entry: path={:?} wide={:?}",
-        path,
-        path.as_os_str().encode_wide().collect::<Vec<u16>>()
-    );
-    // fs::canonicalize returns a verbatim (\\?\)-prefixed path on Windows.
-    // tempfile's persist replaces the target with MoveFileExW, which rejects
-    // verbatim destination paths with ERROR_INVALID_NAME (observed on CI).
-    // The prefix-stripped path is the same file through a normal path: it is
-    // short (CI workspaces), and canonicalize already resolved .. components,
-    // junctions, and UNC forwarding.
-    let canonical = match fs::canonicalize(path) {
-        Ok(canonical) => canonical,
-        Err(error) => {
-            // TEMP-DIAG
-            eprintln!(
-                "TEMP-DIAG resolved_link_target canonicalize err: kind={:?} code={:?} path={:?}",
-                error.kind(),
-                error.raw_os_error(),
-                path
-            );
-            return Err(error);
-        }
-    };
-    // TEMP-DIAG
-    eprintln!(
-        "TEMP-DIAG resolved_link_target canonical ok: raw={:?} raw_wide={:?}",
-        canonical,
-        canonical.as_os_str().encode_wide().collect::<Vec<u16>>()
-    );
-    let wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
-    const VERBATIM: [u16; 3] = [b'\\' as u16, b'?' as u16, b'\\' as u16];
-    const UNC: [u16; 3] = [b'U' as u16, b'N' as u16, b'C' as u16];
-    const SERVER: [u16; 2] = [b'\\' as u16, b'\\' as u16];
-    let Some(body) = wide.strip_prefix(&VERBATIM) else {
-        // Not a verbatim path: canonicalize already produced a normal one.
-        return Ok(canonical);
-    };
-    let is_unc = body.get(..UNC.len()).is_some_and(|prefix| {
-        prefix
-            .iter()
-            .zip(&UNC)
-            .all(|(&actual, &expected)| ascii_lower(actual) == ascii_lower(expected))
-    });
-    let normal = if is_unc {
-        // \\?\UNC\server\share\... normalizes to \\server\share\...
-        let mut out = SERVER.to_vec();
-        out.extend_from_slice(&body[UNC.len() + 1..]);
-        out
+    let raw = fs::read_link(path)?;
+    let joined = if raw.is_absolute() {
+        raw
     } else {
-        body.to_vec()
+        parent_directory(path).join(raw)
     };
-    Ok(PathBuf::from(std::ffi::OsString::from_wide(&normal)))
+    Ok(lexically_normalize_windows(&joined))
 }
 
+/// Lexically normalizes a Windows path: drops `.` components, resolves `..`
+/// against the component stack, and never pops past the prefix or root. Drive
+/// and UNC prefixes are preserved with their original case.
 #[cfg(windows)]
-fn ascii_lower(character: u16) -> u16 {
-    if (b'A' as u16..=b'Z' as u16).contains(&character) {
-        character + (b'a' as u16 - b'A' as u16)
-    } else {
-        character
+fn lexically_normalize_windows(path: &Path) -> PathBuf {
+    use std::ffi::OsString;
+    use std::path::Component;
+
+    let mut prefix = PathBuf::new();
+    let mut absolute = false;
+    let mut stack: Vec<OsString> = Vec::new();
+    // Leading/remaining `..` of a relative path (e.g. `a/../../b` → `../b`).
+    let mut parents = 0usize;
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                absolute = true;
+                prefix.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if stack.pop().is_some() {
+                    // Consumed one real component; the `..` is resolved.
+                } else if absolute {
+                    // Above the root: meaningless for absolute paths, drop it.
+                } else {
+                    parents += 1;
+                }
+            }
+            Component::Normal(part) => stack.push(part.to_os_string()),
+        }
     }
+    let mut normalized = prefix;
+    for _ in 0..parents {
+        normalized.push("..");
+    }
+    for part in &stack {
+        normalized.push(part);
+    }
+    normalized
 }
 
 /// Resolves a final-path symlink to the regular file it targets.
@@ -549,30 +484,9 @@ mod windows_private {
 
     pub(super) fn tempfile(parent: &Path) -> io::Result<NamedTempFile> {
         let security = user_descriptor()?;
-        // TEMP-DIAG
-        eprintln!("TEMP-DIAG windows_private::tempfile entry: parent={:?}", parent);
         // make_in owns cleanup immediately after the callback creates the file.
         // Readback checks run only afterward, so an error cannot orphan a temp.
-        match tempfile::Builder::new().make_in(parent, |path| create(path, &security)) {
-            Ok(temp) => {
-                // TEMP-DIAG
-                eprintln!(
-                    "TEMP-DIAG windows_private::tempfile ok: temp={:?}",
-                    temp.path()
-                );
-                Ok(temp)
-            }
-            Err(error) => {
-                // TEMP-DIAG
-                eprintln!(
-                    "TEMP-DIAG windows_private::tempfile err: kind={:?} code={:?} parent={:?}",
-                    error.kind(),
-                    error.raw_os_error(),
-                    parent
-                );
-                Err(error)
-            }
-        }
+        tempfile::Builder::new().make_in(parent, |path| create(path, &security))
     }
 
     fn create(path: &Path, security: &LocalBuffer) -> io::Result<File> {
@@ -603,16 +517,7 @@ mod windows_private {
             )
         };
         if handle == INVALID_HANDLE_VALUE {
-            let error = io::Error::last_os_error();
-            // TEMP-DIAG
-            eprintln!(
-                "TEMP-DIAG windows_private::create CreateFileW err: kind={:?} code={:?} path={:?} wide={:?}",
-                error.kind(),
-                error.raw_os_error(),
-                path,
-                wide
-            );
-            return Err(error);
+            return Err(io::Error::last_os_error());
         }
         // SAFETY: successful CreateFileW transfers one owned file handle.
         Ok(unsafe { File::from_raw_handle(handle) })
@@ -623,15 +528,6 @@ mod windows_private {
             Ok(_file) => return Ok(()),
             Err(error) => error,
         };
-        // TEMP-DIAG: the error the caller currently sees; the fallback error
-        // below is what actually enforced this result.
-        eprintln!(
-            "TEMP-DIAG replace: persist err kind={:?} code={:?} target={:?} temp={:?}",
-            persist.error.kind(),
-            persist.error.raw_os_error(),
-            target,
-            persist.file.path()
-        );
         // Concurrent writers racing to replace the same destination can make
         // MoveFileExW fail with ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION
         // while another thread's replace has the target transiently open.
@@ -648,15 +544,6 @@ mod windows_private {
             return Err(persist.error);
         }
         let replace = replace_fallback(persist.file.path(), target);
-        // TEMP-DIAG: unhide the fallback's real result and re-raise it, since
-        // the original persist error is known at this point.
-        if let Err(error) = &replace {
-            eprintln!(
-                "TEMP-DIAG replace: fallback err kind={:?} code={:?}",
-                error.kind(),
-                error.raw_os_error()
-            );
-        }
         // After a successful fallback the temporary path no longer exists, so
         // dropping the file is just cleanup of a stale path. On failure the
         // tempfile drop removes the still-existing temporary file.
@@ -683,36 +570,15 @@ mod windows_private {
         // SAFETY: terminated path buffer stays alive for the call; the file
         // still exists at the temporary path the PersistError preserved.
         if unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) } == 0 {
-            let error = io::Error::last_os_error();
-            // TEMP-DIAG
-            eprintln!(
-                "TEMP-DIAG replace_fallback SetFileAttributesW err: kind={:?} code={:?} path={:?}",
-                error.kind(),
-                error.raw_os_error(),
-                path
-            );
-            return Err(error);
+            return Err(io::Error::last_os_error());
         }
         // DELETE is the only access a rename source requires; the flags keep
         // the open working on any attributes and reparse points, matching how
         // std opens rename sources before retrying with FileRenameInfoEx.
-        let handle = match OpenOptions::new()
+        let handle = OpenOptions::new()
             .access_mode(DELETE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-        {
-            Ok(handle) => handle,
-            Err(error) => {
-                // TEMP-DIAG
-                eprintln!(
-                    "TEMP-DIAG replace_fallback open err: kind={:?} code={:?} path={:?}",
-                    error.kind(),
-                    error.raw_os_error(),
-                    path
-                );
-                return Err(error);
-            }
-        };
+            .open(path)?;
         rename_with_posix_semantics(&handle, target)
     }
 
@@ -759,18 +625,7 @@ mod windows_private {
             )
         } == 0
         {
-            let error = io::Error::last_os_error();
-            // TEMP-DIAG
-            eprintln!(
-                "TEMP-DIAG rename_with_posix_semantics err: kind={:?} code={:?} target={:?} target_wide={:?} struct_size={} name_bytes={}",
-                error.kind(),
-                error.raw_os_error(),
-                target,
-                name,
-                struct_size,
-                name_bytes
-            );
-            return Err(error);
+            return Err(io::Error::last_os_error());
         }
         // The temp was created with FILE_ATTRIBUTE_TEMPORARY and the failed
         // persist restored that marker on it, so the replaced file must not
@@ -1825,5 +1680,45 @@ mod tests {
         assert!((2..10).contains(&count));
         assert_layout(&loaded, &sample(count));
         assert_eq!(entries(directory.path()), vec![path]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lexically_normalize_windows_collapses_dots_and_parents() {
+        let cases = [
+            // The CI shape: 8.3 short name + long dirs + relative `..` link target.
+            (
+                r"C:\Users\RUNNER~1\AppData\Local\Temp\.tmpX\links\..\targets\inv.json",
+                r"C:\Users\RUNNER~1\AppData\Local\Temp\.tmpX\targets\inv.json",
+            ),
+            (
+                r"C:\Users\app\.\links\inv.json",
+                r"C:\Users\app\links\inv.json",
+            ),
+            (r"C:\a\b\..\..\c", r"C:\c"),
+            (r"C:\a\..\..\..", r"C:\"),
+            // Root-relative and plain relative paths stay clean.
+            (r"\a\b\..\c", r"\a\c"),
+            (r"a\b\..\..\..\c", r"..\c"),
+            (r"..\a", r"..\a"),
+            // Verbatim prefixes pass through untouched.
+            (r"\\?\C:\a\..\b", r"\\?\C:\b"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                lexically_normalize_windows(Path::new(input)),
+                Path::new(expected),
+                "normalizing {input}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lexically_normalize_windows_preserves_drive_and_unc_prefix_case() {
+        let drive = lexically_normalize_windows(Path::new(r"c:\Temp\a\..\b.json"));
+        assert_eq!(drive, Path::new(r"c:\Temp\b.json"));
+        let unc = lexically_normalize_windows(Path::new(r"\\SERVER\Share\a\..\b.json"));
+        assert_eq!(unc, Path::new(r"\\SERVER\Share\b.json"));
     }
 }
