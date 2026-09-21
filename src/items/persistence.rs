@@ -116,6 +116,12 @@ fn save_inventory_with_ops<I: ItemType + Serialize>(
     path: &Path,
     ops: &mut impl AtomicWriteOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // TEMP-DIAG: entry marker with the exact input path bytes.
+    #[cfg(windows)]
+    eprintln!(
+        "TEMP-DIAG save_inventory_with_ops entry: path={:?}",
+        path
+    );
     inventory
         .validate_integrity()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid inventory source"))?;
@@ -142,7 +148,17 @@ fn save_inventory_with_ops<I: ItemType + Serialize>(
     ops.check_private(temp.as_file())?;
     ops.write_all(temp.as_file_mut(), &json)?;
     if let Some(permissions) = permissions {
-        temp.as_file().set_permissions(permissions)?;
+        if let Err(error) = temp.as_file().set_permissions(permissions) {
+            // TEMP-DIAG
+            #[cfg(windows)]
+            eprintln!(
+                "TEMP-DIAG save_inventory_with_ops set_permissions err: kind={:?} code={:?} temp={:?}",
+                error.kind(),
+                error.raw_os_error(),
+                temp.path()
+            );
+            return Err(error.into());
+        }
     }
     ops.sync_all(temp.as_file())?;
     ops.replace(temp, &target)?;
@@ -156,6 +172,10 @@ fn parent_directory(path: &Path) -> &Path {
 }
 
 fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
+    // TEMP-DIAG: entry marker — the success unwrap at the test never saw any
+    // diagnostic, so the failing call is before the first print.
+    #[cfg(windows)]
+    eprintln!("TEMP-DIAG prepare_target entry: path={:?}", path);
     // symlink_metadata distinguishes an absent destination from a dangling link.
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -163,7 +183,17 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
             fs::create_dir_all(parent_directory(path))?;
             return Ok((path.to_path_buf(), None));
         }
-        Err(error) => return Err(error),
+        Err(error) => {
+            // TEMP-DIAG
+            #[cfg(windows)]
+            eprintln!(
+                "TEMP-DIAG prepare_target symlink_metadata err: kind={:?} code={:?} path={:?}",
+                error.kind(),
+                error.raw_os_error(),
+                path
+            );
+            return Err(error);
+        }
     };
     let target = if metadata.file_type().is_symlink() {
         resolved_link_target(path)?
@@ -241,13 +271,37 @@ fn prepare_target(path: &Path) -> io::Result<(PathBuf, Option<Permissions>)> {
 fn resolved_link_target(path: &Path) -> io::Result<PathBuf> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
+    // TEMP-DIAG
+    eprintln!(
+        "TEMP-DIAG resolved_link_target entry: path={:?} wide={:?}",
+        path,
+        path.as_os_str().encode_wide().collect::<Vec<u16>>()
+    );
     // fs::canonicalize returns a verbatim (\\?\)-prefixed path on Windows.
     // tempfile's persist replaces the target with MoveFileExW, which rejects
     // verbatim destination paths with ERROR_INVALID_NAME (observed on CI).
     // The prefix-stripped path is the same file through a normal path: it is
     // short (CI workspaces), and canonicalize already resolved .. components,
     // junctions, and UNC forwarding.
-    let canonical = fs::canonicalize(path)?;
+    let canonical = match fs::canonicalize(path) {
+        Ok(canonical) => canonical,
+        Err(error) => {
+            // TEMP-DIAG
+            eprintln!(
+                "TEMP-DIAG resolved_link_target canonicalize err: kind={:?} code={:?} path={:?}",
+                error.kind(),
+                error.raw_os_error(),
+                path
+            );
+            return Err(error);
+        }
+    };
+    // TEMP-DIAG
+    eprintln!(
+        "TEMP-DIAG resolved_link_target canonical ok: raw={:?} raw_wide={:?}",
+        canonical,
+        canonical.as_os_str().encode_wide().collect::<Vec<u16>>()
+    );
     let wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
     const VERBATIM: [u16; 3] = [b'\\' as u16, b'?' as u16, b'\\' as u16];
     const UNC: [u16; 3] = [b'U' as u16, b'N' as u16, b'C' as u16];
@@ -495,9 +549,30 @@ mod windows_private {
 
     pub(super) fn tempfile(parent: &Path) -> io::Result<NamedTempFile> {
         let security = user_descriptor()?;
+        // TEMP-DIAG
+        eprintln!("TEMP-DIAG windows_private::tempfile entry: parent={:?}", parent);
         // make_in owns cleanup immediately after the callback creates the file.
         // Readback checks run only afterward, so an error cannot orphan a temp.
-        tempfile::Builder::new().make_in(parent, |path| create(path, &security))
+        match tempfile::Builder::new().make_in(parent, |path| create(path, &security)) {
+            Ok(temp) => {
+                // TEMP-DIAG
+                eprintln!(
+                    "TEMP-DIAG windows_private::tempfile ok: temp={:?}",
+                    temp.path()
+                );
+                Ok(temp)
+            }
+            Err(error) => {
+                // TEMP-DIAG
+                eprintln!(
+                    "TEMP-DIAG windows_private::tempfile err: kind={:?} code={:?} parent={:?}",
+                    error.kind(),
+                    error.raw_os_error(),
+                    parent
+                );
+                Err(error)
+            }
+        }
     }
 
     fn create(path: &Path, security: &LocalBuffer) -> io::Result<File> {
@@ -528,7 +603,16 @@ mod windows_private {
             )
         };
         if handle == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            // TEMP-DIAG
+            eprintln!(
+                "TEMP-DIAG windows_private::create CreateFileW err: kind={:?} code={:?} path={:?} wide={:?}",
+                error.kind(),
+                error.raw_os_error(),
+                path,
+                wide
+            );
+            return Err(error);
         }
         // SAFETY: successful CreateFileW transfers one owned file handle.
         Ok(unsafe { File::from_raw_handle(handle) })
