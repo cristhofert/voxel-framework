@@ -7,7 +7,7 @@ mining-level gating, tool-speed scaling, drop-table resolution, and the
 `DefaultVoxel` material overrides. Behavior described here MUST hold for any
 voxel type implementing `VoxelType` and any item type implementing `ItemType`.
 
-Source of truth: this file. Last updated by archive of `tool-material-system` on 2026-05-08.
+Source of truth: this file. Last updated by archive of `patch08-integrity` on 2026-10-22.
 
 ## Requirements
 
@@ -95,3 +95,25 @@ The system MUST resolve drops from `DropTable<I>` using the broken voxel's `to_b
 - WHEN `voxel.mining_level()` is called
 - THEN it MUST return `2`
 - AND a `ToolStats { tool_level: 1, .. }` MUST NOT be able to break it (per "Mining-Level Gating")
+
+### Requirement: Compatible Atomic Exchange
+
+Containers MUST expose optional `try_exchange_atomic(remove, add)` returning `Option<Result<(), ContainerExchangeError>>`, defaulting to `None`, without new bounds or mandatory methods. Public non-exhaustive errors MUST be `InvalidRequest`, `InvalidContainer`, `InsufficientItems`, and `CapacityExceeded`; items and the prelude MUST re-export them. `None` and `Err` MUST NOT mutate; `Ok` MUST complete. Built-ins MUST use post-consumption capacity, and `Component` MUST delegate. Direct requests MUST normalize duplicates by equality and first occurrence, ignore zero, allow empty lists, and reject checked-sum overflow or a positive default/`is_empty` sentinel as `InvalidRequest`.
+
+#### Scenario: Freed capacity
+
+- GIVEN one slot containing A1
+- WHEN exchanging A1 for B1+B2
+- THEN B3 MUST replace A
+- AND any failed exchange MUST preserve slots and capacity
+
+### Requirement: Representational Integrity
+
+Built-ins MUST reject capacity/length mismatch, zero or sentinel live stacks, or per-item totals above `u32::MAX`. `add` MUST bound accepted quantities by representational headroom, return every leftover, and reject malformed source or a positive sentinel without mutation. `count_of` MUST defensively saturate; no author stack limit SHALL be added.
+
+#### Scenario: Numeric ceiling
+
+- GIVEN A at `u32::MAX`, or malformed public fields
+- WHEN adding A1 or counting A
+- THEN `add` MUST return all unaccepted items without wrap
+- AND the count MUST NOT overflow

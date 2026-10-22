@@ -6,13 +6,16 @@ base_commit: 1a82c7e66dfcadde7996de03c4d9ae6218ee1b2e
 base_was_clean: true
 current_package_version: 0.8.1
 candidate_version: 0.8.1
-phase: verified
+phase: archive
 artifacts_ready: true
 implementation_started: true
 implementation_complete: true
 verification_complete: true
 candidate_ready: true
 last_updated: 2026-10-22
+archive_complete: true
+archive_date: 2026-10-22
+archive_path: openspec/changes/archive/2026-10-22-patch08-integrity
 local_preflight_env_portability_fix: focused_persistence_pass_test_only_production_unchanged
 artifacts:
   explore:
@@ -199,4 +202,4 @@ verification:
   windows_native_persistence: pass
   lock_sha256: 59918a2f30adaf484699282ecf87fbc1af1ccbd0677324289998cad2d74b231c
   report: verify-report.md
-next_recommended: separately authorized integration into dev; no tag or publication yet
+next_recommended: SDD cycle complete; release tag and publication remain separate human-controlled operations
