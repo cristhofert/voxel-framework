@@ -1,8 +1,8 @@
 # Tasks: patch08-integrity
-Implementation tasks 1.1–3.3 are complete (18/18), with independent static P1/P2 review PASS and focused Linux inventory 21 + crafting 27 + persistence 17 = 65 PASS on the frozen dirty worktree. Verification tasks 4.1–4.5 remain pending: candidate 0.8.1 is NOT ready until native Windows runtime evidence and the exact clean-candidate full gate pass. Requirement IDs refer to specs. Writesets/dependencies: state.yaml.
+Implementation tasks 1.1–3.3 and verification tasks 4.1–4.5 are complete. Linux exact-candidate preflight, the complete GitHub Actions matrix, native Windows inventory persistence, MSRV Rust 1.89.0, docs, and package audit all passed. Candidate 0.8.1 is ready for separately authorized integration. Requirement IDs refer to specs. Evidence: verify-report.md. Writesets/dependencies: state.yaml.
 
 ## Local preflight — 2026-09-17
-- [x] Focused `unix_socket_and_hardlinks_are_rejected_unchanged` passed locally after the test-only restricted-Unix-socket portability guard. This is environment-portability evidence only; verification tasks 4.1–4.5 and every clean-candidate gate remain pending.
+- [x] Focused `unix_socket_and_hardlinks_are_rejected_unchanged` passed locally after the test-only restricted-Unix-socket portability guard. This historical environment-portability check was followed by the completed exact-candidate gates below.
 
 ## 1. Inventory API / crafting
 - [x] 1.1 src/items/inventory.rs: implement neutral error/default hook, internal ordered normalization and validate_integrity; no new bounds (I1/I2).
@@ -29,8 +29,8 @@ Implementation tasks 1.1–3.3 are complete (18/18), with independent static P1/
 - [x] 3.3 scripts/release-preflight.sh/docs/releasing.md: only scoped adjustments needed for exact candidate gate; never dispatch automation (V1).
 
 ## 4. Verification
-- [ ] 4.1 Audit writesets/scope; scoped rustfmt only; record exact candidate snapshot and lock/toolchain evidence in verify-report.md (V1).
-- [ ] 4.2 Run locked default/no-default/all-features check/test, examples; Rust1.89.0 library checks all three modes plus scoped items/crafting tests (I1–V1).
-- [ ] 4.3 Obtain targeted Windows persistence results; inspect platform exclusions; no Linux-only readiness (P1/V1).
-- [ ] 4.4 Exact clean-candidate preflight0.8.1, docs --no-deps --all-features, package --list/--no-verify; no cargo build/publish (V1).
-- [ ] 4.5 Save verification/state in both backends; ready only after every exact-candidate gate; stop without integration/dev push/tag/publication; only separately authorized candidate-branch CI push is allowed.
+- [x] 4.1 Audit writesets/scope; scoped rustfmt only; record exact candidate snapshot and lock/toolchain evidence in verify-report.md (V1).
+- [x] 4.2 Run locked default/no-default/all-features check/test, examples; Rust1.89.0 library checks all three modes plus scoped items/crafting tests (I1–V1).
+- [x] 4.3 Obtain targeted Windows persistence results; inspect platform exclusions; no Linux-only readiness (P1/V1).
+- [x] 4.4 Exact clean-candidate preflight0.8.1, docs --no-deps --all-features, package --list/--no-verify; no cargo build/publish (V1).
+- [x] 4.5 Save verification/state in the tracked change artifacts; ready only after every exact-candidate gate; stop without integration/dev push/tag/publication.

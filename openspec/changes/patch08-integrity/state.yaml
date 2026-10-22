@@ -6,13 +6,13 @@ base_commit: 1a82c7e66dfcadde7996de03c4d9ae6218ee1b2e
 base_was_clean: true
 current_package_version: 0.8.1
 candidate_version: 0.8.1
-phase: verify_pending
+phase: verified
 artifacts_ready: true
 implementation_started: true
 implementation_complete: true
-verification_complete: false
-candidate_ready: false
-last_updated: 2026-09-17
+verification_complete: true
+candidate_ready: true
+last_updated: 2026-10-22
 local_preflight_env_portability_fix: focused_persistence_pass_test_only_production_unchanged
 artifacts:
   explore:
@@ -68,8 +68,14 @@ tasks_progress:
     - "3.1"
     - "3.2"
     - "3.3"
-  pending_groups:
-    - "4.1-4.5 verification"
+    - "4.1"
+    - "4.2"
+    - "4.3"
+    - "4.4"
+    - "4.5"
+  verification_completed_count: 5
+  verification_total: 5
+  pending_groups: []
 workers:
   inventory_crafting:
     tasks: "1.1-1.9"
@@ -165,12 +171,12 @@ gate_evidence:
   source_implementation: complete_static_independent_review_pass_p1_p2
   scoped_integrity_tests: 65_linux_default_pass_frozen_dirty_worktree
   local_preflight_env_portability_fix: unix_socket_and_hardlinks_are_rejected_unchanged_pass_1_filtered_322_test_only_restricted_af_unix_guard
-  default_no_default_all_features_check_test: pending_clean_candidate
-  exact_rust_1_89_0: default_and_no_default_pass_focused_all_features_pending_clean_candidate
-  targeted_windows_persistence: native_runtime_pending_stable_items_tests_gnu_cross_check_pass
-  docs: pending_clean_candidate
-  package_list_no_verify: pending_clean_candidate
-  exact_clean_candidate_preflight_0_8_1: pending
+  default_no_default_all_features_check_test: pass_exact_candidate_linux_and_ci
+  exact_rust_1_89_0: pass_all_three_modes_and_focused_tests
+  targeted_windows_persistence: pass_native_windows_run_39856678457
+  docs: pass
+  package_list_no_verify: pass_121_files
+  exact_clean_candidate_preflight_0_8_1: pass
 risks:
   - exact tempfile pin does not freeze transitive MSRV; exact Rust1.89 must verify
   - Windows persistence evidence is required, not inferred from Linux
@@ -183,4 +189,14 @@ focused_evidence:
   results: /tmp/voxel-0.8.1-focused/after-fix/results.json
   lock_sha256: 0abec3ecfd7fe79db200d34e68b7956f4396d38c286de936176d09f7ba62e611
   clean_candidate: false
-next_recommended: authorized candidate commit/push for CI, then formal exact-clean-candidate sdd-verify; no integration/publication
+verification:
+  implementation_commit: 9de60dfe9f90676b24dbd801eeecb3beaa4458e5
+  verification_trigger_commit: 2ddf2f1dc19dfcc4daab701b1a62d2a91305b028
+  source_tree: 2533dd4f6f2686e8ad6741c2a78b7b92dcf1dff4
+  github_actions_run: https://github.com/cristhofert/voxel-framework/actions/runs/39856678457
+  github_actions_jobs_passed: 10
+  linux_release_preflight: pass
+  windows_native_persistence: pass
+  lock_sha256: 59918a2f30adaf484699282ecf87fbc1af1ccbd0677324289998cad2d74b231c
+  report: verify-report.md
+next_recommended: separately authorized integration into dev; no tag or publication yet
