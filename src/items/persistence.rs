@@ -35,7 +35,7 @@
 //!   at the same index; malformed layout or overflowing item totals are rejected.
 //! * Existing regular-file permissions are preserved. Final symlinks are followed
 //!   without replacing the link, on both save and load. Follow-through resolves
-//!   the link manually (see [`resolved_link_target`]) instead of letting the
+//!   the link manually (see `resolved_link_target`) instead of letting the
 //!   kernel open through the reparse point: CI runners whose `%TEMP%` mixes the
 //!   8.3 short name (`RUNNER~1`) with long names return `ERROR_INVALID_NAME`
 //!   (123) exactly when opening through a relative-target link. Dangling links,
