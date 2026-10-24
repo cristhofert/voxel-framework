@@ -20,6 +20,10 @@ jobs:
     name: Validate ${{ inputs.version }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Keep Bevy test linking within the hosted runner's memory/disk budget.
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - name: Checkout selected ref
         uses: actions/checkout@v4
