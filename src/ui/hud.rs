@@ -2779,7 +2779,6 @@ fn bump_revision(revision: &mut u64) {
 #[cfg(test)]
 mod tests {
     use bevy::ecs::message::{MessageReader, MessageWriter};
-    use bevy::prelude::*;
 
     use super::*;
 
