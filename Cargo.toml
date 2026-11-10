@@ -1,6 +1,6 @@
 [package]
 name = "voxel-framework"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.89"
 description = "A reusable voxel engine framework built on Bevy"

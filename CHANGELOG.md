@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-09
+
+### Migration
+
+- Native players start with a visible, free cursor and require a focused click
+  to activate control. Focus return alone does not recapture the cursor.
+- `spawn_player` no longer takes a cursor query. `player_look` and `player_move`
+  now take a primary-window query; `player_cursor_system` queries the primary
+  window and its focus. Registration through Bevy `add_systems` is unchanged;
+  consumers invoking the functions directly must update their arguments.
+
+### Fixed
+
+- Player spawning leaves the cursor free until a focused click. Focus loss
+  releases capture; native look and movement require a focused, captured primary
+  window. Inactive mouse motion is discarded and residual movement is stopped.
+  Headless synthetic input remains supported. `player_input_active` exposes the
+  ownership condition, and `player_focus` demonstrates native diagnostics.
+
 ## [0.8.1] - 2026-10-22
 
 Candidate preparation only; this entry does not announce publication or a tag.

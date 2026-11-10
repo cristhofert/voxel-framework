@@ -25,21 +25,20 @@
 
 ## Release Status & Stability
 
-`voxel-framework` 0.8 is the current package line for this Bevy-first voxel game
+`voxel-framework` 0.9 is the current package line for this Bevy-first voxel game
 framework. It is intended to be usable by real consumer crates, examples, and
 experiments, but it is not a 1.0 stability promise yet. Package metadata and
 guidance may be prepared before the corresponding crate and tag are published.
 
-This checkout prepares candidate **0.8.1** for crafting, inventory, and inventory
-JSON integrity fixes. It does not announce a published 0.8.1 crate or tag.
-Candidate readiness requires evidence on the exact candidate snapshot, including
-the targeted Windows inventory-persistence tests; metadata alone is not a gate.
+Version **0.9.0** introduces focused player input and explicit click-to-capture.
+Players start with a free cursor; losing focus releases control. See the player
+section and CHANGELOG migration notes for changes to public system signatures.
 
 Compatibility target:
 
 | Area | Current status |
 |---|---|
-| Crate version | `0.8.x` |
+| Crate version | `0.9.x` |
 | Bevy version | `0.18` |
 | Rust version | MSRV `1.89` |
 | Stability | Public API can still change across `0.x` minor releases |
@@ -143,14 +142,14 @@ chosen repository revision. Do not assume candidate metadata implies a tag.
 
 ```toml
 [dependencies]
-# Option A — released 0.8 line (recommended for consumers):
-voxel-framework = "0.8"
+# Option A — released 0.9 line (recommended for consumers):
+voxel-framework = "0.9"
 
 # Option B — local clone side-by-side (development):
 voxel-framework = { path = "../voxel-framework" }
 
-# Option C — from git after the v0.8.0 tag is created:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.8.0" }
+# Option C — from the matching release tag:
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.9.0" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
@@ -977,8 +976,22 @@ App::new()
 | A / D | Strafe left / right |
 | Space | Move along local up |
 | Shift | Move along local down |
-| Left click | Lock cursor |
-| Escape | Release cursor (second: close window) |
+| Left click in focused window | Lock cursor and enable player input |
+| Escape | Release cursor (if already free: close focused window) |
+
+The player starts with a free, visible cursor. Click the focused game window to
+control it. Losing focus releases control; returning requires another click.
+Look and movement ignore input while unfocused or released. Pointer capture does
+not grant OS keyboard focus or disable desktop shortcuts. Headless simulations
+without a primary window retain synthetic-input support. Other input systems can
+use `player_input_active` as a run condition; keep `player_look` scheduled so it
+can discard inactive mouse motion.
+
+For a native diagnostic, run `cargo run --example player_focus`. Click the window,
+move with WASD, press Escape, and Alt-Tab away and back. The example logs native
+focus events and received keys. Verify that startup and focus return leave the
+cursor free, inactive input does not move/rotate the camera, and a fresh focused
+click restores control. Check ordinary keys separately from desktop shortcuts.
 
 If your game uses an `AppState`, skip `PlayerPlugin` and add the systems manually gated to your playing state:
 
