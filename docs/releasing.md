@@ -42,20 +42,19 @@ they deliberately use the dependencies fetched by the earlier validation steps.
 `RELEASE_PREFLIGHT_ALLOW_DIRTY=1` exists only to test changes to the preflight
 itself and must never be used to approve a release.
 
-For the prepared **0.8.1** candidate, use `0.8.1` as the preflight version, but
-do not assume that a 0.8.1 crate or `v0.8.1` tag already exists. Candidate work
-must stop without merging, pushing, tagging, publishing, or dispatching
-automation unless separately authorized. The scope is crafting, inventory,
-and inventory JSON persistence only. Save replacement promises whole-file
-visibility and preservation before replacement failure, not universal power-cut
-durability or preservation of ownership, ACLs, or extended attributes.
+For **0.9.0**, use `0.9.0` as the preflight version. The release changes native
+player focus/capture behavior and public player-system signatures; keep the
+CHANGELOG migration notes in the release announcement. Candidate work must stop
+without pushing, tagging, publishing, or dispatching automation unless separately
+authorized. Check registry/tag existence rather than inferring publication from
+the manifest version.
 
 ## Publish and announce manually
 
 From a clean, up-to-date checkout of the exact commit to release:
 
 ```sh
-git switch main
+git switch dev
 git pull --ff-only
 ./scripts/release-preflight.sh X.Y.Z
 cargo publish --dry-run --locked

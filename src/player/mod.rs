@@ -62,12 +62,16 @@
 //!
 //! # Cursor management contract
 //!
-//! [`spawn_player`] locks the cursor immediately on startup. [`player_cursor_system`]
-//! then maintains the lock state at runtime:
+//! [`spawn_player`] leaves the cursor free. [`player_cursor_system`] manages
+//! the primary window's lock state without requesting OS keyboard focus:
 //!
-//! - **Left click** while cursor is free → locks cursor and hides it.
+//! - **Left click** in the focused window while cursor is free → locks and hides it.
+//! - **Focus loss** → releases the cursor; returning requires another click.
 //! - **First Escape** while cursor is locked → releases cursor (makes it visible).
-//! - **Second Escape** while cursor is already free → closes the window.
+//! - **Escape** while cursor is already free → closes the focused window.
+//!
+//! Look and movement require a focused primary window with a captured cursor.
+//! Headless calls without a primary window retain synthetic-input support.
 //!
 //! If you use [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) alongside this
 //! module, do **not** add [`player_cursor_system`] — the pause menu handles cursor
@@ -84,11 +88,12 @@
 //! | Space        | Move along local up                 |
 //! | Shift        | Move along local down               |
 //! | Left click   | Lock cursor                         |
-//! | Escape       | Release cursor (second press: close window) |
+//! | Escape       | Release cursor (if already free: close focused window) |
 
 use bevy::ecs::message::MessageWriter;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use crate::audio::{SfxEvent, SfxRequest};
 use crate::chunk::{CHUNK_SIZE, Chunk, VOXEL_SIZE};
@@ -580,16 +585,12 @@ impl Default for PlayerConfig {
 /// safe to register on `Startup` even when transitioning through `AppState`
 /// variants that re-enter the startup flow.
 ///
-/// **Side effect:** locks the cursor on spawn (`CursorGrabMode::Locked`,
-/// `visible = false`). This matches the expectation that the game begins in a
-/// mouse-captured state. To keep the cursor free on startup, set
-/// [`CrosshairConfig::visible`](crate::ui::CrosshairConfig) to `false` and manage
-/// cursor state yourself.
+/// Leaves the cursor free. A focused left click through [`player_cursor_system`]
+/// activates native player input; pointer capture never grants keyboard focus.
 pub fn spawn_player(
     mut commands: Commands,
     config: Res<PlayerConfig>,
     existing: Query<(), With<Player>>,
-    mut windows: Query<&mut bevy::window::CursorOptions>,
     mut health: ResMut<PlayerHealth>,
 ) {
     if !existing.is_empty() {
@@ -598,12 +599,6 @@ pub fn spawn_player(
 
     // Sync spawn_position with the configured spawn so respawn lands in the right place.
     health.spawn_position = config.spawn_position;
-
-    // Lock the cursor so mouse motion drives the camera.
-    for mut cursor in &mut windows {
-        cursor.grab_mode = bevy::window::CursorGrabMode::Locked;
-        cursor.visible = false;
-    }
 
     let spawn = config.spawn_position;
     let look_at = config.look_at;
@@ -924,7 +919,12 @@ pub fn player_look(
     mut mouse_motion: MessageReader<MouseMotion>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
 ) {
+    if !player_input_active(windows) {
+        mouse_motion.clear();
+        return;
+    }
     let Ok((mut player, mut transform)) = query.single_mut() else {
         return;
     };
@@ -1101,11 +1101,16 @@ pub fn player_move<V: VoxelType>(
     chunks: Query<&Chunk<V>>,
     mut crouch_res: ResMut<PlayerCrouching>,
     applied: Option<Res<effects::AppliedEffectModifiers>>,
+    windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
 ) {
     let Ok((mut player, mut transform)) = query.single_mut() else {
         return;
     };
 
+    if !player_input_active(windows) {
+        player.velocity = Vec3::ZERO;
+        return;
+    }
     let dt = time.delta_secs();
 
     match player.mode.clone() {
@@ -1390,9 +1395,16 @@ pub fn player_cursor_system(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut windows: Query<(Entity, &mut bevy::window::CursorOptions)>,
+    mut windows: Query<(Entity, &Window, &mut CursorOptions), With<PrimaryWindow>>,
 ) {
-    for (entity, mut cursor) in windows.iter_mut() {
+    for (entity, window, mut cursor) in windows.iter_mut() {
+        if !window.focused {
+            if cursor.grab_mode != CursorGrabMode::None || !cursor.visible {
+                cursor.grab_mode = CursorGrabMode::None;
+                cursor.visible = true;
+            }
+            continue;
+        }
         if mouse.just_pressed(MouseButton::Left)
             && cursor.grab_mode == bevy::window::CursorGrabMode::None
         {
@@ -1408,6 +1420,19 @@ pub fn player_cursor_system(
                 commands.entity(entity).despawn();
             }
         }
+    }
+}
+
+/// Whether the primary window owns player input (focused and cursor captured).
+/// No primary window preserves synthetic input for headless simulations.
+///
+/// Useful as a run condition for other gameplay input systems. Keep
+/// [`player_look`] scheduled: it discards inactive mouse deltas itself.
+/// This checks Bevy's current window state, not OS activation or grab success.
+pub fn player_input_active(windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>) -> bool {
+    match windows.single() {
+        Ok((window, cursor)) => window.focused && cursor.grab_mode != CursorGrabMode::None,
+        Err(_) => windows.is_empty(),
     }
 }
 
@@ -1789,7 +1814,12 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
         // health_system and respawn_system run unconditionally (not gated by pause).
         app.add_systems(Update, health_system);
         app.add_systems(Update, respawn_system);
-        app.add_systems(Update, player_cursor_system.run_if(gameplay_active));
+        app.add_systems(
+            Update,
+            player_cursor_system
+                .run_if(gameplay_active)
+                .before(player_look),
+        );
         app.add_systems(PostUpdate, save_spawn_on_exit);
     }
 }
@@ -2514,6 +2544,190 @@ mod tests {
             ))
             .id();
         (app, entity)
+    }
+
+    #[test]
+    fn focus_loss_releases_capture_and_ignores_unfocused_click_and_escape() {
+        use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .add_systems(Update, player_cursor_system);
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: false,
+                    ..default()
+                },
+                PrimaryWindow,
+                CursorOptions {
+                    grab_mode: CursorGrabMode::Locked,
+                    visible: false,
+                    ..default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        let cursor = app
+            .world()
+            .get::<CursorOptions>(window)
+            .expect("unfocused Escape must not close the window");
+        assert_eq!(cursor.grab_mode, CursorGrabMode::None);
+        assert!(cursor.visible);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .reset_all();
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        app.update();
+        assert_eq!(
+            app.world().get::<CursorOptions>(window).unwrap().grab_mode,
+            CursorGrabMode::None
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert_eq!(
+            app.world().get::<CursorOptions>(window).unwrap().grab_mode,
+            CursorGrabMode::Locked
+        );
+    }
+
+    #[test]
+    fn inactive_primary_window_discards_look_without_replaying_it() {
+        use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+        let (mut app, player) = anchored_app();
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: false,
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        step(&mut app, Vec2::new(100.0, 20.0), &[KeyCode::KeyQ], 0.1);
+        assert_eq!(
+            app.world().get::<Transform>(player).unwrap().rotation,
+            Quat::IDENTITY
+        );
+        assert!(
+            app.world()
+                .get::<Player>(player)
+                .unwrap()
+                .snap_anim
+                .is_none()
+        );
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        app.world_mut()
+            .get_mut::<CursorOptions>(window)
+            .unwrap()
+            .grab_mode = CursorGrabMode::Locked;
+        step(&mut app, Vec2::ZERO, &[], 0.1);
+        assert_eq!(
+            app.world().get::<Transform>(player).unwrap().rotation,
+            Quat::IDENTITY
+        );
+        step(&mut app, Vec2::new(10.0, 0.0), &[], 0.1);
+        assert_ne!(
+            app.world().get::<Transform>(player).unwrap().rotation,
+            Quat::IDENTITY
+        );
+    }
+
+    #[test]
+    fn spawning_player_leaves_cursor_free_until_focused_click() {
+        use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+        let mut app = App::new();
+        app.init_resource::<PlayerConfig>()
+            .init_resource::<PlayerHealth>()
+            .add_systems(Startup, spawn_player);
+        let window = app
+            .world_mut()
+            .spawn((Window::default(), PrimaryWindow))
+            .id();
+        app.update();
+        let cursor = app.world().get::<CursorOptions>(window).unwrap();
+        assert_eq!(cursor.grab_mode, CursorGrabMode::None);
+        assert!(cursor.visible);
+    }
+
+    #[test]
+    fn inactive_movement_clears_velocity_and_preserves_position() {
+        use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time>()
+            .init_resource::<ViewerPosition>()
+            .init_resource::<ChunkManager>()
+            .init_resource::<PlayerCrouching>()
+            .add_systems(Update, player_move::<crate::voxel::DefaultVoxel>);
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: false,
+                    ..default()
+                },
+                PrimaryWindow,
+                CursorOptions {
+                    grab_mode: CursorGrabMode::Locked,
+                    ..default()
+                },
+            ))
+            .id();
+        let player = app
+            .world_mut()
+            .spawn((
+                Player {
+                    velocity: Vec3::Z,
+                    ..default()
+                },
+                Transform::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(100));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(player).unwrap().translation,
+            Vec3::ZERO
+        );
+        assert_eq!(
+            app.world().get::<Player>(player).unwrap().velocity,
+            Vec3::ZERO
+        );
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        app.world_mut()
+            .get_mut::<CursorOptions>(window)
+            .unwrap()
+            .grab_mode = CursorGrabMode::None;
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(player).unwrap().translation,
+            Vec3::ZERO
+        );
+        app.world_mut()
+            .get_mut::<CursorOptions>(window)
+            .unwrap()
+            .grab_mode = CursorGrabMode::Locked;
+        app.update();
+        assert!(app.world().get::<Transform>(player).unwrap().translation.z < 0.0);
     }
 
     /// Advances one frame: sets `dt`, applies the exact held-key set (freshly

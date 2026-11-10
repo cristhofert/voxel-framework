@@ -1,0 +1,9 @@
+change: player-input-focus
+phase: archive
+implementation_complete: true
+automated_verification: passed
+native_playtest: maintainer_reported_pass
+maintainer_acceptance: "anda bien"
+archive_complete: true
+archive_date: 2026-11-09
+scope: framework-only
