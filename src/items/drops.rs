@@ -302,16 +302,17 @@ impl Default for MagnetConfig {
 /// [`crate::world::VoxelBroken`] messages and despawned by `magnet_system`
 /// when either collected or expired.
 ///
-/// The entity has no [`Transform`] by default — `spawn_drops_system` creates
-/// the component without one.  Attaching a [`Transform`] enables spatial
-/// magnet logic; entities without one are skipped by the attraction phase but
-/// will still expire via `lifetime`.
+/// The plugin spawns each drop with a [`Transform`] at the broken voxel's
+/// world-space center, ready for spatial magnet logic. Manually spawned drops
+/// must also provide a [`Transform`] to participate in spatial attraction.
 ///
 /// # Lifecycle
 ///
 /// 1. Spawned with `velocity` set to `(0, 2, 0)` (small upward bounce).
 /// 2. Attracted toward the [`ItemCollector`] once within [`MagnetConfig::radius`].
-/// 3. Collected (and despawned) when within 0.5 world units of the collector.
+/// 3. Collected when within 0.5 world units of the collector. A full inventory
+///    that accepts no items leaves the drop available until pickup or expiry.
+///    Partial pickups leave the unaccepted remainder in the world.
 /// 4. Despawned after `lifetime` seconds regardless of collection.
 #[derive(Component, Debug, Clone)]
 pub struct DroppedItem<I: ItemType> {
@@ -321,8 +322,11 @@ pub struct DroppedItem<I: ItemType> {
     pub count: u32,
     /// Current velocity in world space (units/sec).
     ///
-    /// Updated by the magnet system each frame; game code can modify this to
-    /// apply custom physics (e.g. gravity or bounce).
+    /// The magnet system accelerates drops inside the attraction radius and
+    /// advances their position by velocity times elapsed time while a collector
+    /// is available. Outside the radius, existing velocity is preserved.
+    /// Game code can modify velocity for custom gravity or bounce; it should
+    /// not integrate the same movement a second time.
     pub velocity: Vec3,
     /// Seconds remaining before the entity is automatically despawned.
     ///
@@ -371,12 +375,15 @@ fn spawn_drops_system<I: ItemType>(
         };
 
         for (item, count) in drop_table.get_drops(event.voxel_byte, seed) {
-            commands.spawn(DroppedItem {
-                item,
-                count,
-                velocity: Vec3::new(0.0, 2.0, 0.0),
-                lifetime: 60.0,
-            });
+            commands.spawn((
+                DroppedItem {
+                    item,
+                    count,
+                    velocity: Vec3::new(0.0, 2.0, 0.0),
+                    lifetime: 60.0,
+                },
+                Transform::from_translation(event.world_pos),
+            ));
         }
     }
 }
@@ -387,8 +394,8 @@ fn spawn_drops_system<I: ItemType>(
 fn magnet_system<I: ItemType>(
     time: Res<Time>,
     config: Res<MagnetConfig>,
-    collector_query: Query<&Transform, With<ItemCollector>>,
-    mut item_query: Query<(Entity, &mut DroppedItem<I>, Option<&Transform>)>,
+    collector_query: Query<&Transform, (With<ItemCollector>, Without<DroppedItem<I>>)>,
+    mut item_query: Query<(Entity, &mut DroppedItem<I>, Option<&mut Transform>)>,
     mut container_query: Query<&mut ContainerComponent<I>, With<PrimaryContainer>>,
     mut pickup_writer: MessageWriter<ItemPickedUp<I>>,
     mut commands: Commands,
@@ -408,7 +415,7 @@ fn magnet_system<I: ItemType>(
         }
 
         // If entity has no transform we can't do spatial logic — skip.
-        let Some(transform) = transform_opt else {
+        let Some(mut transform) = transform_opt else {
             continue;
         };
 
@@ -422,18 +429,24 @@ fn magnet_system<I: ItemType>(
                 continue;
             };
             let added = dropped.count - container.0.add(dropped.item, dropped.count);
-            if added > 0 {
-                pickup_writer.write(ItemPickedUp {
-                    item: dropped.item,
-                    count: added,
-                });
+            if added == 0 {
+                continue;
             }
-            commands.entity(entity).despawn();
+            dropped.count -= added;
+            pickup_writer.write(ItemPickedUp {
+                item: dropped.item,
+                count: added,
+            });
+            if dropped.count == 0 {
+                commands.entity(entity).despawn();
+            }
+            continue;
         } else if dist < config.radius {
             // Apply attraction force.
             let dir = diff / dist;
             dropped.velocity += dir * config.force * dt;
         }
+        transform.translation += dropped.velocity * dt;
     }
 }
 
@@ -499,6 +512,257 @@ impl<I: ItemType> Plugin for DropsPlugin<I> {
 mod tests {
     use super::*;
     use crate::items::DefaultItem;
+
+    #[test]
+    fn broken_voxel_spawns_one_mapped_drop_at_world_position() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_message::<VoxelBroken>()
+            .add_plugins(DropsPlugin::<DefaultItem>::new());
+        app.world_mut()
+            .resource_mut::<DropTable<DefaultItem>>()
+            .register(1, DefaultItem::RockFragment, 1, 1);
+        let position = Vec3::new(18.5, -12.5, 36.5);
+        app.world_mut().write_message(VoxelBroken {
+            chunk_coord: IVec3::new(1, -1, 2),
+            local: (2, 3, 4),
+            world_pos: position,
+            voxel_byte: 1,
+        });
+
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query::<(&DroppedItem<DefaultItem>, Option<&Transform>)>();
+        let drops: Vec<_> = query.iter(world).collect();
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].0.item, DefaultItem::RockFragment);
+        assert_eq!(drops[0].0.count, 1);
+        assert_eq!(
+            drops[0]
+                .1
+                .expect("spawned drop must have a world position")
+                .translation,
+            position
+        );
+    }
+
+    #[test]
+    fn nearby_drop_moves_and_is_collected_once_without_attracting_distant_drop() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_message::<VoxelBroken>()
+            .add_plugins(DropsPlugin::<DefaultItem>::new());
+        let player = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                ItemCollector,
+                PrimaryContainer,
+                ContainerComponent::<DefaultItem>::new(9),
+            ))
+            .id();
+        let spawn_drop = |world: &mut World, position| {
+            world
+                .spawn((
+                    DroppedItem {
+                        item: DefaultItem::RockFragment,
+                        count: 1,
+                        velocity: Vec3::ZERO,
+                        lifetime: 60.0,
+                    },
+                    Transform::from_translation(position),
+                ))
+                .id()
+        };
+        let nearby = spawn_drop(app.world_mut(), Vec3::new(2.0, 0.0, 0.0));
+        let distant_position = Vec3::new(8.0, 0.0, 0.0);
+        let distant = spawn_drop(app.world_mut(), distant_position);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(100));
+
+        app.update();
+        assert!(
+            app.world()
+                .get::<Transform>(nearby)
+                .unwrap()
+                .translation
+                .length()
+                < 2.0,
+            "nearby drop must move toward the collector"
+        );
+
+        let mut pickups = Vec::new();
+        for _ in 0..30 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(100));
+            app.update();
+            pickups.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<ItemPickedUp<DefaultItem>>>()
+                    .drain(),
+            );
+        }
+        assert!(app.world().get_entity(nearby).is_err());
+        assert_eq!(
+            app.world()
+                .get::<ContainerComponent<DefaultItem>>(player)
+                .unwrap()
+                .0
+                .count_of(DefaultItem::RockFragment),
+            1
+        );
+        assert_eq!(pickups.len(), 1);
+        assert_eq!(pickups[0].item, DefaultItem::RockFragment);
+        assert_eq!(pickups[0].count, 1);
+        assert_eq!(
+            app.world().get::<Transform>(distant).unwrap().translation,
+            distant_position
+        );
+        assert_eq!(
+            app.world()
+                .get::<DroppedItem<DefaultItem>>(distant)
+                .unwrap()
+                .velocity,
+            Vec3::ZERO
+        );
+    }
+
+    #[test]
+    fn partial_pickup_retains_remainder_until_inventory_has_room() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_message::<VoxelBroken>()
+            .add_plugins(DropsPlugin::<DefaultItem>::new());
+        let item = DefaultItem::RockFragment;
+        let mut container = ContainerComponent::<DefaultItem>::new(1);
+        assert_eq!(container.0.add(item, u32::MAX - 1), 0);
+        let player = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                ItemCollector,
+                PrimaryContainer,
+                container,
+            ))
+            .id();
+        let drop = app
+            .world_mut()
+            .spawn((
+                DroppedItem {
+                    item,
+                    count: 3,
+                    velocity: Vec3::ZERO,
+                    lifetime: 60.0,
+                },
+                Transform::from_xyz(0.25, 0.0, 0.0),
+            ))
+            .id();
+
+        for expected_pickup in [1, 0, 2] {
+            if expected_pickup == 2 {
+                assert_eq!(
+                    app.world_mut()
+                        .get_mut::<ContainerComponent<DefaultItem>>(player)
+                        .unwrap()
+                        .0
+                        .remove(item, 2),
+                    2
+                );
+            }
+            app.update();
+            assert_eq!(
+                app.world()
+                    .get::<ContainerComponent<DefaultItem>>(player)
+                    .unwrap()
+                    .0
+                    .count_of(item),
+                u32::MAX
+            );
+            if expected_pickup == 2 {
+                assert!(app.world().get_entity(drop).is_err());
+            } else {
+                let retained = app
+                    .world()
+                    .get::<DroppedItem<DefaultItem>>(drop)
+                    .expect("partial pickup must preserve the remainder");
+                assert_eq!(retained.item, item);
+                assert_eq!(retained.count, 2);
+            }
+            let pickups: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Messages<ItemPickedUp<DefaultItem>>>()
+                .drain()
+                .collect();
+            if expected_pickup == 0 {
+                assert!(pickups.is_empty());
+            } else {
+                assert_eq!(pickups.len(), 1);
+                assert_eq!(pickups[0].item, item);
+                assert_eq!(pickups[0].count, expected_pickup);
+            }
+        }
+    }
+
+    #[test]
+    fn full_inventory_retains_drop_without_reporting_pickup() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_message::<VoxelBroken>()
+            .add_plugins(DropsPlugin::<DefaultItem>::new());
+        let mut container = ContainerComponent::<DefaultItem>::new(1);
+        assert_eq!(container.0.add(DefaultItem::IronOre, 1), 0);
+        let player = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                ItemCollector,
+                PrimaryContainer,
+                container,
+            ))
+            .id();
+        let drop = app
+            .world_mut()
+            .spawn((
+                DroppedItem {
+                    item: DefaultItem::RockFragment,
+                    count: 3,
+                    velocity: Vec3::ZERO,
+                    lifetime: 60.0,
+                },
+                Transform::from_xyz(0.25, 0.0, 0.0),
+            ))
+            .id();
+
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(100));
+            app.update();
+            let retained = app
+                .world()
+                .get::<DroppedItem<DefaultItem>>(drop)
+                .expect("full inventory must retain the unaccepted drop");
+            assert_eq!(retained.item, DefaultItem::RockFragment);
+            assert_eq!(retained.count, 3);
+            let inventory = &app
+                .world()
+                .get::<ContainerComponent<DefaultItem>>(player)
+                .unwrap()
+                .0;
+            assert_eq!(inventory.count_of(DefaultItem::IronOre), 1);
+            assert_eq!(inventory.count_of(DefaultItem::RockFragment), 0);
+            assert_eq!(
+                app.world_mut()
+                    .resource_mut::<Messages<ItemPickedUp<DefaultItem>>>()
+                    .drain()
+                    .count(),
+                0
+            );
+        }
+    }
 
     #[test]
     fn test_drop_table_get_drop() {
