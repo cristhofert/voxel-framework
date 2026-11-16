@@ -151,7 +151,7 @@ pub struct ChunkMaterialHandle {
 ///
 /// Insert this resource before adding `RenderPlugin` to customise fallback
 /// material properties. If absent, sensible defaults are used (white base color,
-/// high roughness, no metallic).
+/// high roughness, no metallic, opaque rendering).
 ///
 /// This resource has no effect when [`ChunkTextureArray`] is present because
 /// the texture-array path uses the embedded WGSL shader.
@@ -159,6 +159,10 @@ pub struct ChunkMaterialHandle {
 pub struct ChunkMaterialConfig {
     /// Base color of the material. Vertex colors are multiplied by this value.
     pub base_color: Color,
+    /// Alpha policy shared by all fallback chunks. Defaults to opaque so terrain
+    /// writes depth. Select `AlphaMode::Blend` explicitly for translucent palettes;
+    /// this does not split opaque/translucent geometry or sort individual faces.
+    pub alpha_mode: AlphaMode,
     /// Perceptual roughness of the PBR material (0.0 = smooth, 1.0 = rough).
     pub perceptual_roughness: f32,
     /// Metallic factor (0.0 = dielectric, 1.0 = metal).
@@ -171,6 +175,7 @@ impl Default for ChunkMaterialConfig {
     fn default() -> Self {
         Self {
             base_color: Color::WHITE,
+            alpha_mode: AlphaMode::Opaque,
             perceptual_roughness: 0.9,
             metallic: 0.0,
             reflectance: 0.1,
@@ -209,14 +214,14 @@ pub fn setup_chunk_material(
         handle.custom = Some(chunk_materials.add(mat));
     } else {
         // Fallback path — standard PBR material with vertex colors.
-        // AlphaMode::Blend allows transparent voxels (e.g. water) to render
-        // correctly using the alpha channel baked into vertex colors.
+        // Opaque terrain must write depth even when every vertex has alpha 1.
+        // Translucent palettes can explicitly opt into a different alpha policy.
         let material = StandardMaterial {
             base_color: config.base_color,
             perceptual_roughness: config.perceptual_roughness,
             metallic: config.metallic,
             reflectance: config.reflectance,
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: config.alpha_mode,
             ..default()
         };
         handle.standard = Some(standard_materials.add(material));
@@ -357,4 +362,107 @@ pub fn build_texture_array(images: &[Image]) -> Image {
     });
 
     array_image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        chunk::Chunk,
+        mesh::generate_chunk_mesh,
+        voxel::{DefaultVoxel, VoxelType},
+    };
+    use bevy::mesh::VertexAttributeValues;
+
+    fn startup(config: ChunkMaterialConfig, texture: bool) -> App {
+        let mut app = App::new();
+        app.init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<ChunkMaterial>>()
+            .init_resource::<ChunkMaterialHandle>()
+            .insert_resource(config)
+            .add_systems(Startup, setup_chunk_material);
+        if texture {
+            app.insert_resource(ChunkTextureArray {
+                handle: Handle::default(),
+            });
+        }
+        app.update();
+        app
+    }
+
+    #[test]
+    fn fallback_terrain_is_opaque_by_default() {
+        let app = startup(ChunkMaterialConfig::default(), false);
+        let handles = app.world().resource::<ChunkMaterialHandle>();
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let material = materials.get(handles.standard.as_ref().unwrap()).unwrap();
+        assert_eq!(material.alpha_mode, AlphaMode::Opaque);
+        assert!(handles.custom.is_none());
+    }
+
+    #[test]
+    fn default_palette_solids_are_opaque_and_air_has_no_geometry() {
+        for step in [1, 2] {
+            assert_eq!(
+                generate_chunk_mesh(&Chunk::<DefaultVoxel>::new(), step).count_vertices(),
+                0
+            );
+            for voxel in [
+                DefaultVoxel::Rock,
+                DefaultVoxel::IronOre,
+                DefaultVoxel::SiliconCrystal,
+                DefaultVoxel::RareMineral,
+            ] {
+                assert_eq!(voxel.color()[3], 1.0);
+                let mut chunk = Chunk::new();
+                chunk.set(0, 0, 0, voxel);
+                let mesh = generate_chunk_mesh(&chunk, step);
+                assert!(mesh.count_vertices() > 0);
+                let Some(VertexAttributeValues::Float32x4(colors)) =
+                    mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+                else {
+                    panic!("expected vertex colors")
+                };
+                assert!(colors.iter().all(|color| color[3] == 1.0));
+            }
+        }
+    }
+    #[test]
+    fn fallback_honors_explicit_alpha_and_pbr_configuration() {
+        for alpha_mode in [AlphaMode::Blend, AlphaMode::Mask(0.4)] {
+            let config = ChunkMaterialConfig {
+                base_color: Color::srgba(0.2, 0.3, 0.4, 0.5),
+                alpha_mode,
+                perceptual_roughness: 0.6,
+                metallic: 0.7,
+                reflectance: 0.8,
+            };
+            let app = startup(config.clone(), false);
+            let handles = app.world().resource::<ChunkMaterialHandle>();
+            let materials = app.world().resource::<Assets<StandardMaterial>>();
+            let material = materials.get(handles.standard.as_ref().unwrap()).unwrap();
+            assert_eq!(material.alpha_mode, alpha_mode);
+            assert_eq!(material.base_color, config.base_color);
+            assert_eq!(material.perceptual_roughness, config.perceptual_roughness);
+            assert_eq!(material.metallic, config.metallic);
+            assert_eq!(material.reflectance, config.reflectance);
+        }
+    }
+
+    #[test]
+    fn texture_array_ignores_fallback_alpha_policy() {
+        let app = startup(
+            ChunkMaterialConfig {
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            },
+            true,
+        );
+        let handles = app.world().resource::<ChunkMaterialHandle>();
+        assert!(handles.standard.is_none());
+        let materials = app.world().resource::<Assets<ChunkMaterial>>();
+        let material = materials.get(handles.custom.as_ref().unwrap()).unwrap();
+        assert_eq!(material.alpha_mode(), AlphaMode::Opaque);
+        assert_eq!(material.texture_array, Handle::<Image>::default());
+    }
 }

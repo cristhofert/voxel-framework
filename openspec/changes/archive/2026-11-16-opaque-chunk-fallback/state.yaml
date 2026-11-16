@@ -1,0 +1,8 @@
+change: opaque-chunk-fallback
+phase: archive
+implementation_complete: true
+automated_verification: passed
+native_playtest: not_run
+archive_complete: true
+archive_date: 2026-11-16
+scope: framework-only

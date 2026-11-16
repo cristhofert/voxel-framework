@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-11-16
+
+### Fixed
+
+- Vertex-colored terrain now uses an opaque fallback material, restoring depth
+  writes for solid voxels instead of forcing all chunks through alpha blending.
+  Air remains absent geometry; texture-array rendering is unchanged.
+
+### Migration
+
+- `ChunkMaterialConfig` now has an `alpha_mode` field defaulting to
+  `AlphaMode::Opaque`. Fully specified literals must add the field or use
+  `..Default::default()`.
+- Custom palettes requiring the previous blended fallback must explicitly select
+  `AlphaMode::Blend`. This remains a shared chunk policy without separate
+  opaque/translucent geometry or per-triangle sorting.
+
 ## [0.9.1] - 2026-11-11
 
 ### Fixed
