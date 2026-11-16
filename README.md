@@ -25,7 +25,7 @@
 
 ## Release Status & Stability
 
-`voxel-framework` 0.9 is the current package line for this Bevy-first voxel game
+`voxel-framework` 0.10 is the current package line for this Bevy-first voxel game
 framework. It is intended to be usable by real consumer crates, examples, and
 experiments, but it is not a 1.0 stability promise yet. Package metadata and
 guidance may be prepared before the corresponding crate and tag are published.
@@ -38,7 +38,7 @@ Compatibility target:
 
 | Area | Current status |
 |---|---|
-| Crate version | `0.9.x` |
+| Crate version | `0.10.x` |
 | Bevy version | `0.18` |
 | Rust version | MSRV `1.89` |
 | Stability | Public API can still change across `0.x` minor releases |
@@ -142,14 +142,14 @@ chosen repository revision. Do not assume candidate metadata implies a tag.
 
 ```toml
 [dependencies]
-# Option A — released 0.9 line (recommended for consumers):
-voxel-framework = "0.9"
+# Option A — released 0.10 line (recommended for consumers):
+voxel-framework = "0.10"
 
 # Option B — local clone side-by-side (development):
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from the matching release tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.9.0" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.0" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
@@ -1182,6 +1182,33 @@ app.add_plugins(GeneratorPlugin::<MyVoxel>::new())
 | `IronOre` | 2 | `(0.55, 0.35, 0.20, 1.0)` — rusty orange |
 | `SiliconCrystal` | 3 | `(0.40, 0.50, 0.80, 1.0)` — blue-violet |
 | `RareMineral` | 4 | `(0.20, 0.85, 0.60, 1.0)` — vivid teal-green |
+
+### Chunk opacity
+
+All four solid default voxels are opaque. Air emits no geometry at either LOD.
+Without a texture array, chunks use an opaque shared `StandardMaterial` so
+foreground terrain writes depth and occludes surfaces behind it.
+
+Custom palettes that need the previous blended fallback must opt in before
+startup:
+
+```rust,no_run
+use bevy::prelude::*;
+use voxel_framework::render::ChunkMaterialConfig;
+
+let mut app = App::new();
+app.insert_resource(ChunkMaterialConfig {
+    alpha_mode: AlphaMode::Blend,
+    ..default()
+});
+```
+
+This policy applies to every fallback chunk, not individual voxel types.
+Blending retains the existing sorting limitations; it does not provide separate
+opaque/translucent meshes or per-triangle sorting. The texture-array path is
+unchanged and ignores this configuration. Existing fully specified
+`ChunkMaterialConfig` literals must add `alpha_mode` or use
+`..Default::default()`.
 
 ## Profiling
 

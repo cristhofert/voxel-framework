@@ -12,7 +12,7 @@ non-obvious runtime contracts. For the deep API, read the rustdoc
 
 ## Stability & scope
 
-`voxel-framework` 0.9 is the current package line intended for real Bevy
+`voxel-framework` 0.10 is the current package line intended for real Bevy
 consumer crates, examples, and experiments. It targets Bevy 0.18 and Rust MSRV
 1.89 (Bevy 0.18.1 requires 1.89.0). Treat it as useful but pre-1.0: public APIs
 and the local persistence format may still change across 0.x minor releases.
