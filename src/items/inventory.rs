@@ -167,7 +167,8 @@ pub trait ItemType: Copy + Clone + Default + Send + Sync + PartialEq + Eq + Hash
 
     /// Default RGBA display colour for this item, with components in `[0.0, 1.0]`.
     ///
-    /// Used by hotbar and inventory UI as a fallback when no sprite is available.
+    /// Used by hotbar and inventory UI as a fallback when no sprite is available,
+    /// and by the optional [`super::DropVisualPlugin`] for world drops.
     fn color(&self) -> [f32; 4];
 
     /// Encodes this item variant as a single byte for JSON persistence.
