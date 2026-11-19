@@ -126,9 +126,9 @@ pub use crate::items::inventory::{
 };
 #[cfg(feature = "items")]
 pub use crate::items::{
-    DefaultItem, DropTable, DropTableEntry, DroppedItem, DropsPlugin, HotbarPlugin,
-    HotbarSelectionChanged, HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp,
-    ItemType, MagnetConfig, load_inventory, save_inventory,
+    DefaultItem, DropTable, DropTableEntry, DropVisualPlugin, DroppedItem, DropsPlugin,
+    HotbarPlugin, HotbarSelectionChanged, HotbarState, Inventory, InventorySlot, ItemCollector,
+    ItemPickedUp, ItemType, MagnetConfig, load_inventory, save_inventory,
 };
 
 // UI system

@@ -402,10 +402,10 @@ fn magnet_system<I: ItemType>(
     mut pickup_writer: MessageWriter<ItemPickedUp<I>>,
     mut commands: Commands,
 ) {
-    let Ok(collector_transform) = collector_query.single() else {
-        return;
-    };
-    let collector_pos = collector_transform.translation;
+    let collector_pos = collector_query
+        .single()
+        .ok()
+        .map(|transform| transform.translation);
     let dt = time.delta_secs();
 
     for (entity, mut dropped, transform_opt) in item_query.iter_mut() {
@@ -415,6 +415,11 @@ fn magnet_system<I: ItemType>(
             commands.entity(entity).despawn();
             continue;
         }
+
+        // Expiration is independent of the single-collector spatial contract.
+        let Some(collector_pos) = collector_pos else {
+            continue;
+        };
 
         // If entity has no transform we can't do spatial logic — skip.
         let Some(mut transform) = transform_opt else {
@@ -514,6 +519,50 @@ impl<I: ItemType> Plugin for DropsPlugin<I> {
 mod tests {
     use super::*;
     use crate::items::DefaultItem;
+
+    #[test]
+    fn drops_expire_without_a_unique_collector_or_transform() {
+        for collectors in [0, 2] {
+            let mut app = App::new();
+            app.init_resource::<Time>()
+                .add_message::<VoxelBroken>()
+                .add_plugins(DropsPlugin::<DefaultItem>::new());
+            for _ in 0..collectors {
+                app.world_mut().spawn((ItemCollector, Transform::default()));
+            }
+            let mut entities = Vec::new();
+            for positioned in [false, true] {
+                let mut entity = app.world_mut().spawn(DroppedItem {
+                    item: DefaultItem::RockFragment,
+                    count: 3,
+                    velocity: Vec3::ZERO,
+                    lifetime: 0.2,
+                });
+                if positioned {
+                    entity.insert(Transform::default());
+                }
+                entities.push(entity.id());
+            }
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(100));
+            app.update();
+            for &entity in &entities {
+                let drop = app.world().get::<DroppedItem<DefaultItem>>(entity).unwrap();
+                assert!((drop.lifetime - 0.1).abs() < 0.0001);
+                assert_eq!(drop.count, 3);
+            }
+            app.update();
+            for entity in entities {
+                assert!(app.world().get_entity(entity).is_err());
+            }
+            assert!(
+                app.world()
+                    .resource::<Messages<ItemPickedUp<DefaultItem>>>()
+                    .is_empty()
+            );
+        }
+    }
 
     #[test]
     fn broken_voxel_spawns_one_mapped_drop_at_world_position() {

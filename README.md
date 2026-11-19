@@ -58,6 +58,19 @@ supports these gates without using `cargo build`. Candidate preparation does not
 publish, push, tag, or integrate the candidate; publication is a separate human
 decision after validation.
 
+## Visible collectible drops
+
+With the `items` feature, explicitly compose `DropsPlugin<I>` for gameplay and
+`DropVisualPlugin<I>` for optional default presentation. The latter draws small,
+unlit cubes using item colors and shared assets; it requires no external art or
+lights. Full inventories retain drops, partial pickups retain their remainder,
+and lifetime expiration works without a collector. The game owns the camera,
+mining input, mappings, and collector/container entities.
+
+See [the drop integration guide](docs/drops.md) and run
+`cargo run --example drops --no-default-features --features items` for a visible
+collection/expiration demo. These plugins are not added by convenience bundles.
+
 ## Known Limitations
 
 - This is a framework/library, not a complete editor or standalone game. Your
@@ -93,7 +106,7 @@ categories:
 | Engine | Foundation for streamable/renderable voxel worlds | `WorldPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
 | World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
 | Gameplay | Reusable rules and interactions | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `VoxelEffectsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
-| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `VoxelHudPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
+| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `VoxelHudPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DropVisualPlugin<I>`, `DefaultAudioPlugin` |
 | Convenience | Bundles, input adapters, compatibility, recipes/prototyping helpers | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
 The categories are also exposed as marker traits:
@@ -149,7 +162,7 @@ voxel-framework = "0.10"
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from the matching release tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.0" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.3" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
