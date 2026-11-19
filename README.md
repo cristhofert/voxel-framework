@@ -866,6 +866,12 @@ fn my_mining_system(
 }
 ```
 
+The input adapter mines a 2×2 patch on the struck face after the primary
+voxel breaks. Every neighboring voxel independently requires the active tool
+to meet its `mining_level()`. Protected neighbors remain intact and emit no
+`VoxelBroken` message, so they cannot produce drops through the drop plugin.
+The raycast reach remains six world units.
+
 Call `stop_mining` when the button is released to reset progress:
 
 ```rust

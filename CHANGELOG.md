@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-11-19
+
+### Fixed
+
+- Every neighbor in the mining input adapter's 2×2 face patch now respects its
+  own mining level. Insufficient tools leave protected neighbors intact without
+  VoxelBroken messages or item drops. Reach, patch shape, timing, and other
+  mining rules remain unchanged.
+
 ## [0.10.0] - 2026-11-16
 
 ### Fixed
