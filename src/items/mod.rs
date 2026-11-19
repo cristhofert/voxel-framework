@@ -17,6 +17,7 @@
 //!
 //! | Sub-module | Key types | Responsibility |
 //! |---|---|---|
+//! | [`drop_visuals`] | [`DropVisualPlugin`] | Optional shared, item-colored cube presentation |
 //! | [`drops`] | [`DropTable`], [`DroppedItem`], [`DropsPlugin`] | Spawn item entities on [`crate::world::VoxelBroken`]; magnet + pickup |
 //! | [`inventory`] | [`Inventory`], [`InventorySlot`], [`ItemPickedUp`] | Slot-based storage resource |
 //! | [`hotbar`] | [`HotbarState`], [`HotbarSelectionChanged`], [`HotbarPlugin`] | Selection state and keyboard/scroll input |
@@ -63,11 +64,13 @@
 //! }
 //! ```
 
+pub mod drop_visuals;
 pub mod drops;
 pub mod hotbar;
 pub mod inventory;
 pub mod persistence;
 
+pub use drop_visuals::*;
 pub use drops::*;
 pub use hotbar::*;
 pub use inventory::*;
