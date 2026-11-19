@@ -198,10 +198,11 @@ pub struct MiningProgress {
 // ─── Free functions ───────────────────────────────────────────────────────────
 
 /// Breaks a single voxel at world-voxel coordinates `world_voxel` if it is
-/// solid and its chunk is loaded.  Emits [`VoxelBroken`], [`ChunkModified`],
+/// solid, its chunk is loaded, and the active tool meets its mining level. Emits [`VoxelBroken`], [`ChunkModified`],
 /// and border-neighbor notifications.
 fn break_voxel<V: VoxelType>(
     world_voxel: IVec3,
+    tool_level: u8,
     manager: &ChunkManager,
     chunks: &mut Query<&mut Chunk<V>>,
     broken: &mut MessageWriter<VoxelBroken>,
@@ -227,7 +228,7 @@ fn break_voxel<V: VoxelType>(
         return;
     };
     let voxel = chunk.get(local.0, local.1, local.2);
-    if !voxel.is_solid() {
+    if !voxel.is_solid() || tool_level < voxel.mining_level() {
         return;
     }
     let voxel_byte = voxel.to_byte();
@@ -613,6 +614,8 @@ pub fn hotbar_to_tool_system<I: ItemType>(
     not(feature = "items"),
     doc = "Without the `items` feature, add this system explicitly and initialize or supply [`ToolStats`] from game-owned code."
 )]
+/// Every neighbor of the 2×2 face patch must independently satisfy the active
+/// tool level before mutation or break notifications.
 pub fn mining_input_system<V: VoxelType>(
     buttons: Res<ButtonInput<MouseButton>>,
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
@@ -684,7 +687,7 @@ pub fn mining_input_system<V: VoxelType>(
     );
 
     // If the primary block just broke, also break the 3 adjacent blocks that
-    // form a 2×2 square on the struck face.
+    // form a 2×2 square on the struck face, checking each neighbor's mining level.
     if was_mining && state.target.is_none() {
         use crate::chunk::CHUNK_SIZE;
         let cs = CHUNK_SIZE as i32;
@@ -698,6 +701,7 @@ pub fn mining_input_system<V: VoxelType>(
         for offset in quad_offsets(hit.face_normal, hit_pt, center) {
             break_voxel(
                 primary + offset,
+                tool_stats.tool_level,
                 &manager,
                 &mut chunks,
                 &mut broken,
@@ -712,6 +716,129 @@ pub fn mining_input_system<V: VoxelType>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    enum PatchVoxel {
+        #[default]
+        Air,
+        Soft,
+        Ore,
+    }
+    impl VoxelType for PatchVoxel {
+        fn name(&self) -> &'static str {
+            "patch voxel"
+        }
+        fn is_solid(&self) -> bool {
+            *self != Self::Air
+        }
+        fn color(&self) -> [f32; 4] {
+            [1.0; 4]
+        }
+        fn to_byte(&self) -> u8 {
+            *self as u8
+        }
+        fn from_byte(byte: u8) -> Self {
+            match byte {
+                1 => Self::Soft,
+                2 => Self::Ore,
+                _ => Self::Air,
+            }
+        }
+        fn mining_level(&self) -> u8 {
+            if *self == Self::Ore { 2 } else { 0 }
+        }
+    }
+
+    #[test]
+    fn patch_respects_each_voxel_tool_level_and_drop_events() {
+        for tool_level in [0, 2] {
+            let mut app = App::new();
+            app.add_plugins(MiningPlugin)
+                .init_resource::<Time>()
+                .init_resource::<ButtonInput<MouseButton>>()
+                .insert_resource(ChunkManager::new(32.0, 48.0))
+                .insert_resource(ToolStats {
+                    tool_level,
+                    tool_speed: 1.0,
+                })
+                .insert_resource(MiningConfig { break_time: 1.0 })
+                .add_message::<ChunkModified>()
+                .add_systems(Update, mining_input_system::<PatchVoxel>);
+            #[cfg(feature = "items")]
+            {
+                use crate::items::{DefaultItem, DropTable, DropsPlugin};
+                app.add_plugins(DropsPlugin::<DefaultItem>::new());
+                let mut table = app.world_mut().resource_mut::<DropTable<DefaultItem>>();
+                table.register(1, DefaultItem::RockFragment, 1, 1);
+                table.register(2, DefaultItem::RareMineral, 1, 1);
+            }
+            let mut chunk = Chunk::<PatchVoxel>::new();
+            for (x, y) in [(4, 4), (4, 5), (5, 5), (6, 5)] {
+                chunk.set(x, y, 4, PatchVoxel::Soft);
+            }
+            chunk.set(5, 4, 4, PatchVoxel::Ore);
+            let entity = app.world_mut().spawn(chunk).id();
+            app.world_mut()
+                .resource_mut::<ChunkManager>()
+                .register(IVec3::ZERO, entity);
+            app.world_mut().spawn((
+                Camera3d::default(),
+                GlobalTransform::from_translation(Vec3::new(4.75, 4.75, 8.0)),
+            ));
+            app.world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .press(MouseButton::Left);
+            for _ in 0..2 {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_millis(500));
+                app.update();
+            }
+            let chunk = app.world().get::<Chunk<PatchVoxel>>(entity).unwrap();
+            for (x, y) in [(4, 4), (4, 5), (5, 5)] {
+                assert_eq!(chunk.get(x, y, 4), PatchVoxel::Air);
+            }
+            assert_eq!(
+                chunk.get(5, 4, 4),
+                if tool_level == 0 {
+                    PatchVoxel::Ore
+                } else {
+                    PatchVoxel::Air
+                }
+            );
+            assert_eq!(
+                chunk.get(6, 5, 4),
+                PatchVoxel::Soft,
+                "outside patch must remain intact"
+            );
+            let messages = app.world().resource::<Messages<VoxelBroken>>();
+            let mut cursor = messages.get_cursor();
+            let events: Vec<_> = cursor.read(messages).collect();
+            assert_eq!(events.len(), if tool_level == 0 { 3 } else { 4 });
+            assert_eq!(
+                events.iter().filter(|e| e.voxel_byte == 2).count(),
+                usize::from(tool_level == 2)
+            );
+            app.world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .clear();
+            app.update();
+            #[cfg(feature = "items")]
+            {
+                use crate::items::{DefaultItem, DroppedItem};
+                let mut query = app.world_mut().query::<&DroppedItem<DefaultItem>>();
+                let drops: Vec<_> = query.iter(app.world()).collect();
+                assert_eq!(drops.len(), if tool_level == 0 { 3 } else { 4 });
+                assert_eq!(
+                    drops
+                        .iter()
+                        .filter(|d| d.item == DefaultItem::RareMineral)
+                        .count(),
+                    usize::from(tool_level == 2)
+                );
+            }
+        }
+    }
 
     fn default_config() -> MiningConfig {
         MiningConfig { break_time: 1.5 }
