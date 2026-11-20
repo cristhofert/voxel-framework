@@ -42,13 +42,31 @@ needed. Vulkan warned that VK_EXT_physical_device_drm was unavailable; rendering
 and collection succeeded.
 
 The ignored publication lock upgrades only the yanked async-executor 1.14.0 to
-1.14.1. The exact-MSRV check is repeated with that resolution before publication.
+1.14.1. The exact-MSRV check passed again with that resolution before publication.
 
 ## Publication gates
 
-Publication is pending Rust CI (including Windows), the complete release
-preflight workflow on the exact release commit, and cargo publish --dry-run.
-The final release record will identify their run URLs and the published revision.
+Published to crates.io on 2026-11-20 from
+`7b5888917059e666a4055f449c5576758c98e23a`; immutable version `0.10.3`.
+The annotated `v0.10.3` tag points to the same commit.
+
+- [Rust CI](https://github.com/cristhofert/voxel-framework/actions/runs/44663964416):
+  all 10 jobs passed, including Windows inventory persistence, feature tests,
+  MSRV, examples, docs, and package audit.
+- [Release preflight](https://github.com/cristhofert/voxel-framework/actions/runs/44663964467):
+  complete scripts/release-preflight.sh 0.10.3 passed on that exact commit.
+- cargo publish --dry-run --locked: passed, including packaged-source compilation.
+- cargo publish --locked: succeeded; sparse registry index confirms version,
+  rust-version 1.89, and yanked=false.
+- Registry SHA-256:
+  `7fcec787c5d3f94a4b81ab4f67907107f6c58861cf06e87f4b2b0d7e97f83035`.
+- [GitHub release](https://github.com/cristhofert/voxel-framework/releases/tag/v0.10.3).
+
+The complete preflight ran in GitHub Actions; local checks are listed separately
+above. The first local dry-run invocation was not executed because automatic
+approval review hit a usage limit. After resuming, review succeeded, and both
+dry-run and publication completed normally. This documentation follow-up does
+not move the published tag or change the crate contents.
 
 ## Limits
 
