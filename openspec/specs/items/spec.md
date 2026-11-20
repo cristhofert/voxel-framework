@@ -128,3 +128,27 @@ Every neighbor in the mining input adapter's 2x2 patch MUST independently requir
 - GIVEN the same patch and a level-two tool
 - WHEN mining completes
 - THEN all eligible patch voxels SHALL break and emit their own messages and drops.
+
+### Requirement: Lossless partial drop collection
+DropsPlugin MUST add only accepted quantities to the primary inventory, emit
+ItemPickedUp only when a positive quantity was accepted, and report exactly that
+quantity. The same drop entity MUST retain the unaccepted remainder. Fully
+collected drops MUST despawn and MUST NOT produce duplicate pickup messages.
+
+#### Scenario: One unit fits from a three-unit drop
+- GIVEN a three-unit drop in pickup range and an inventory with room for one
+- WHEN pickup runs
+- THEN the inventory MUST gain one, one ItemPickedUp MUST report count 1,
+  and the drop MUST retain two.
+- WHEN room for two is freed and pickup runs again
+- THEN the inventory MUST gain those two, one ItemPickedUp MUST report count 2,
+  and the drop MUST disappear.
+- WHEN further frames run
+- THEN quantities and pickup messages MUST not be duplicated.
+
+#### Scenario: Inventory accepts nothing
+- GIVEN a three-unit drop and a full inventory
+- WHEN pickup is attempted repeatedly
+- THEN the drop MUST retain three and no successful pickup MUST be reported.
+- WHEN capacity becomes available before expiry
+- THEN the retained drop MUST be collectible exactly once.

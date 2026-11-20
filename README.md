@@ -686,6 +686,19 @@ App::new()
     .run();
 ```
 
+### Partial drop collection
+
+With `DropsPlugin<I>`, collection inserts only what the primary inventory can
+accept. A drop of three units arriving with room for one adds one unit and emits
+one `ItemPickedUp<I>` message with `count = 1`; the same drop entity keeps two
+units. When space becomes available, those two can be collected and the entity
+is removed. Subsequent frames do not repeat the collection.
+
+If the inventory accepts nothing, no pickup message is emitted and the entire
+drop remains available until collection or its normal expiry. These rules use
+the existing inventory capacity and quantity contracts; they introduce no stack
+limit or inventory API change.
+
 ## Inventory and Crafting
 
 With `items`, `Inventory<I>` and `ContainerComponent<I>` implement
