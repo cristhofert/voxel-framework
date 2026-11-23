@@ -1296,3 +1296,7 @@ That order gives the model the product intent before the implementation detail.
 ## License
 
 LGPL-3.0-or-later. See [`LICENSE`](LICENSE).
+
+The embedded Noto Sans fonts in `src/ui/` are licensed under the SIL Open Font
+License 1.1 (see [`src/ui/OFL-NotoSans.txt`](src/ui/OFL-NotoSans.txt)). Example
+asset credits are in [`assets/CREDITS.md`](assets/CREDITS.md).
