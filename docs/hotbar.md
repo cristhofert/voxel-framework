@@ -1,7 +1,7 @@
 # Inventory-backed hotbar
 
-The `items` feature enables these APIs. This change is prepared for 0.10.4;
-publication and its immutable tag are pending explicit maintainer authorization.
+The `items` feature enables these APIs, introduced in version 0.10.4.
+Use `voxel-framework = "=0.10.4"` to pin the immutable crate version.
 
 ## Registration and order
 

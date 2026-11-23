@@ -20,8 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Content mode caps slots at 50px. Selection renders from HotbarState, including
   direct programmatic changes. Legacy slot-only use and inventory rules remain.
 
-This candidate is not published; push and publication require authorization.
-
 ## [0.10.3] - 2026-11-19
 
 ### Added
