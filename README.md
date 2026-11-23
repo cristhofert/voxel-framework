@@ -58,6 +58,29 @@ supports these gates without using `cargo build`. Candidate preparation does not
 publish, push, tag, or integrate the candidate; publication is a separate human
 decision after validation.
 
+## Inventory-backed hotbar
+
+With `items`, add `HotbarContentPlugin<I>` alongside `HotbarUiPlugin` to display
+the unique primary container's icons, quantities, and selected item name.
+Register explicit associations with `ItemIconPalette<I>::register_voxel` to
+reuse material colors without images or matching item/voxel IDs.
+The existing slot-only UI remains available. See [the hotbar guide](docs/hotbar.md)
+and `cargo run --example hotbar_icons -- 800 600 --verify`.
+These APIs are available starting with version 0.10.4.
+
+## Visible collectible drops
+
+With the `items` feature, explicitly compose `DropsPlugin<I>` for gameplay and
+`DropVisualPlugin<I>` for optional default presentation. The latter draws small,
+unlit cubes using item colors and shared assets; it requires no external art or
+lights. Full inventories retain drops, partial pickups retain their remainder,
+and lifetime expiration works without a collector. The game owns the camera,
+mining input, mappings, and collector/container entities.
+
+See [the drop integration guide](docs/drops.md) and run
+`cargo run --example drops --no-default-features --features items` for a visible
+collection/expiration demo. These plugins are not added by convenience bundles.
+
 ## Known Limitations
 
 - This is a framework/library, not a complete editor or standalone game. Your
@@ -93,7 +116,7 @@ categories:
 | Engine | Foundation for streamable/renderable voxel worlds | `WorldPlugin`, `RenderPlugin<V>`, `MeshPlugin<V>`, `OcclusionPlugin<V>`, `LoadingPlugin` |
 | World Data | Chunk sources, generation, persistence, lifecycle data | `GeneratorPlugin<V>`, `MultiGeneratorPlugin<V>`, `PersistencePlugin<V>` |
 | Gameplay | Reusable rules and interactions | `VoxelContentPlugin<V>`, `VoxelStatsPlugin`, `VoxelEffectsPlugin`, `MiningPlugin`, `PlacementPlugin`, `PlayerPlugin<V>`, `HotbarPlugin`, `DropsPlugin<I>` |
-| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `VoxelHudPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DefaultAudioPlugin` |
+| Default Implementation | Replaceable UI/audio/visual defaults | `UiPlugin`, `VoxelHudPlugin`, `SkyboxPlugin`, `FragmentPlugin`, `DropVisualPlugin<I>`, `DefaultAudioPlugin` |
 | Convenience | Bundles, input adapters, compatibility, recipes/prototyping helpers | `VoxelCorePlugin<V>`, `VoxelPlugin<V>`, `MiningInputPlugin<V, I>`, `PlacementInputPlugin<V>` |
 
 The categories are also exposed as marker traits:
@@ -149,7 +172,7 @@ voxel-framework = "0.10"
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from the matching release tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.0" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.5" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
@@ -686,6 +709,19 @@ App::new()
     .run();
 ```
 
+### Partial drop collection
+
+With `DropsPlugin<I>`, collection inserts only what the primary inventory can
+accept. A drop of three units arriving with room for one adds one unit and emits
+one `ItemPickedUp<I>` message with `count = 1`; the same drop entity keeps two
+units. When space becomes available, those two can be collected and the entity
+is removed. Subsequent frames do not repeat the collection.
+
+If the inventory accepts nothing, no pickup message is emitted and the entire
+drop remains available until collection or its normal expiry. These rules use
+the existing inventory capacity and quantity contracts; they introduce no stack
+limit or inventory API change.
+
 ## Inventory and Crafting
 
 With `items`, `Inventory<I>` and `ContainerComponent<I>` implement
@@ -865,6 +901,12 @@ fn my_mining_system(
         &mut broken, &mut progress, &mut modified);
 }
 ```
+
+The input adapter mines a 2×2 patch on the struck face after the primary
+voxel breaks. Every neighboring voxel independently requires the active tool
+to meet its `mining_level()`. Protected neighbors remain intact and emit no
+`VoxelBroken` message, so they cannot produce drops through the drop plugin.
+The raycast reach remains six world units.
 
 Call `stop_mining` when the button is released to reset progress:
 
@@ -1254,3 +1296,7 @@ That order gives the model the product intent before the implementation detail.
 ## License
 
 LGPL-3.0-or-later. See [`LICENSE`](LICENSE).
+
+The embedded Noto Sans fonts in `src/ui/` are licensed under the SIL Open Font
+License 1.1 (see [`src/ui/OFL-NotoSans.txt`](src/ui/OFL-NotoSans.txt)). Example
+asset credits are in [`assets/CREDITS.md`](assets/CREDITS.md).

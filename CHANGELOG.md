@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.5] - 2026-11-23
+
+### Added
+
+- Ship the SIL Open Font License 1.1 text (`src/ui/OFL-NotoSans.txt`) for the
+  embedded Noto Sans fonts.
+- Add `assets/CREDITS.md` documenting the provenance of example assets.
+
+### Changed
+
+- Replace the example block textures with original, procedurally generated
+  ones (`scripts/generate-example-textures.py`). The previous textures were
+  third-party files without a license and are no longer distributed. Example
+  texture files were renamed: `grass_block_top` → `grass_top`, `oak_log` →
+  `wood_log`, `oak_leaves` → `leaves`, `water_still` → `water`,
+  `amethyst_block` → `crystal`, `emerald_ore` → `rare_ore`.
+
+## [0.10.4] - 2026-11-22
+
+### Added
+
+- Optional HotbarContentPlugin<I> renders inventory slot icons, every stack count,
+  and the selected item name. ItemIconPalette<I> supports explicit material-color
+  associations through VoxelType::color(), with a generic fallback symbol.
+- Native hotbar_icons example and consumer guide, including 14-slot navigation.
+
+### Changed
+
+- Hotbar UI reserves horizontal margins and shrinks square slots to fit one row.
+  Content mode caps slots at 50px. Selection renders from HotbarState, including
+  direct programmatic changes. Legacy slot-only use and inventory rules remain.
+
+## [0.10.3] - 2026-11-19
+
+### Added
+
+- Optional `DropVisualPlugin<I>` renders positioned collectible drops as shared,
+  unlit item-colored cubes. Added a graphical drops example and consumer guide.
+
+### Fixed
+
+- Drop lifetime advances with zero or multiple collectors and without Transform.
+  Pickup and expiry remove the visual with the drop; partial pickup retains it.
+
+## [0.10.2] - 2026-11-19
+
+### Fixed
+
+- Every neighbor in the mining input adapter's 2×2 face patch now respects its
+  own mining level. Insufficient tools leave protected neighbors intact without
+  VoxelBroken messages or item drops. Reach, patch shape, timing, and other
+  mining rules remain unchanged.
+
 ## [0.10.0] - 2026-11-16
 
 ### Fixed

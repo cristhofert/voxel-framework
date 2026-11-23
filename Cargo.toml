@@ -1,6 +1,6 @@
 [package]
 name = "voxel-framework"
-version = "0.10.0"
+version = "0.10.5"
 edition = "2024"
 rust-version = "1.89"
 description = "A reusable voxel engine framework built on Bevy"
@@ -74,6 +74,16 @@ bevy = { version = "0.18", features = ["bevy_winit", "wayland", "bevy_mesh", "be
 [[example]]
 name = "basic_world"
 path = "examples/basic_world.rs"
+required-features = ["items"]
+
+[[example]]
+name = "hotbar_icons"
+path = "examples/hotbar_icons.rs"
+required-features = ["items"]
+
+[[example]]
+name = "drops"
+path = "examples/drops.rs"
 required-features = ["items"]
 
 [[example]]

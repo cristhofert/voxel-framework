@@ -11,7 +11,9 @@
 //!    [`MagnetConfig::radius`] world units.
 //! 3. **Collect** — when the item reaches within 0.5 units of the collector,
 //!    `magnet_system` calls [`crate::items::inventory::Inventory::add`], emits
-//!    [`crate::items::inventory::ItemPickedUp`], and despawns the entity.
+//!    [`crate::items::inventory::ItemPickedUp`] only for accepted items, and
+//!    retains the unaccepted remainder. It despawns the entity only when empty.
+//!    A full inventory leaves the drop available and emits no pickup message.
 //! 4. **Expire** — items that are never collected despawn automatically after
 //!    their [`DroppedItem::lifetime`] reaches zero (default 60 seconds).
 //!
@@ -400,10 +402,10 @@ fn magnet_system<I: ItemType>(
     mut pickup_writer: MessageWriter<ItemPickedUp<I>>,
     mut commands: Commands,
 ) {
-    let Ok(collector_transform) = collector_query.single() else {
-        return;
-    };
-    let collector_pos = collector_transform.translation;
+    let collector_pos = collector_query
+        .single()
+        .ok()
+        .map(|transform| transform.translation);
     let dt = time.delta_secs();
 
     for (entity, mut dropped, transform_opt) in item_query.iter_mut() {
@@ -413,6 +415,11 @@ fn magnet_system<I: ItemType>(
             commands.entity(entity).despawn();
             continue;
         }
+
+        // Expiration is independent of the single-collector spatial contract.
+        let Some(collector_pos) = collector_pos else {
+            continue;
+        };
 
         // If entity has no transform we can't do spatial logic — skip.
         let Some(mut transform) = transform_opt else {
@@ -512,6 +519,50 @@ impl<I: ItemType> Plugin for DropsPlugin<I> {
 mod tests {
     use super::*;
     use crate::items::DefaultItem;
+
+    #[test]
+    fn drops_expire_without_a_unique_collector_or_transform() {
+        for collectors in [0, 2] {
+            let mut app = App::new();
+            app.init_resource::<Time>()
+                .add_message::<VoxelBroken>()
+                .add_plugins(DropsPlugin::<DefaultItem>::new());
+            for _ in 0..collectors {
+                app.world_mut().spawn((ItemCollector, Transform::default()));
+            }
+            let mut entities = Vec::new();
+            for positioned in [false, true] {
+                let mut entity = app.world_mut().spawn(DroppedItem {
+                    item: DefaultItem::RockFragment,
+                    count: 3,
+                    velocity: Vec3::ZERO,
+                    lifetime: 0.2,
+                });
+                if positioned {
+                    entity.insert(Transform::default());
+                }
+                entities.push(entity.id());
+            }
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(100));
+            app.update();
+            for &entity in &entities {
+                let drop = app.world().get::<DroppedItem<DefaultItem>>(entity).unwrap();
+                assert!((drop.lifetime - 0.1).abs() < 0.0001);
+                assert_eq!(drop.count, 3);
+            }
+            app.update();
+            for entity in entities {
+                assert!(app.world().get_entity(entity).is_err());
+            }
+            assert!(
+                app.world()
+                    .resource::<Messages<ItemPickedUp<DefaultItem>>>()
+                    .is_empty()
+            );
+        }
+    }
 
     #[test]
     fn broken_voxel_spawns_one_mapped_drop_at_world_position() {
@@ -638,6 +689,7 @@ mod tests {
             .add_plugins(DropsPlugin::<DefaultItem>::new());
         let item = DefaultItem::RockFragment;
         let mut container = ContainerComponent::<DefaultItem>::new(1);
+        // Published inventories use u32 aggregate quantities: leave room for one.
         assert_eq!(container.0.add(item, u32::MAX - 1), 0);
         let player = app
             .world_mut()
@@ -661,7 +713,8 @@ mod tests {
             ))
             .id();
 
-        for expected_pickup in [1, 0, 2] {
+        let mut total_picked_up = 0;
+        for (expected_pickup, expected_remainder) in [(1, 2), (0, 2), (2, 0), (0, 0), (0, 0)] {
             if expected_pickup == 2 {
                 assert_eq!(
                     app.world_mut()
@@ -672,6 +725,9 @@ mod tests {
                     2
                 );
             }
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(100));
             app.update();
             assert_eq!(
                 app.world()
@@ -681,7 +737,7 @@ mod tests {
                     .count_of(item),
                 u32::MAX
             );
-            if expected_pickup == 2 {
+            if expected_remainder == 0 {
                 assert!(app.world().get_entity(drop).is_err());
             } else {
                 let retained = app
@@ -689,7 +745,7 @@ mod tests {
                     .get::<DroppedItem<DefaultItem>>(drop)
                     .expect("partial pickup must preserve the remainder");
                 assert_eq!(retained.item, item);
-                assert_eq!(retained.count, 2);
+                assert_eq!(retained.count, expected_remainder);
             }
             let pickups: Vec<_> = app
                 .world_mut()
@@ -702,8 +758,15 @@ mod tests {
                 assert_eq!(pickups.len(), 1);
                 assert_eq!(pickups[0].item, item);
                 assert_eq!(pickups[0].count, expected_pickup);
+                total_picked_up += pickups[0].count;
             }
+            assert_eq!(
+                total_picked_up + expected_remainder,
+                3,
+                "no units lost or duplicated"
+            );
         }
+        assert_eq!(total_picked_up, 3);
     }
 
     #[test]
@@ -761,6 +824,39 @@ mod tests {
                     .count(),
                 0
             );
+        }
+
+        assert_eq!(
+            app.world_mut()
+                .get_mut::<ContainerComponent<DefaultItem>>(player)
+                .unwrap()
+                .0
+                .remove(DefaultItem::IronOre, 1),
+            1
+        );
+        for expected_messages in [1, 0, 0] {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(100));
+            app.update();
+            assert!(app.world().get_entity(drop).is_err());
+            let inventory = &app
+                .world()
+                .get::<ContainerComponent<DefaultItem>>(player)
+                .unwrap()
+                .0;
+            assert_eq!(inventory.count_of(DefaultItem::RockFragment), 3);
+            assert_eq!(inventory.count_of(DefaultItem::IronOre), 0);
+            let pickups: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Messages<ItemPickedUp<DefaultItem>>>()
+                .drain()
+                .collect();
+            assert_eq!(pickups.len(), expected_messages);
+            if let Some(pickup) = pickups.first() {
+                assert_eq!(pickup.item, DefaultItem::RockFragment);
+                assert_eq!(pickup.count, 3);
+            }
         }
     }
 

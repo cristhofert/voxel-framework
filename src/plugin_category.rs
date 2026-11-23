@@ -29,7 +29,7 @@ use crate::effects::VoxelEffectsPlugin;
 use crate::fragments::FragmentPlugin;
 use crate::generator::{GeneratorPlugin, MultiGeneratorPlugin};
 #[cfg(feature = "items")]
-use crate::items::{DropsPlugin, HotbarPlugin, ItemType};
+use crate::items::{DropVisualPlugin, DropsPlugin, HotbarPlugin, ItemType};
 use crate::mesh::MeshPlugin;
 #[cfg(feature = "mobs")]
 use crate::mobs::MobPlugin;
@@ -43,7 +43,7 @@ use crate::ui::{
     VoxelHudPlugin,
 };
 #[cfg(feature = "items")]
-use crate::ui::{HotbarUiPlugin, PickupNotificationPlugin};
+use crate::ui::{HotbarContentPlugin, HotbarUiPlugin, PickupNotificationPlugin};
 use crate::voxel::VoxelType;
 #[cfg(feature = "crafting")]
 use crate::world::manifest::WorldManifestPlugin;
@@ -143,6 +143,11 @@ impl<I: ItemType> VoxelFrameworkPlugin for DropsPlugin<I> {}
 #[cfg(feature = "items")]
 impl<I: ItemType> GameplayPlugin for DropsPlugin<I> {}
 
+#[cfg(feature = "items")]
+impl<I: ItemType> VoxelFrameworkPlugin for DropVisualPlugin<I> {}
+#[cfg(feature = "items")]
+impl<I: ItemType> DefaultImplementationPlugin for DropVisualPlugin<I> {}
+
 #[cfg(feature = "crafting")]
 impl<I: ItemType> VoxelFrameworkPlugin for CraftingPlugin<I> {}
 #[cfg(feature = "crafting")]
@@ -219,3 +224,8 @@ impl<V: VoxelType> ConveniencePlugin for PlacementInputPlugin<V> {}
 impl<I: ItemType> VoxelFrameworkPlugin for CraftingUiPlugin<I> {}
 #[cfg(feature = "crafting")]
 impl<I: ItemType> ConveniencePlugin for CraftingUiPlugin<I> {}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> VoxelFrameworkPlugin for HotbarContentPlugin<I> {}
+#[cfg(feature = "items")]
+impl<I: ItemType> DefaultImplementationPlugin for HotbarContentPlugin<I> {}

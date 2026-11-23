@@ -48,6 +48,13 @@
 //! architecture. New domain behavior should normally be modeled as an explicit
 //! Engine, World Data, Gameplay, or Default Implementation plugin.
 //!
+//! With `items`, `items::DropVisualPlugin<I>` supplies optional item-colored drop
+//! cubes alongside `items::DropsPlugin<I>` gameplay. See `docs/drops.md` and the
+//! graphical `drops` example. Both plugins remain explicit consumer choices.
+//! With `items`, `ui::HotbarContentPlugin<I>` and `ui::ItemIconPalette<I>` add
+//! explicit material-colored icons, quantities, and selected names to the
+//! existing hotbar. See `docs/hotbar.md` and the native `hotbar_icons` example.
+//!
 //! [`generator::GeneratorPlugin`] is always **opt-in** because it is generic
 //! over `V: VoxelType` and requires the caller to supply a
 //! [`generator::GeneratorResource`] holding a concrete generator. Add it

@@ -117,3 +117,98 @@ Built-ins MUST reject capacity/length mismatch, zero or sentinel live stacks, or
 - WHEN adding A1 or counting A
 - THEN `add` MUST return all unaccepted items without wrap
 - AND the count MUST NOT overflow
+
+### Requirement: Per-voxel patch tool eligibility
+Every neighbor in the mining input adapter's 2x2 patch MUST independently require tool_level >= mining_level(). Ineligible neighbors MUST remain intact and MUST NOT emit VoxelBroken or create drops. Existing reach, patch selection, and other rules MUST remain unchanged.
+#### Scenario: Bare hands next to level-two ore
+- GIVEN a level-zero primary voxel with a level-two ore neighbor in its patch
+- WHEN level-zero hands complete mining
+- THEN eligible voxels SHALL break and the ore SHALL remain without a break message or drop.
+#### Scenario: Sufficient tool level
+- GIVEN the same patch and a level-two tool
+- WHEN mining completes
+- THEN all eligible patch voxels SHALL break and emit their own messages and drops.
+
+### Requirement: Lossless partial drop collection
+DropsPlugin MUST add only accepted quantities to the primary inventory, emit
+ItemPickedUp only when a positive quantity was accepted, and report exactly that
+quantity. The same drop entity MUST retain the unaccepted remainder. Fully
+collected drops MUST despawn and MUST NOT produce duplicate pickup messages.
+
+#### Scenario: One unit fits from a three-unit drop
+- GIVEN a three-unit drop in pickup range and an inventory with room for one
+- WHEN pickup runs
+- THEN the inventory MUST gain one, one ItemPickedUp MUST report count 1,
+  and the drop MUST retain two.
+- WHEN room for two is freed and pickup runs again
+- THEN the inventory MUST gain those two, one ItemPickedUp MUST report count 2,
+  and the drop MUST disappear.
+- WHEN further frames run
+- THEN quantities and pickup messages MUST not be duplicated.
+
+#### Scenario: Inventory accepts nothing
+- GIVEN a three-unit drop and a full inventory
+- WHEN pickup is attempted repeatedly
+- THEN the drop MUST retain three and no successful pickup MUST be reported.
+- WHEN capacity becomes available before expiry
+- THEN the retained drop MUST be collectible exactly once.
+
+## Drop lifecycle and default presentation
+
+Added by `drop-lifecycle-visuals`, archived 2026-11-13.
+
+### Requirement: Collector-independent expiration
+The framework MUST decrement drop lifetime and despawn expired drops on every Update independently of collector count and Transform presence. Missing or ambiguous collectors MUST NOT generate pickup events.
+
+#### Scenario: No collector or multiple collectors
+- GIVEN drops with and without Transform, and zero or two collectors
+- WHEN elapsed time reaches their remaining lifetime
+- THEN all expired drops MUST despawn without pickup messages.
+
+### Requirement: Explicit reusable drop visuals
+An items-gated DropVisualPlugin<I> MUST be available via items and prelude as Default Implementation. It MUST attach a small cube with the item's color to positioned drops, using shared assets and no external assets or lights. It MUST NOT move drops, modify quantities, or install gameplay plugins. Existing custom Mesh3d or material components MUST be preserved.
+
+#### Scenario: Spawn and lifetime
+- GIVEN DropsPlugin<I>, DropVisualPlugin<I>, asset stores, and a mapped VoxelBroken
+- WHEN one frame runs
+- THEN the resulting positioned drop MUST have mesh, material, and visibility components.
+- WHEN the drop is fully collected or expires
+- THEN its render entity MUST disappear with it.
+
+#### Scenario: Partial collection and asset reuse
+- GIVEN two drops of the same item and limited inventory space
+- WHEN one is partially collected
+- THEN its visible remainder MUST persist with the same render handles.
+- AND repeated spawns MUST reuse the mesh and item material.
+
+#### Scenario: Opt-in and custom presentation
+- GIVEN only DropsPlugin<I>
+- WHEN a drop is spawned
+- THEN no mesh or material MUST be added.
+- GIVEN a custom mesh or material on a drop
+- WHEN DropVisualPlugin<I> runs
+- THEN the custom presentation MUST be left intact.
+
+#### Scenario: Moving and replacing a rendered drop
+- GIVEN a drop with default visual components
+- WHEN attraction or game code changes its Transform
+- THEN its GlobalTransform MUST reflect the current position in the same frame.
+- WHEN the game replaces the mesh, material, or visibility
+- THEN subsequent visual updates MUST preserve those components.
+
+## Inventory-backed hotbar icons
+
+
+- ItemIconPalette<I> MUST explicitly associate an item with RGBA or a voxel's
+  color; equality MUST NOT depend on shared item/voxel byte ids.
+- Occupied slots MUST render a padded square or '?' fallback and every count,
+  including one. Slot n MUST read container slot n without compacting empties.
+- The selected item name MUST appear above the bar; empty, missing, or ambiguous
+  content MUST display "Empty hands". Content/selection updates MUST NOT mutate
+  inventory and MUST clear stale UI when a container disappears or is replaced.
+- Legacy HotbarUiPlugin MUST still work without content or an inventory.
+- Fourteen slots MUST fit one bottom-centered row, at most 50px per slot with
+  default 4px gaps and at least 16px screen margins. Resize MUST update layout.
+- Keys 1-9 and wheel wraparound MUST retain existing behavior across all slots.
+- Native verification MUST cover 800x600, 1280x720, 1920x1080; checks and actual
+  limitations MUST be recorded before requesting release authorization.

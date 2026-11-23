@@ -126,9 +126,9 @@ pub use crate::items::inventory::{
 };
 #[cfg(feature = "items")]
 pub use crate::items::{
-    DefaultItem, DropTable, DropTableEntry, DroppedItem, DropsPlugin, HotbarPlugin,
-    HotbarSelectionChanged, HotbarState, Inventory, InventorySlot, ItemCollector, ItemPickedUp,
-    ItemType, MagnetConfig, load_inventory, save_inventory,
+    DefaultItem, DropTable, DropTableEntry, DropVisualPlugin, DroppedItem, DropsPlugin,
+    HotbarPlugin, HotbarSelectionChanged, HotbarState, Inventory, InventorySlot, ItemCollector,
+    ItemPickedUp, ItemType, MagnetConfig, load_inventory, save_inventory,
 };
 
 // UI system
@@ -147,7 +147,8 @@ pub use crate::ui::{
 };
 #[cfg(feature = "items")]
 pub use crate::ui::{
-    HotbarUiConfig, HotbarUiPlugin, PickupNotificationConfig, PickupNotificationPlugin,
+    HotbarContentPlugin, HotbarUiConfig, HotbarUiPlugin, ItemIconPalette, PickupNotificationConfig,
+    PickupNotificationPlugin,
 };
 
 // Player (6DOF jetpack / grounded)
