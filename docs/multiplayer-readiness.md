@@ -95,6 +95,7 @@ rotation (written to `Transform` on animation completion) is authoritative state
 | `HashSet<IVec3>` pending loads | `src/world/mod.rs:254` | NON-ISSUE | Set membership only; processed by event-driven streaming. |
 | `HashMap<u8, …>` drop entries | `src/items/drops.rs:70` | NON-ISSUE | Lookup by id; iteration only inside roll-from-seed paths if the game wires one. Worth revisiting if a drop-roll system is added that relies on iteration order. |
 | `HashMap<String, Vec<String>>` audio map | `src/audio/mod.rs:183`, `src/world/manifest.rs:81` | NON-ISSUE | Audio is FX-only, not simulation. |
+| `ItemIconPalette<I>` hotbar colors | `src/ui/hotbar/content.rs` | NON-ISSUE | Explicit presentation-only lookup; no inventory mutation, iteration, persistence, or network state. |
 | `HashMap<V, [f32; 4]>` voxel palette | `src/voxel.rs:720` | NON-ISSUE | Render-side color lookup; not part of authoritative state. |
 | `HashSet` in `noise/value.rs:151` | test code | NON-ISSUE | Only collects distinct hash outputs in a determinism test. |
 

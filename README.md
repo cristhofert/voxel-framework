@@ -58,6 +58,16 @@ supports these gates without using `cargo build`. Candidate preparation does not
 publish, push, tag, or integrate the candidate; publication is a separate human
 decision after validation.
 
+## Inventory-backed hotbar (unpublished candidate)
+
+With `items`, add `HotbarContentPlugin<I>` alongside `HotbarUiPlugin` to display
+the unique primary container's icons, quantities, and selected item name.
+Register explicit associations with `ItemIconPalette<I>::register_voxel` to
+reuse material colors without images or matching item/voxel IDs.
+The existing slot-only UI remains available. See [the hotbar guide](docs/hotbar.md)
+and `cargo run --example hotbar_icons -- 800 600 --verify`.
+Package 0.10.4 is prepared locally; publication is pending authorization.
+
 ## Visible collectible drops
 
 With the `items` feature, explicitly compose `DropsPlugin<I>` for gameplay and
