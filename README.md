@@ -58,7 +58,7 @@ supports these gates without using `cargo build`. Candidate preparation does not
 publish, push, tag, or integrate the candidate; publication is a separate human
 decision after validation.
 
-## Inventory-backed hotbar (unpublished candidate)
+## Inventory-backed hotbar
 
 With `items`, add `HotbarContentPlugin<I>` alongside `HotbarUiPlugin` to display
 the unique primary container's icons, quantities, and selected item name.
@@ -66,7 +66,7 @@ Register explicit associations with `ItemIconPalette<I>::register_voxel` to
 reuse material colors without images or matching item/voxel IDs.
 The existing slot-only UI remains available. See [the hotbar guide](docs/hotbar.md)
 and `cargo run --example hotbar_icons -- 800 600 --verify`.
-Package 0.10.4 is prepared locally; publication is pending authorization.
+These APIs are available starting with version 0.10.4.
 
 ## Visible collectible drops
 
@@ -172,7 +172,7 @@ voxel-framework = "0.10"
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from the matching release tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.3" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.4" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }

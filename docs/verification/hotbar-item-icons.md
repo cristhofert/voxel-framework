@@ -98,10 +98,11 @@ directory; it identifies this local snapshot, not a published release.
 
 The candidate package is local only and is not a published release. At verification time, no commit,
 push, tag, registry publication, or CI dispatch had been performed. The maintainer
-subsequently authorized a local commit only; push and publication remain pending.
+subsequently authorized the local commit, then push and publication. The original
+implementation is commit 3dd84b92a4263485fa6b0ebca1f706a251963e2e.
+Release gates are being run on the final commit, including consumer-doc updates.
 Clean-commit release preflight, independently resolved dependencies, Windows CI,
-and registry/tag availability checks remain required after authorization and
-before publication. The local --allow-dirty package is review evidence, not a
+and registry/tag availability checks remain required before publication. The local --allow-dirty package is review evidence, not a
 substitute for those exact-commit gates.
 
 Slot count is configured before Startup. This implementation targets a full
