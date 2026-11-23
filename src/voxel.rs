@@ -402,8 +402,8 @@ impl VoxelType for DefaultVoxel {
     /// - `0` = Air placeholder (grey)
     /// - `1` = Rock (stone.png)
     /// - `2` = IronOre (iron_ore.png)
-    /// - `3` = SiliconCrystal (amethyst_block.png)
-    /// - `4` = RareMineral (emerald_ore.png)
+    /// - `3` = SiliconCrystal (crystal.png)
+    /// - `4` = RareMineral (rare_ore.png)
     #[inline]
     fn texture_layer(&self, _face_index: usize) -> u32 {
         match self {

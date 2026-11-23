@@ -3,21 +3,19 @@
 These files are used only by the bundled examples (`basic_world`, `minetest`).
 The library itself does not load anything from `assets/`.
 
-## Audio
-
-`assets/*/audio/*.ogg` match file names from Kenney's sound packs
-(Impact Sounds, Interface/UI Audio, Sci-fi Sounds), released under
-CC0 1.0 Universal by Kenney (https://kenney.nl).
-
-<!-- TODO(maintainer): confirm the audio files really come from those packs. -->
-
 ## Textures
 
-`assets/*/textures/*.png` (32x32 block textures).
+`assets/*/textures/*.png` are original 32x32 textures generated procedurally
+by [`scripts/generate-example-textures.py`](../scripts/generate-example-textures.py)
+(requires Pillow). They are part of this project and covered by its
+LGPL-3.0-or-later license. To regenerate:
 
-<!-- TODO(maintainer): record the source and license of each texture before
-the next release. The file names follow common block naming
-(grass_block_top, oak_leaves, emerald_ore, ...); do not ship textures taken
-from a proprietary game. -->
+```sh
+python3 scripts/generate-example-textures.py assets
+```
 
-Source and license: **to be confirmed by the maintainer.**
+## Audio
+
+`assets/*/audio/*.ogg` come from Kenney's sound packs
+(Impact Sounds, Interface Sounds / UI Audio, Sci-fi Sounds), released under
+CC0 1.0 Universal by Kenney (https://kenney.nl).
