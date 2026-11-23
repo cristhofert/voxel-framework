@@ -1,4 +1,35 @@
-# Hotbar item icons — candidate verification
+# Hotbar item icons — verification and release
+
+## Published release — 2026-11-23
+
+Version **0.10.4** is published on crates.io and is not yanked.
+The annotated v0.10.4 tag points to the verified release commit
+`c5913ca9dbba3004be77c66e581d28e20f12d337` (implementation commit
+`3dd84b92a4263485fa6b0ebca1f706a251963e2e` plus finalized consumer documentation).
+
+- [Rust CI](https://github.com/cristhofert/voxel-framework/actions/runs/45094195537):
+  all 10 jobs passed on the release SHA, including Windows, MSRV, feature tests,
+  examples, documentation, and package audit.
+- [Release preflight](https://github.com/cristhofert/voxel-framework/actions/runs/45094195430):
+  the complete repository release script passed on the same SHA in GitHub Actions
+  with independently resolved dependencies.
+- cargo publish --dry-run --locked: passed, including package compilation.
+- cargo publish --locked: succeeded; the sparse registry index confirms 0.10.4,
+  rust-version 1.89 and yanked=false.
+- Registry SHA-256:
+  `c0250c41275c215a54c62c8949f7beeb28c0a23255538b2680c13361dae96256`.
+- [Release and immutable tag](https://github.com/cristhofert/voxel-framework/releases/tag/v0.10.4).
+
+Release evidence is retained under target/verification/hotbar-release. The first
+offline dry-run could not perform its required HTTP request; an online invocation
+was then blocked before execution by an automatic-approval usage limit. After
+resuming, review succeeded and dry-run/publication completed normally.
+
+The sections below retain the original local candidate verification and its
+then-pending release boundary. Those pending gates are now satisfied by the
+release runs above. This documentation follow-up does not move the release tag.
+
+## Original candidate verification
 
 Date: 2026-11-22. Baseline: published v0.10.3
 (`7b5888917059e666a4055f449c5576758c98e23a`).
