@@ -43,7 +43,7 @@ use crate::ui::{
     VoxelHudPlugin,
 };
 #[cfg(feature = "items")]
-use crate::ui::{HotbarUiPlugin, PickupNotificationPlugin};
+use crate::ui::{HotbarContentPlugin, HotbarUiPlugin, PickupNotificationPlugin};
 use crate::voxel::VoxelType;
 #[cfg(feature = "crafting")]
 use crate::world::manifest::WorldManifestPlugin;
@@ -224,3 +224,8 @@ impl<V: VoxelType> ConveniencePlugin for PlacementInputPlugin<V> {}
 impl<I: ItemType> VoxelFrameworkPlugin for CraftingUiPlugin<I> {}
 #[cfg(feature = "crafting")]
 impl<I: ItemType> ConveniencePlugin for CraftingUiPlugin<I> {}
+
+#[cfg(feature = "items")]
+impl<I: ItemType> VoxelFrameworkPlugin for HotbarContentPlugin<I> {}
+#[cfg(feature = "items")]
+impl<I: ItemType> DefaultImplementationPlugin for HotbarContentPlugin<I> {}

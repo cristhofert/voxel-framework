@@ -147,7 +147,8 @@ pub use crate::ui::{
 };
 #[cfg(feature = "items")]
 pub use crate::ui::{
-    HotbarUiConfig, HotbarUiPlugin, PickupNotificationConfig, PickupNotificationPlugin,
+    HotbarContentPlugin, HotbarUiConfig, HotbarUiPlugin, ItemIconPalette, PickupNotificationConfig,
+    PickupNotificationPlugin,
 };
 
 // Player (6DOF jetpack / grounded)

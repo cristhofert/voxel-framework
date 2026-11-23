@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-11-22
+
+### Added
+
+- Optional HotbarContentPlugin<I> renders inventory slot icons, every stack count,
+  and the selected item name. ItemIconPalette<I> supports explicit material-color
+  associations through VoxelType::color(), with a generic fallback symbol.
+- Native hotbar_icons example and consumer guide, including 14-slot navigation.
+
+### Changed
+
+- Hotbar UI reserves horizontal margins and shrinks square slots to fit one row.
+  Content mode caps slots at 50px. Selection renders from HotbarState, including
+  direct programmatic changes. Legacy slot-only use and inventory rules remain.
+
+This candidate is not published; push and publication require authorization.
+
 ## [0.10.3] - 2026-11-19
 
 ### Added
