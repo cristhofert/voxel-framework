@@ -172,7 +172,7 @@ voxel-framework = "0.10"
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from the matching release tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.4" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.5" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }
