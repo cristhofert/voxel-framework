@@ -434,31 +434,19 @@ fn sample_voxel<V: VoxelType, F: QueryFilter>(
 mod tests {
     use super::*;
     use crate::chunk::Chunk;
+    use crate::test_support::{filled_chunk, world_with_chunks};
     use crate::voxel::DefaultVoxel;
     use crate::world::ChunkManager;
     use bevy::ecs::system::SystemState;
 
-    // Helper: build a minimal Bevy World with a ChunkManager and one chunk.
-    // If `fill_solid` is true every voxel in the chunk at coord (0,0,0) is Rock.
+    // Minimal World with one chunk at (0,0,0): all Rock if `fill_solid`, else empty.
     fn build_world(fill_solid: bool) -> bevy::ecs::world::World {
-        let mut world = bevy::ecs::world::World::new();
-
-        let mut chunk = Chunk::<DefaultVoxel>::new();
-        if fill_solid {
-            for x in 0..crate::chunk::CHUNK_SIZE {
-                for y in 0..crate::chunk::CHUNK_SIZE {
-                    for z in 0..crate::chunk::CHUNK_SIZE {
-                        chunk.set(x, y, z, DefaultVoxel::Rock);
-                    }
-                }
-            }
-        }
-
-        let entity = world.spawn(chunk).id();
-        let mut manager = ChunkManager::default();
-        manager.register(IVec3::ZERO, entity);
-        world.insert_resource(manager);
-        world
+        let chunk = if fill_solid {
+            filled_chunk(DefaultVoxel::Rock)
+        } else {
+            Chunk::<DefaultVoxel>::new()
+        };
+        world_with_chunks([(IVec3::ZERO, chunk)])
     }
 
     #[test]

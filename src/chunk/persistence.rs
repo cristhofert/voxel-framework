@@ -125,14 +125,16 @@ mod tests {
     use super::*;
     use crate::voxel::DefaultVoxel;
 
-    /// Helper: returns a temporary file path with the given name.
-    fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(name)
+    /// Each test gets its own directory, removed on drop, so parallel or
+    /// concurrent runs never share files.
+    fn temp_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("create temp dir")
     }
 
     #[test]
     fn round_trip_save_load() {
-        let path = temp_path("test_round_trip_chunk.bin");
+        let dir = temp_dir();
+        let path = dir.path().join("test_round_trip_chunk.bin");
 
         // Build a chunk with a variety of voxel types.
         let mut chunk = Chunk::<DefaultVoxel>::new();
@@ -158,14 +160,12 @@ mod tests {
                 }
             }
         }
-
-        // Clean up.
-        let _ = fs::remove_file(&path);
     }
 
     #[test]
     fn empty_chunk_round_trip() {
-        let path = temp_path("test_empty_chunk.bin");
+        let dir = temp_dir();
+        let path = dir.path().join("test_empty_chunk.bin");
 
         let chunk = Chunk::<DefaultVoxel>::new();
 
@@ -181,8 +181,6 @@ mod tests {
             }
         }
         assert!(loaded.is_empty());
-
-        let _ = fs::remove_file(&path);
     }
 
     #[test]
@@ -198,7 +196,8 @@ mod tests {
 
     #[test]
     fn load_too_small_file_returns_error() {
-        let path = temp_path("test_small_chunk.bin");
+        let dir = temp_dir();
+        let path = dir.path().join("test_small_chunk.bin");
         // Write fewer bytes than CHUNK_VOLUME.
         fs::write(&path, &[0u8; 100]).expect("write failed");
 
@@ -207,13 +206,12 @@ mod tests {
 
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-
-        let _ = fs::remove_file(&path);
     }
 
     #[test]
     fn load_nonexistent_file_returns_error() {
-        let path = temp_path("test_nonexistent_chunk_xyz.bin");
+        let dir = temp_dir();
+        let path = dir.path().join("test_nonexistent_chunk_xyz.bin");
         let result = load_chunk::<DefaultVoxel>(&path);
         assert!(result.is_err());
     }
