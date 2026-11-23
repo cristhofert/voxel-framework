@@ -112,15 +112,15 @@ impl StatusEffect for MinetestEffect {
 ///
 /// Layers (match `DefaultTerrainVoxel::texture_layer`):
 ///   0 — Air placeholder (grey)
-///   1 — Grass  → grass_block_top.png
+///   1 — Grass  → grass_top.png
 ///   2 — Dirt   → dirt.png
 ///   3 — Stone  → stone.png
 ///   4 — Sand   → sand.png
-///   5 — Wood   → oak_log.png
-///   6 — Leaves → oak_leaves.png
+///   5 — Wood   → wood_log.png
+///   6 — Leaves → leaves.png
 ///   7 — Gravel → gravel.png
 ///   8 — Snow   → snow.png
-///   9 — Water  → water_still.png
+///   9 — Water  → water.png
 #[derive(Resource)]
 struct PendingTextures {
     handles: Vec<Handle<Image>>,
@@ -541,15 +541,15 @@ fn setup_textures(
     let placeholder_handle = images.add(placeholder);
 
     // Layers 1–9: actual block textures.
-    let grass = asset_server.load("minetest/textures/grass_block_top.png");
+    let grass = asset_server.load("minetest/textures/grass_top.png");
     let dirt = asset_server.load("minetest/textures/dirt.png");
     let stone = asset_server.load("minetest/textures/stone.png");
     let sand = asset_server.load("minetest/textures/sand.png");
-    let wood = asset_server.load("minetest/textures/oak_log.png");
-    let leaves = asset_server.load("minetest/textures/oak_leaves.png");
+    let wood = asset_server.load("minetest/textures/wood_log.png");
+    let leaves = asset_server.load("minetest/textures/leaves.png");
     let gravel = asset_server.load("minetest/textures/gravel.png");
     let snow = asset_server.load("minetest/textures/snow.png");
-    let water = asset_server.load("minetest/textures/water_still.png");
+    let water = asset_server.load("minetest/textures/water.png");
 
     commands.insert_resource(PendingTextures {
         handles: vec![

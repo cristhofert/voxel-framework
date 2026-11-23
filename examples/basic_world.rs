@@ -8,8 +8,8 @@
 //!   Layer 0 — Air placeholder (grey, programmatically generated)
 //!   Layer 1 — Rock         → stone.png
 //!   Layer 2 — IronOre      → iron_ore.png
-//!   Layer 3 — SiliconCrystal → amethyst_block.png
-//!   Layer 4 — RareMineral  → emerald_ore.png
+//!   Layer 3 — SiliconCrystal → crystal.png
+//!   Layer 4 — RareMineral  → rare_ore.png
 
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings};
@@ -216,8 +216,8 @@ fn setup(
     // Layers 1–4: Load actual block textures.
     let stone = asset_server.load("basic_world/textures/stone.png");
     let iron = asset_server.load("basic_world/textures/iron_ore.png");
-    let silicon = asset_server.load("basic_world/textures/amethyst_block.png");
-    let rare = asset_server.load("basic_world/textures/emerald_ore.png");
+    let silicon = asset_server.load("basic_world/textures/crystal.png");
+    let rare = asset_server.load("basic_world/textures/rare_ore.png");
 
     commands.insert_resource(PendingTextures {
         handles: vec![placeholder_handle, stone, iron, silicon, rare],

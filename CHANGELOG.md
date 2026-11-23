@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   embedded Noto Sans fonts.
 - Add `assets/CREDITS.md` documenting the provenance of example assets.
 
+### Changed
+
+- Replace the example block textures with original, procedurally generated
+  ones (`scripts/generate-example-textures.py`). The previous textures were
+  third-party files without a license and are no longer distributed. Example
+  texture files were renamed: `grass_block_top` → `grass_top`, `oak_log` →
+  `wood_log`, `oak_leaves` → `leaves`, `water_still` → `water`,
+  `amethyst_block` → `crystal`, `emerald_ore` → `rare_ore`.
+
 ## [0.10.4] - 2026-11-22
 
 ### Added
