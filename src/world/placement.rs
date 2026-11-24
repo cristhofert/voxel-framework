@@ -493,4 +493,212 @@ mod tests {
         tick_placement(0.20, &mut state, &config);
         assert_eq!(state.cooldown_elapsed, config.cooldown);
     }
+
+    // ── try_place_voxel ───────────────────────────────────────────────────────
+
+    use crate::chunk::CHUNK_SIZE;
+    use crate::test_support::world_with_chunks;
+    use crate::voxel::DefaultVoxel;
+    use bevy::ecs::message::Messages;
+    use bevy::ecs::system::SystemState;
+    use bevy::ecs::world::World;
+
+    fn placement_world(chunk: Chunk<DefaultVoxel>) -> World {
+        let mut world = world_with_chunks([(IVec3::ZERO, chunk)]);
+        world.init_resource::<Messages<VoxelPlaced>>();
+        world.init_resource::<Messages<ChunkModified>>();
+        world
+    }
+
+    fn ready_state() -> PlacementState {
+        PlacementState {
+            cooldown_elapsed: default_config().cooldown,
+        }
+    }
+
+    fn place(
+        world: &mut World,
+        state: &mut PlacementState,
+        chunk: IVec3,
+        local: (usize, usize, usize),
+        normal: IVec3,
+    ) -> bool {
+        let mut system_state: SystemState<(
+            Res<ChunkManager>,
+            Query<&mut Chunk<DefaultVoxel>>,
+            MessageWriter<VoxelPlaced>,
+            MessageWriter<ChunkModified>,
+        )> = SystemState::new(world);
+        let (manager, mut chunks, mut placed, mut modified) = system_state.get_mut(world);
+        let ok = try_place_voxel(
+            chunk,
+            local,
+            DefaultVoxel::Rock,
+            normal,
+            state,
+            &default_config(),
+            &manager,
+            &mut chunks,
+            &mut placed,
+            &mut modified,
+        );
+        system_state.apply(world);
+        ok
+    }
+
+    fn chunk_at_origin(world: &World) -> &Chunk<DefaultVoxel> {
+        let entity = world
+            .resource::<ChunkManager>()
+            .get_entity(IVec3::ZERO)
+            .unwrap();
+        world.entity(entity).get::<Chunk<DefaultVoxel>>().unwrap()
+    }
+
+    fn modified_coords(world: &World) -> Vec<IVec3> {
+        world
+            .resource::<Messages<ChunkModified>>()
+            .iter_current_update_messages()
+            .map(|m| m.0)
+            .collect()
+    }
+
+    #[test]
+    fn places_voxel_records_face_state_and_emits_messages() {
+        let mut world = placement_world(Chunk::new());
+        let mut state = ready_state();
+
+        assert!(place(
+            &mut world,
+            &mut state,
+            IVec3::ZERO,
+            (8, 8, 8),
+            IVec3::Y
+        ));
+
+        let chunk = chunk_at_origin(&world);
+        assert_eq!(chunk.get(8, 8, 8), DefaultVoxel::Rock);
+        assert_eq!(
+            chunk.get_state(8, 8, 8),
+            crate::chunk::face_to_state(IVec3::Y)
+        );
+        assert_eq!(
+            state.cooldown_elapsed, 0.0,
+            "a placement restarts the cooldown"
+        );
+
+        let placed: Vec<_> = world
+            .resource::<Messages<VoxelPlaced>>()
+            .iter_current_update_messages()
+            .cloned()
+            .collect();
+        assert_eq!(placed.len(), 1);
+        assert_eq!(placed[0].local, (8, 8, 8));
+        assert_eq!(placed[0].world_pos, Vec3::splat(8.5));
+        assert_eq!(placed[0].face_normal, IVec3::Y);
+        // Interior voxel: only its own chunk needs remeshing.
+        assert_eq!(modified_coords(&world), vec![IVec3::ZERO]);
+    }
+
+    #[test]
+    fn every_face_normal_maps_to_a_distinct_state() {
+        let normals = [
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
+        ];
+        let mut world = placement_world(Chunk::new());
+        let mut states = Vec::new();
+        for (i, normal) in normals.into_iter().enumerate() {
+            let mut state = ready_state();
+            assert!(place(
+                &mut world,
+                &mut state,
+                IVec3::ZERO,
+                (i, 0, 0),
+                normal
+            ));
+            states.push(chunk_at_origin(&world).get_state(i, 0, 0));
+        }
+        states.sort_unstable();
+        states.dedup();
+        assert_eq!(states.len(), 6, "each face needs its own orientation state");
+    }
+
+    #[test]
+    fn rejects_occupied_cell_without_side_effects() {
+        let mut chunk = Chunk::new();
+        chunk.set(1, 1, 1, DefaultVoxel::IronOre);
+        let mut world = placement_world(chunk);
+        let mut state = ready_state();
+
+        assert!(!place(
+            &mut world,
+            &mut state,
+            IVec3::ZERO,
+            (1, 1, 1),
+            IVec3::Y
+        ));
+
+        assert_eq!(chunk_at_origin(&world).get(1, 1, 1), DefaultVoxel::IronOre);
+        assert_eq!(state.cooldown_elapsed, default_config().cooldown);
+        assert!(modified_coords(&world).is_empty());
+    }
+
+    #[test]
+    fn rejects_unloaded_chunk_and_active_cooldown() {
+        let mut world = placement_world(Chunk::new());
+
+        let mut state = ready_state();
+        assert!(!place(
+            &mut world,
+            &mut state,
+            IVec3::new(5, 0, 0),
+            (0, 0, 0),
+            IVec3::Y
+        ));
+
+        let mut cooling = PlacementState {
+            cooldown_elapsed: 0.0,
+        };
+        assert!(!place(
+            &mut world,
+            &mut cooling,
+            IVec3::ZERO,
+            (0, 0, 0),
+            IVec3::Y
+        ));
+        assert_eq!(chunk_at_origin(&world).get(0, 0, 0), DefaultVoxel::Air);
+        assert!(modified_coords(&world).is_empty());
+    }
+
+    #[test]
+    fn border_placement_marks_touching_neighbors_dirty() {
+        let mut world = placement_world(Chunk::new());
+        let max = CHUNK_SIZE - 1;
+
+        // A corner voxel touches three neighbor chunks.
+        let mut state = ready_state();
+        assert!(place(
+            &mut world,
+            &mut state,
+            IVec3::ZERO,
+            (0, max, 0),
+            IVec3::Y
+        ));
+
+        let mut coords = modified_coords(&world);
+        coords.sort_by_key(|c| (c.x, c.y, c.z));
+        assert_eq!(
+            coords,
+            vec![
+                IVec3::new(-1, 0, 0),
+                IVec3::new(0, 0, -1),
+                IVec3::ZERO,
+                IVec3::new(0, 1, 0),
+            ]
+        );
+    }
 }

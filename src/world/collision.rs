@@ -609,4 +609,114 @@ mod tests {
             "expected endpoint (4,0,0), got {result}"
         );
     }
+
+    // ── Chunk-boundary cases ──────────────────────────────────────────────────
+
+    /// A one-voxel-thick floor at world y = 0 spanning chunks (0,0,0) and (1,0,0).
+    fn floor_across_x_boundary() -> bevy::ecs::world::World {
+        let mut floor = Chunk::<DefaultVoxel>::new();
+        for x in 0..crate::chunk::CHUNK_SIZE {
+            for z in 0..crate::chunk::CHUNK_SIZE {
+                floor.set(x, 0, z, DefaultVoxel::Rock);
+            }
+        }
+        world_with_chunks([(IVec3::ZERO, floor.clone()), (IVec3::new(1, 0, 0), floor)])
+    }
+
+    #[test]
+    fn sphere_on_chunk_seam_is_pushed_straight_up() {
+        let mut world = floor_across_x_boundary();
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+
+        // Sinking 0.2 into the floor, centred exactly on the x = 16 seam.
+        let sunk = Vec3::new(16.0, 1.3, 8.0);
+        let resolved = resolve_sphere_collision::<DefaultVoxel, ()>(sunk, 0.5, &manager, &chunks);
+
+        assert!(
+            (resolved.x - sunk.x).abs() < 1e-5,
+            "no sideways push at the seam: {resolved}"
+        );
+        assert!(
+            (resolved.z - sunk.z).abs() < 1e-5,
+            "no sideways push at the seam: {resolved}"
+        );
+        assert!(
+            resolved.y >= 1.5 - 1e-4,
+            "should rest on top of the floor: {resolved}"
+        );
+        assert!(!sphere_overlaps_voxels::<DefaultVoxel, ()>(
+            resolved, 0.5, &manager, &chunks
+        ));
+    }
+
+    #[test]
+    fn overlap_detects_solid_voxel_in_negative_neighbor_chunk() {
+        let mut lower = Chunk::<DefaultVoxel>::new();
+        lower.set(15, 0, 0, DefaultVoxel::Rock); // world voxel [-1, 0) on x
+        let mut world =
+            world_with_chunks([(IVec3::new(-1, 0, 0), lower), (IVec3::ZERO, Chunk::new())]);
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+
+        let touching = Vec3::new(0.3, 0.5, 0.5);
+        assert!(sphere_overlaps_voxels::<DefaultVoxel, ()>(
+            touching, 0.5, &manager, &chunks
+        ));
+        let resolved =
+            resolve_sphere_collision::<DefaultVoxel, ()>(touching, 0.5, &manager, &chunks);
+        assert!(resolved.x >= 0.5 - 1e-4, "pushed out toward +x: {resolved}");
+    }
+
+    #[test]
+    fn capsule_against_wall_in_next_chunk_is_pushed_back() {
+        let mut wall = Chunk::<DefaultVoxel>::new();
+        for y in 0..4 {
+            for z in 0..4 {
+                wall.set(0, y, z, DefaultVoxel::Rock); // world x in [16, 17)
+            }
+        }
+        let mut world =
+            world_with_chunks([(IVec3::ZERO, Chunk::new()), (IVec3::new(1, 0, 0), wall)]);
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+
+        let bottom = Vec3::new(15.8, 1.5, 2.0);
+        let top = Vec3::new(15.8, 2.5, 2.0);
+        let resolved =
+            resolve_capsule_collision::<DefaultVoxel, ()>(bottom, top, 0.4, &manager, &chunks);
+
+        assert!(
+            resolved.x <= 15.6 + 1e-4,
+            "pushed back out of the wall: {resolved}"
+        );
+        assert!(!capsule_overlaps_voxels::<DefaultVoxel, ()>(
+            resolved,
+            resolved + (top - bottom),
+            0.4,
+            &manager,
+            &chunks
+        ));
+    }
+
+    #[test]
+    fn unloaded_chunks_do_not_collide() {
+        // Documents current behaviour: missing chunks are treated as empty space.
+        let mut world = world_with_chunks::<DefaultVoxel>([]);
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+
+        let pos = Vec3::new(3.0, 3.0, 3.0);
+        assert!(!sphere_overlaps_voxels::<DefaultVoxel, ()>(
+            pos, 0.5, &manager, &chunks
+        ));
+        assert_eq!(
+            resolve_sphere_collision::<DefaultVoxel, ()>(pos, 0.5, &manager, &chunks),
+            pos
+        );
+    }
 }

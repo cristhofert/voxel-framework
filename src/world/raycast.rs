@@ -374,4 +374,114 @@ mod tests {
         // Approaching from +X with step=-1 → face_normal = -(-1) = +1 on X
         assert_eq!(hit.face_normal, Vec3::new(1.0, 0.0, 0.0));
     }
+
+    // ── Multi-chunk cases ─────────────────────────────────────────────────────
+
+    use crate::test_support::world_with_chunks;
+
+    fn chunk_with(voxels: &[(usize, usize, usize)]) -> Chunk<DefaultVoxel> {
+        let mut chunk = Chunk::new();
+        for &(x, y, z) in voxels {
+            chunk.set(x, y, z, DefaultVoxel::Rock);
+        }
+        chunk
+    }
+
+    fn cast(world: &mut World, origin: Vec3, dir: Vec3, max: f32) -> Option<RaycastHit> {
+        let mut state = bevy::ecs::system::SystemState::<(
+            Res<ChunkManager>,
+            Query<&Chunk<DefaultVoxel>>,
+        )>::new(world);
+        let (manager, chunks) = state.get(world);
+        raycast(origin, dir, max, &manager, &chunks)
+    }
+
+    #[test]
+    fn ray_crosses_two_empty_chunks_before_hitting_the_third() {
+        let mut world = world_with_chunks([
+            (IVec3::ZERO, Chunk::new()),
+            (IVec3::new(1, 0, 0), Chunk::new()),
+            (IVec3::new(2, 0, 0), chunk_with(&[(3, 8, 8)])),
+        ]);
+
+        let hit = cast(&mut world, Vec3::new(0.5, 8.5, 8.5), Vec3::X, 100.0)
+            .expect("ray should reach the third chunk");
+
+        assert_eq!(hit.chunk_coord, IVec3::new(2, 0, 0));
+        assert_eq!(hit.local, (3, 8, 8));
+        assert_eq!(hit.face_normal, Vec3::NEG_X);
+        // Enters voxel x = 35 at its min face: 35.0 - 0.5.
+        assert!(
+            (hit.distance - 34.5).abs() < 1e-4,
+            "distance {}",
+            hit.distance
+        );
+    }
+
+    #[test]
+    fn ray_in_negative_direction_hits_lower_chunk_last_cell() {
+        let mut world = world_with_chunks([
+            (IVec3::new(-1, 0, 0), chunk_with(&[(15, 4, 4)])),
+            (IVec3::ZERO, Chunk::new()),
+        ]);
+
+        let hit = cast(&mut world, Vec3::new(5.5, 4.5, 4.5), Vec3::NEG_X, 20.0)
+            .expect("ray should hit voxel at world x = -1");
+
+        assert_eq!(hit.chunk_coord, IVec3::new(-1, 0, 0));
+        assert_eq!(hit.local, (15, 4, 4));
+        assert_eq!(hit.position, Vec3::new(-0.5, 4.5, 4.5));
+        assert_eq!(hit.face_normal, Vec3::X);
+    }
+
+    #[test]
+    fn ray_skips_unloaded_gap_and_hits_beyond_it() {
+        let mut world = world_with_chunks([
+            (IVec3::ZERO, Chunk::new()),
+            // chunk (1, 0, 0) intentionally not loaded
+            (IVec3::new(2, 0, 0), chunk_with(&[(0, 1, 1)])),
+        ]);
+
+        let hit = cast(&mut world, Vec3::new(1.5, 1.5, 1.5), Vec3::X, 64.0)
+            .expect("unloaded chunks are treated as empty");
+        assert_eq!(hit.chunk_coord, IVec3::new(2, 0, 0));
+    }
+
+    #[test]
+    fn hit_beyond_max_distance_is_ignored() {
+        let mut world = world_with_chunks([(IVec3::ZERO, chunk_with(&[(10, 0, 0)]))]);
+
+        assert!(cast(&mut world, Vec3::new(0.5, 0.5, 0.5), Vec3::X, 5.0).is_none());
+        assert!(cast(&mut world, Vec3::new(0.5, 0.5, 0.5), Vec3::X, 10.0).is_some());
+    }
+
+    #[test]
+    fn origin_inside_solid_hits_immediately() {
+        let mut world = world_with_chunks([(IVec3::ZERO, chunk_with(&[(2, 2, 2)]))]);
+
+        let hit = cast(&mut world, Vec3::new(2.5, 2.5, 2.5), Vec3::Y, 10.0).unwrap();
+        assert_eq!(hit.local, (2, 2, 2));
+        assert_eq!(hit.distance, 0.0);
+        assert_eq!(hit.face_normal, Vec3::ZERO);
+    }
+
+    #[test]
+    fn diagonal_ray_across_a_chunk_corner_hits_target() {
+        let mut world = world_with_chunks([
+            (IVec3::ZERO, Chunk::new()),
+            (IVec3::new(1, 0, 0), Chunk::new()),
+            (IVec3::new(0, 0, 1), Chunk::new()),
+            (IVec3::new(1, 0, 1), chunk_with(&[(1, 5, 1)])),
+        ]);
+
+        let hit = cast(
+            &mut world,
+            Vec3::new(14.5, 5.5, 14.5),
+            Vec3::new(1.0, 0.0, 1.0),
+            10.0,
+        )
+        .expect("diagonal ray should hit across the corner");
+        assert_eq!(hit.chunk_coord, IVec3::new(1, 0, 1));
+        assert_eq!(hit.local, (1, 5, 1));
+    }
 }

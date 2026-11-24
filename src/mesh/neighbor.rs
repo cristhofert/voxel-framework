@@ -188,3 +188,84 @@ fn border_slice_index(face_index: usize, u_coord: usize, v_coord: usize) -> usiz
         _ => unreachable!(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::voxel::DefaultVoxel;
+
+    const MAX: usize = CHUNK_SIZE - 1;
+
+    /// For each face index `[+Y, -Y, +X, -X, +Z, -Z]`: the opposite face, the
+    /// border cell in this chunk, and the touching cell in the neighbor chunk.
+    /// Coordinates are deliberately asymmetric (3 vs 7) so a swapped (u, v)
+    /// lookup in the border slice would be caught.
+    fn face_cases() -> [(usize, usize, (usize, usize, usize), (usize, usize, usize)); 6] {
+        [
+            (0, 1, (3, MAX, 7), (3, 0, 7)),
+            (1, 0, (3, 0, 7), (3, MAX, 7)),
+            (2, 3, (MAX, 3, 7), (0, 3, 7)),
+            (3, 2, (0, 3, 7), (MAX, 3, 7)),
+            (4, 5, (3, 7, MAX), (3, 7, 0)),
+            (5, 4, (3, 7, 0), (3, 7, MAX)),
+        ]
+    }
+
+    fn single(cell: (usize, usize, usize)) -> Chunk<DefaultVoxel> {
+        let mut chunk = Chunk::new();
+        chunk.set(cell.0, cell.1, cell.2, DefaultVoxel::Rock);
+        chunk
+    }
+
+    fn mesh_vertices(
+        chunk: &Chunk<DefaultVoxel>,
+        face: usize,
+        slice_src: &Chunk<DefaultVoxel>,
+        opposite: usize,
+    ) -> usize {
+        let mut neighbors = ChunkNeighbors::<DefaultVoxel>::default();
+        neighbors.faces[face] = Some(slice_src.border_slice(opposite));
+        generate_chunk_mesh_with_neighbors(chunk, &neighbors, 1).count_vertices()
+    }
+
+    #[test]
+    fn solid_neighbor_culls_the_touching_face_on_every_side() {
+        for (face, opposite, cell, touching) in face_cases() {
+            let vertices = mesh_vertices(&single(cell), face, &single(touching), opposite);
+            assert_eq!(
+                vertices, 20,
+                "face {face}: one of six quads (4 vertices) should be culled"
+            );
+        }
+    }
+
+    #[test]
+    fn neighbor_solid_at_a_different_cell_does_not_cull() {
+        for (face, opposite, cell, touching) in face_cases() {
+            // Swap the two in-plane coordinates of the neighbor cell.
+            let swapped = match face {
+                0 | 1 => (touching.2, touching.1, touching.0),
+                2 | 3 => (touching.0, touching.2, touching.1),
+                _ => (touching.1, touching.0, touching.2),
+            };
+            let vertices = mesh_vertices(&single(cell), face, &single(swapped), opposite);
+            assert_eq!(
+                vertices, 24,
+                "face {face}: misaligned neighbor must not cull"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_or_empty_neighbor_keeps_all_faces() {
+        let chunk = single((0, 0, 0));
+        let none = ChunkNeighbors::<DefaultVoxel>::default();
+        assert_eq!(
+            generate_chunk_mesh_with_neighbors(&chunk, &none, 1).count_vertices(),
+            24
+        );
+
+        let empty = Chunk::<DefaultVoxel>::new();
+        assert_eq!(mesh_vertices(&chunk, 3, &empty, 2), 24);
+    }
+}
