@@ -558,3 +558,111 @@ fn neighbor_mesh_culls_border_face_against_solid_adjacent_chunk() {
     );
     assert_eq!(index_count(&seam_free_mesh), 30);
 }
+
+// ── 7. Full chunk lifecycle ──────────────────────────────────────────────────
+
+/// Headless app with streaming, generation and autosave pointed at `save_dir`.
+fn lifecycle_app(save_dir: &std::path::Path, calls: Arc<AtomicUsize>) -> App {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    // Small radius so streaming around the origin stays cheap.
+    app.insert_resource(ChunkManager::new(1.0, 2.0));
+    app.add_plugins(WorldPlugin);
+    app.insert_resource(
+        voxel_framework::generator::GeneratorResource::<DefaultVoxel> {
+            generator: Arc::new(CountingGenerator { calls }),
+        },
+    );
+    app.add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
+    app.add_plugins(voxel_framework::world::PersistencePlugin::<DefaultVoxel>::new());
+    // Override the plugin's default `./worlds/...` path.
+    app.insert_resource(PersistenceConfig {
+        save_dir: save_dir.to_string_lossy().into_owned(),
+        auto_save: true,
+    });
+    app
+}
+
+/// Runs `app.update()` until `done` holds or `max_frames` pass. Generation
+/// runs on background threads, so frames are spaced slightly apart.
+fn run_until(app: &mut App, max_frames: usize, done: impl Fn(&App) -> bool) -> bool {
+    for _ in 0..max_frames {
+        app.update();
+        if done(app) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    false
+}
+
+fn loaded_voxel(app: &App, coord: IVec3, local: (usize, usize, usize)) -> Option<DefaultVoxel> {
+    let entity = app.world().resource::<ChunkManager>().get_entity(coord)?;
+    let chunk = app.world().entity(entity).get::<Chunk<DefaultVoxel>>()?;
+    Some(chunk.get(local.0, local.1, local.2))
+}
+
+#[test]
+fn chunk_lifecycle_generate_modify_autosave_and_reload_from_disk() {
+    let temp = tempfile::tempdir().expect("create temp save dir");
+    let coord = IVec3::ZERO;
+
+    // 1. First session: the chunk is generated on a background thread.
+    let first_calls = Arc::new(AtomicUsize::new(0));
+    let mut app = lifecycle_app(temp.path(), first_calls.clone());
+    app.world_mut().write_message(ChunkLoadRequest(coord));
+    assert!(
+        run_until(&mut app, 500, |app| loaded_voxel(app, coord, (0, 0, 0))
+            .is_some()),
+        "chunk should finish generating"
+    );
+    assert!(
+        first_calls.load(Ordering::SeqCst) >= 1,
+        "first load must use the generator"
+    );
+    assert_eq!(
+        loaded_voxel(&app, coord, (0, 0, 0)),
+        Some(DefaultVoxel::IronOre)
+    );
+
+    // 2. Modify it through the public voxel API, which emits ChunkModified.
+    {
+        let mut state = bevy::ecs::system::SystemState::<(
+            Res<ChunkManager>,
+            Query<&mut Chunk<DefaultVoxel>>,
+            MessageWriter<ChunkModified>,
+        )>::new(app.world_mut());
+        let (manager, mut chunks, mut modified) = state.get_mut(app.world_mut());
+        assert!(voxel_framework::world::set_voxel_at(
+            Vec3::new(5.5, 6.5, 7.5),
+            DefaultVoxel::RareMineral,
+            &manager,
+            &mut chunks,
+            &mut modified,
+        ));
+        state.apply(app.world_mut());
+    }
+
+    // 3. Autosave writes it on the next frame.
+    app.update();
+    let file = temp.path().join(chunk_filename(coord));
+    assert!(file.is_file(), "autosave should write {}", file.display());
+    drop(app);
+
+    // 4. Second session: the saved chunk wins over the generator.
+    let mut app = lifecycle_app(temp.path(), Arc::new(AtomicUsize::new(0)));
+    app.world_mut().write_message(ChunkLoadRequest(coord));
+    assert!(
+        run_until(&mut app, 50, |app| loaded_voxel(app, coord, (5, 6, 7))
+            .is_some()),
+        "saved chunk should load"
+    );
+    assert_eq!(
+        loaded_voxel(&app, coord, (5, 6, 7)),
+        Some(DefaultVoxel::RareMineral)
+    );
+    assert_eq!(
+        loaded_voxel(&app, coord, (0, 0, 0)),
+        Some(DefaultVoxel::IronOre)
+    );
+}
