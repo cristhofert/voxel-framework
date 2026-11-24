@@ -368,12 +368,18 @@ pub fn lod_update_system<V: VoxelType>(
 
         if new_lod != current_lod.0 {
             // Find the coord for this entity so we can emit ChunkModified(coord).
-            // We scan the manager's loaded set; this is O(n) but only runs when
-            // LOD actually changes, which is rare.
-            if let Some(coord) = manager
-                .iter_loaded()
-                .find_map(|(coord, e)| if e == entity { Some(coord) } else { None })
-            {
+            // Chunks spawned by the framework carry a ChunkCoordComp, so this is
+            // a direct lookup; only entities without one fall back to an O(n)
+            // scan of the manager's loaded set.
+            let registered_coord = maybe_coord_comp
+                .map(|c| c.coord())
+                .filter(|&c| manager.get_entity(c) == Some(entity))
+                .or_else(|| {
+                    manager
+                        .iter_loaded()
+                        .find_map(|(coord, e)| if e == entity { Some(coord) } else { None })
+                });
+            if let Some(coord) = registered_coord {
                 modified_writer.write(ChunkModified(coord));
 
                 // Also remesh each loaded neighbor: their effective_step may
@@ -451,5 +457,385 @@ pub fn chunk_despawn_system<V: VoxelType>(
         if let Some(entity) = manager.unregister(coord) {
             commands.entity(entity).despawn();
         }
+    }
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{filled_chunk, world_with_chunks};
+    use crate::voxel::DefaultVoxel;
+    use bevy::ecs::message::Messages;
+    use bevy::ecs::system::RunSystemOnce;
+
+    type V = DefaultVoxel;
+
+    /// World with the resources the mesh systems read, plus a standard
+    /// material so `chunk_mesh_system` does not early-return.
+    fn mesh_world(chunks: impl IntoIterator<Item = (IVec3, Chunk<V>)>) -> World {
+        let mut world = world_with_chunks(chunks);
+        world.init_resource::<Messages<ChunkModified>>();
+        world.init_resource::<Messages<ChunkUnloadRequest>>();
+        world.init_resource::<PendingNeighborRemesh>();
+        world.init_resource::<ViewerPosition>();
+        world.init_resource::<Assets<Mesh>>();
+        let mut materials = Assets::<StandardMaterial>::default();
+        let standard = materials.add(StandardMaterial::default());
+        world.insert_resource(materials);
+        world.insert_resource(ChunkMaterialHandle {
+            standard: Some(standard),
+            custom: None,
+        });
+        world
+    }
+
+    fn entity_at(world: &World, coord: IVec3) -> Entity {
+        world
+            .resource::<ChunkManager>()
+            .get_entity(coord)
+            .expect("chunk should be registered")
+    }
+
+    fn modify(world: &mut World, coord: IVec3) {
+        world.write_message(ChunkModified(coord));
+    }
+
+    fn run_mesh(world: &mut World) {
+        world
+            .run_system_once(chunk_mesh_system::<V>)
+            .expect("chunk_mesh_system should run");
+    }
+
+    /// Clears the message buffer so the next run only sees new messages.
+    fn clear_modified(world: &mut World) {
+        world.resource_mut::<Messages<ChunkModified>>().clear();
+    }
+
+    fn pending(world: &World) -> Vec<IVec3> {
+        let mut coords = world.resource::<PendingNeighborRemesh>().0.clone();
+        coords.sort_by_key(|c| (c.x, c.y, c.z));
+        coords
+    }
+
+    fn written_modified(world: &World) -> Vec<IVec3> {
+        let messages = world.resource::<Messages<ChunkModified>>();
+        let mut coords: Vec<IVec3> = messages
+            .iter_current_update_messages()
+            .map(|m| m.0)
+            .collect();
+        coords.sort_by_key(|c| (c.x, c.y, c.z));
+        coords
+    }
+
+    fn mesh_vertex_count(world: &World, entity: Entity) -> usize {
+        let handle = &world.entity(entity).get::<Mesh3d>().expect("Mesh3d").0;
+        world
+            .resource::<Assets<Mesh>>()
+            .get(handle)
+            .expect("mesh asset")
+            .count_vertices()
+    }
+
+    fn single_voxel_chunk() -> Chunk<V> {
+        let mut chunk = Chunk::<V>::new();
+        chunk.set(8, 8, 8, DefaultVoxel::Rock);
+        chunk
+    }
+
+    // ── chunk_mesh_system ────────────────────────────────────────────────────
+
+    #[test]
+    fn solid_chunk_gets_render_components_at_its_world_position() {
+        let coord = IVec3::new(1, -2, 3);
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        let entity = entity_at(&world, coord);
+        let e = world.entity(entity);
+        assert!(e.contains::<MeshMaterial3d<StandardMaterial>>());
+        assert!(e.contains::<ChunkRendered>());
+        assert!(e.contains::<Aabb>());
+        assert!(!e.contains::<EmptyMesh>());
+        // ~65 units from the viewer at the origin → full-detail LOD 0.
+        assert_eq!(e.get::<ChunkLod>().map(|l| l.0), Some(0));
+        assert_eq!(
+            e.get::<Transform>().unwrap().translation,
+            coord.as_vec3() * CHUNK_SIZE as f32
+        );
+        // One isolated voxel → 6 quads → 24 vertices.
+        assert_eq!(mesh_vertex_count(&world, entity), 24);
+    }
+
+    #[test]
+    fn new_mesh_queues_loaded_neighbors_for_remesh() {
+        let coord = IVec3::ZERO;
+        let neighbor_x = IVec3::X;
+        let neighbor_down = IVec3::NEG_Y;
+        let mut world = mesh_world([
+            (coord, single_voxel_chunk()),
+            (neighbor_x, Chunk::<V>::new()),
+            (neighbor_down, Chunk::<V>::new()),
+        ]);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        assert_eq!(pending(&world), vec![IVec3::NEG_Y, IVec3::X]);
+    }
+
+    #[test]
+    fn no_material_means_no_meshing() {
+        let coord = IVec3::ZERO;
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        world.insert_resource(ChunkMaterialHandle {
+            standard: None,
+            custom: None,
+        });
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        assert!(!world.entity(entity_at(&world, coord)).contains::<Mesh3d>());
+    }
+
+    #[test]
+    fn empty_chunk_is_marked_empty_without_a_mesh() {
+        let coord = IVec3::ZERO;
+        let mut world = mesh_world([(coord, Chunk::<V>::new()), (IVec3::Z, Chunk::<V>::new())]);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        let e = world.entity(entity_at(&world, coord));
+        assert!(e.contains::<EmptyMesh>());
+        assert!(!e.contains::<Mesh3d>());
+        assert_eq!(pending(&world), vec![IVec3::Z]);
+    }
+
+    #[test]
+    fn chunk_emptied_after_meshing_loses_its_render_components() {
+        let coord = IVec3::ZERO;
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+        let entity = entity_at(&world, coord);
+        assert!(world.entity(entity).contains::<Mesh3d>());
+
+        // Mine the only voxel and remesh.
+        world
+            .get_mut::<Chunk<V>>(entity)
+            .unwrap()
+            .set(8, 8, 8, DefaultVoxel::Air);
+        clear_modified(&mut world);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        let e = world.entity(entity);
+        assert!(!e.contains::<Mesh3d>());
+        assert!(!e.contains::<MeshMaterial3d<StandardMaterial>>());
+        assert!(!e.contains::<ChunkRendered>());
+        assert!(!e.contains::<ChunkLod>());
+    }
+
+    #[test]
+    fn remesh_updates_the_existing_mesh_asset_in_place() {
+        let coord = IVec3::ZERO;
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+        let entity = entity_at(&world, coord);
+        let handle_before = world.entity(entity).get::<Mesh3d>().unwrap().0.id();
+        let assets_before = world.resource::<Assets<Mesh>>().len();
+
+        // A second, separate voxel adds 6 more quads.
+        world
+            .get_mut::<Chunk<V>>(entity)
+            .unwrap()
+            .set(2, 2, 2, DefaultVoxel::Rock);
+        clear_modified(&mut world);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        let handle_after = world.entity(entity).get::<Mesh3d>().unwrap().0.id();
+        assert_eq!(handle_before, handle_after, "mesh handle must be reused");
+        assert_eq!(world.resource::<Assets<Mesh>>().len(), assets_before);
+        assert_eq!(mesh_vertex_count(&world, entity), 48);
+    }
+
+    #[test]
+    fn fully_enclosed_solid_chunk_produces_no_mesh() {
+        // A solid chunk surrounded by solid chunks on all six faces has no
+        // visible face, so it must be marked empty instead of rendered.
+        let center = IVec3::ZERO;
+        let mut chunks = vec![(center, filled_chunk(DefaultVoxel::Rock))];
+        for offset in [
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
+        ] {
+            chunks.push((offset, filled_chunk(DefaultVoxel::Rock)));
+        }
+        let mut world = mesh_world(chunks);
+        modify(&mut world, center);
+        run_mesh(&mut world);
+
+        let e = world.entity(entity_at(&world, center));
+        assert!(e.contains::<EmptyMesh>());
+        assert!(!e.contains::<Mesh3d>());
+    }
+
+    #[test]
+    fn modified_entity_without_chunk_data_is_retried() {
+        // The coord is registered but the generator has not inserted the
+        // Chunk component yet: the coord goes back to the pending queue.
+        let coord = IVec3::new(4, 0, 0);
+        let mut world = mesh_world(std::iter::empty());
+        let entity = world.spawn_empty().id();
+        world.resource_mut::<ChunkManager>().register(coord, entity);
+        modify(&mut world, coord);
+        run_mesh(&mut world);
+
+        assert_eq!(pending(&world), vec![coord]);
+    }
+
+    // ── flush_neighbor_remesh_system ─────────────────────────────────────────
+
+    #[test]
+    fn flush_turns_pending_coords_into_chunk_modified_messages() {
+        let mut world = mesh_world(std::iter::empty());
+        world.resource_mut::<PendingNeighborRemesh>().0 = vec![IVec3::X, IVec3::NEG_Z];
+        world
+            .run_system_once(flush_neighbor_remesh_system)
+            .expect("flush should run");
+
+        assert!(pending(&world).is_empty());
+        assert_eq!(written_modified(&world), vec![IVec3::NEG_Z, IVec3::X]);
+    }
+
+    // ── lod_update_system ────────────────────────────────────────────────────
+
+    fn rendered_chunk_world(coord: IVec3, lod: u8, with_coord_comp: bool) -> World {
+        let mut world = mesh_world([
+            (coord, single_voxel_chunk()),
+            (coord + IVec3::Y, Chunk::new()),
+        ]);
+        let entity = entity_at(&world, coord);
+        let mut e = world.entity_mut(entity);
+        e.insert((
+            Transform::from_translation(coord.as_vec3() * CHUNK_SIZE as f32),
+            ChunkLod(lod),
+            ChunkRendered,
+        ));
+        if with_coord_comp {
+            e.insert(ChunkCoordComp(coord));
+        }
+        world
+    }
+
+    fn run_lod(world: &mut World) {
+        world
+            .run_system_once(lod_update_system::<V>)
+            .expect("lod_update_system should run");
+    }
+
+    #[test]
+    fn lod_change_remeshes_the_chunk_and_its_loaded_neighbors() {
+        for with_coord_comp in [true, false] {
+            // Viewer at the origin, chunk ~0 units away, but stored as LOD 1.
+            let coord = IVec3::ZERO;
+            let mut world = rendered_chunk_world(coord, 1, with_coord_comp);
+            run_lod(&mut world);
+
+            assert_eq!(
+                written_modified(&world),
+                vec![IVec3::ZERO, IVec3::Y],
+                "with_coord_comp = {with_coord_comp}"
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_lod_emits_nothing() {
+        let coord = IVec3::ZERO;
+        let mut world = rendered_chunk_world(coord, 0, true);
+        run_lod(&mut world);
+
+        assert!(written_modified(&world).is_empty());
+    }
+
+    #[test]
+    fn far_chunk_downgrades_to_coarse_lod() {
+        // 20 chunks away = 320 units, well past the 200-unit threshold.
+        let coord = IVec3::new(20, 0, 0);
+        let mut world = rendered_chunk_world(coord, 0, true);
+        run_lod(&mut world);
+
+        assert_eq!(written_modified(&world), vec![coord, coord + IVec3::Y]);
+    }
+
+    // ── chunk_despawn_system ─────────────────────────────────────────────────
+
+    fn run_despawn(world: &mut World, coord: IVec3) {
+        world.write_message(ChunkUnloadRequest(coord));
+        world
+            .run_system_once(chunk_despawn_system::<V>)
+            .expect("chunk_despawn_system should run");
+    }
+
+    #[test]
+    fn unload_with_auto_save_writes_the_chunk_and_despawns_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let save_dir = temp.path().join("nested").join("world");
+        let coord = IVec3::new(-3, 1, 2);
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        world.insert_resource(PersistenceConfig {
+            save_dir: save_dir.to_string_lossy().into_owned(),
+            auto_save: true,
+        });
+        let entity = entity_at(&world, coord);
+
+        run_despawn(&mut world, coord);
+
+        assert!(
+            world.get_entity(entity).is_err(),
+            "entity should be despawned"
+        );
+        assert!(!world.resource::<ChunkManager>().is_loaded(coord));
+        let path = save_dir.join(chunk_persistence::chunk_filename(coord));
+        let saved: Chunk<V> = chunk_persistence::load_chunk(&path).expect("chunk saved on unload");
+        assert_eq!(saved.get(8, 8, 8), DefaultVoxel::Rock);
+        assert_eq!(saved.get(0, 0, 0), DefaultVoxel::Air);
+    }
+
+    #[test]
+    fn unload_without_auto_save_despawns_without_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let coord = IVec3::ZERO;
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        world.insert_resource(PersistenceConfig {
+            save_dir: temp.path().to_string_lossy().into_owned(),
+            auto_save: false,
+        });
+        let entity = entity_at(&world, coord);
+
+        run_despawn(&mut world, coord);
+
+        assert!(world.get_entity(entity).is_err());
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn unload_without_persistence_config_still_despawns() {
+        let coord = IVec3::ZERO;
+        let mut world = mesh_world([(coord, single_voxel_chunk())]);
+        let entity = entity_at(&world, coord);
+
+        run_despawn(&mut world, coord);
+
+        assert!(world.get_entity(entity).is_err());
+        assert!(!world.resource::<ChunkManager>().is_loaded(coord));
     }
 }

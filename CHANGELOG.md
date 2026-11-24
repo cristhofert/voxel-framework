@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was counted once per overlapped voxel: 2x on edges, 4x on corners). Mobs
   no longer pop upward when walking along block edges.
 
+### Changed
+
+- `lod_update_system` looks up a chunk's coordinate through its
+  `ChunkCoordComp` instead of scanning every loaded chunk each time a chunk
+  changes LOD level (falls back to the scan for entities without one).
+
 ## [0.10.5] - 2026-11-23
 
 ### Added
