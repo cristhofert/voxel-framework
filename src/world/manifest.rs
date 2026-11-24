@@ -323,3 +323,78 @@ fn write_manifest_system<V: VoxelType, I: ItemType>(
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::items::inventory::DefaultItem;
+    use crate::voxel::DefaultVoxel;
+
+    fn write_default_manifest(dir: &Path) {
+        write_manifest_system::<DefaultVoxel, DefaultItem>(
+            "DefaultVoxel",
+            &WorldConfig::default(),
+            &WorldDataDir(dir.to_string_lossy().into_owned()),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+
+    #[test]
+    fn startup_writes_manifest_that_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        write_default_manifest(dir.path());
+
+        let manifest = WorldManifest::read(dir.path()).expect("manifest should be written");
+        let config = WorldConfig::default();
+        assert_eq!(manifest.schema_version, WorldManifest::schema_version());
+        assert_eq!(manifest.voxel_type, "DefaultVoxel");
+        assert_eq!(manifest.seed, config.seed);
+        assert_eq!(manifest.world_name, config.world_name);
+        // Air at byte 0, then the four DefaultVoxel materials; unknown bytes skipped.
+        let bytes: Vec<u8> = manifest.voxel_palette.iter().map(|e| e.byte).collect();
+        assert_eq!(bytes, vec![0, 1, 2, 3, 4]);
+        assert!(!manifest.voxel_palette[0].is_solid);
+        assert!(manifest.drop_overrides.is_empty());
+        assert!(manifest.crafting_recipes.is_empty());
+    }
+
+    #[test]
+    fn startup_never_overwrites_existing_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("world.json");
+        std::fs::write(&path, "{\"keep\": true}").unwrap();
+
+        write_default_manifest(dir.path());
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"keep\": true}");
+    }
+
+    #[test]
+    fn read_missing_manifest_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = WorldManifest::read(dir.path()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn read_corrupt_manifest_is_an_error_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("world.json"), "{ not json").unwrap();
+        assert!(WorldManifest::read(dir.path()).is_err());
+    }
+
+    #[test]
+    fn write_creates_missing_world_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let world_dir = dir.path().join("worlds").join("new");
+        write_default_manifest(&dir.path().join("seed"));
+        let manifest = WorldManifest::read(&dir.path().join("seed")).unwrap();
+
+        manifest.write(&world_dir).unwrap();
+
+        assert!(world_dir.join("world.json").is_file());
+    }
+}
