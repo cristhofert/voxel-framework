@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `world_to_local_coord` no longer returns an out-of-range local index (`16`)
+  for positions a tiny distance below a chunk edge (for example `x = -1e-7`).
+  In release builds this could panic or read/write the wrong voxel through
+  `get_voxel_at` / `set_voxel_at`.
+
 ## [0.10.5] - 2026-11-23
 
 ### Added

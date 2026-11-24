@@ -250,3 +250,114 @@ impl<V: VoxelType> Plugin for PersistencePlugin<V> {
         app.add_systems(Update, chunk_autosave_system::<V>);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::persistence::{chunk_filename, save_chunk};
+    use crate::voxel::DefaultVoxel;
+
+    fn chunk_with_marker() -> Chunk<DefaultVoxel> {
+        let mut chunk = Chunk::new();
+        chunk.set(3, 4, 5, DefaultVoxel::IronOre);
+        chunk.set_state(3, 4, 5, 7);
+        chunk
+    }
+
+    /// App with only the autosave system, one loaded chunk at `coord`, and
+    /// chunk files written under `save_dir`.
+    fn autosave_app(coord: IVec3, save_dir: &std::path::Path, auto_save: bool) -> App {
+        let mut app = App::new();
+        app.add_message::<ChunkModified>();
+        app.insert_resource(PersistenceConfig {
+            save_dir: save_dir.to_string_lossy().into_owned(),
+            auto_save,
+        });
+        let entity = app.world_mut().spawn(chunk_with_marker()).id();
+        let mut manager = ChunkManager::default();
+        manager.register(coord, entity);
+        app.insert_resource(manager);
+        app.add_systems(Update, chunk_autosave_system::<DefaultVoxel>);
+        app
+    }
+
+    #[test]
+    fn try_load_chunk_returns_none_when_file_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let loaded = try_load_chunk::<DefaultVoxel>(IVec3::ZERO, dir.path().to_str().unwrap());
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn try_load_chunk_reads_saved_chunk_with_negative_coord() {
+        let dir = tempfile::tempdir().unwrap();
+        let coord = IVec3::new(-3, 0, 12);
+        save_chunk(&chunk_with_marker(), dir.path().join(chunk_filename(coord))).unwrap();
+
+        let loaded = try_load_chunk::<DefaultVoxel>(coord, dir.path().to_str().unwrap())
+            .expect("saved chunk should load");
+        assert_eq!(loaded.get(3, 4, 5), DefaultVoxel::IronOre);
+        assert_eq!(loaded.get_state(3, 4, 5), 7);
+    }
+
+    #[test]
+    fn autosave_writes_modified_chunk_and_creates_missing_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let save_dir = dir.path().join("nested").join("chunks");
+        let coord = IVec3::new(1, -2, 3);
+        let mut app = autosave_app(coord, &save_dir, true);
+
+        app.world_mut().write_message(ChunkModified(coord));
+        app.update();
+
+        let loaded = try_load_chunk::<DefaultVoxel>(coord, save_dir.to_str().unwrap())
+            .expect("autosave should have written the chunk");
+        assert_eq!(loaded.get(3, 4, 5), DefaultVoxel::IronOre);
+        assert_eq!(loaded.get_state(3, 4, 5), 7);
+    }
+
+    #[test]
+    fn autosave_disabled_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = autosave_app(IVec3::ZERO, dir.path(), false);
+
+        app.world_mut().write_message(ChunkModified(IVec3::ZERO));
+        app.update();
+
+        assert!(!dir.path().join(chunk_filename(IVec3::ZERO)).exists());
+    }
+
+    #[test]
+    fn autosave_skips_chunks_that_are_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = autosave_app(IVec3::ZERO, dir.path(), true);
+        let unloaded = IVec3::new(9, 9, 9);
+
+        app.world_mut().write_message(ChunkModified(unloaded));
+        app.update();
+
+        assert!(!dir.path().join(chunk_filename(unloaded)).exists());
+    }
+
+    #[test]
+    fn plugin_save_dir_follows_world_name() {
+        let mut app = App::new();
+        app.add_plugins(PersistencePlugin::<DefaultVoxel>::with_world("survival"));
+        let config = app.world().resource::<PersistenceConfig>();
+        assert_eq!(config.save_dir, "./worlds/survival/chunks");
+        assert!(config.auto_save);
+
+        let mut app = App::new();
+        app.add_plugins(PersistencePlugin::<DefaultVoxel>::new());
+        assert_eq!(
+            app.world().resource::<PersistenceConfig>().save_dir,
+            PersistenceConfig::default().save_dir
+        );
+    }
+
+    #[test]
+    fn world_data_dir_for_world() {
+        assert_eq!(WorldDataDir::for_world("alpha").as_str(), "./worlds/alpha");
+        assert_eq!(WorldDataDir::default().as_str(), "./worlds/world");
+    }
+}

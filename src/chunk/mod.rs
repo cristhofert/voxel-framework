@@ -213,10 +213,14 @@ pub fn world_to_local_coord(world_pos: Vec3) -> (usize, usize, usize) {
         world_pos.y.rem_euclid(size),
         world_pos.z.rem_euclid(size),
     );
+    // `rem_euclid` of a tiny negative value can round up to exactly `size`
+    // in f32 (e.g. -1e-7 -> 16.0), so clamp to the last valid index. The
+    // matching `div_euclid` already places such positions in the lower chunk.
+    let max = CHUNK_SIZE - 1;
     (
-        (local.x / VOXEL_SIZE) as usize,
-        (local.y / VOXEL_SIZE) as usize,
-        (local.z / VOXEL_SIZE) as usize,
+        ((local.x / VOXEL_SIZE) as usize).min(max),
+        ((local.y / VOXEL_SIZE) as usize).min(max),
+        ((local.z / VOXEL_SIZE) as usize).min(max),
     )
 }
 
@@ -266,5 +270,56 @@ mod tests {
     fn world_to_local_coord_second_chunk() {
         // 16.5 is 0.5 into the second chunk → local x = 0
         assert_eq!(world_to_local_coord(Vec3::new(16.5, 0.0, 0.0)), (0, 0, 0));
+    }
+
+    #[test]
+    fn world_to_chunk_coord_negative_positions() {
+        assert_eq!(
+            world_to_chunk_coord(Vec3::new(-0.5, -0.5, -0.5)),
+            IVec3::splat(-1)
+        );
+        assert_eq!(
+            world_to_chunk_coord(Vec3::new(-16.0, 0.0, 0.0)),
+            IVec3::new(-1, 0, 0)
+        );
+        assert_eq!(
+            world_to_chunk_coord(Vec3::new(-16.5, 0.0, 0.0)),
+            IVec3::new(-2, 0, 0)
+        );
+    }
+
+    #[test]
+    fn world_to_local_coord_negative_positions() {
+        assert_eq!(
+            world_to_local_coord(Vec3::new(-0.5, -0.5, -0.5)),
+            (15, 15, 15)
+        );
+        assert_eq!(world_to_local_coord(Vec3::new(-16.0, 0.0, 0.0)), (0, 0, 0));
+        assert_eq!(world_to_local_coord(Vec3::new(-15.5, 0.0, 0.0)), (0, 0, 0));
+    }
+
+    #[test]
+    fn chunk_origin_plus_local_round_trips_to_voxel() {
+        for x in -40..40 {
+            let pos = Vec3::new(x as f32 + 0.5, 3.5, -(x as f32) - 0.5);
+            let coord = world_to_chunk_coord(pos);
+            let (lx, ly, lz) = world_to_local_coord(pos);
+            let rebuilt =
+                chunk_origin(coord) + Vec3::new(lx as f32, ly as f32, lz as f32) * VOXEL_SIZE;
+            assert_eq!(rebuilt, pos.floor(), "round trip failed for {pos}");
+        }
+    }
+
+    #[test]
+    fn local_coord_stays_in_bounds_just_below_a_chunk_boundary() {
+        // `rem_euclid` of a tiny negative value rounds up to exactly CHUNK_SIZE
+        // in f32, which would index one past the end of the chunk.
+        for pos in [Vec3::splat(-1e-7), Vec3::new(16.0 - 1e-6, -1e-8, 0.0)] {
+            let (x, y, z) = world_to_local_coord(pos);
+            assert!(
+                x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE,
+                "local coord ({x}, {y}, {z}) out of bounds for {pos}"
+            );
+        }
     }
 }

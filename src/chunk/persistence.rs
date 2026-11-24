@@ -215,4 +215,61 @@ mod tests {
         let result = load_chunk::<DefaultVoxel>(&path);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn legacy_voxel_only_file_loads_with_zero_state() {
+        let dir = temp_dir();
+        let path = dir.path().join("legacy.bin");
+        let mut bytes = vec![DefaultVoxel::Air.to_byte(); CHUNK_VOLUME];
+        bytes[Chunk::<DefaultVoxel>::get_index(1, 2, 3)] = DefaultVoxel::Rock.to_byte();
+        fs::write(&path, &bytes).unwrap();
+
+        let loaded = load_chunk::<DefaultVoxel>(&path).expect("legacy file should load");
+        assert_eq!(loaded.get(1, 2, 3), DefaultVoxel::Rock);
+        assert_eq!(loaded.get_state(1, 2, 3), 0);
+    }
+
+    #[test]
+    fn state_bytes_round_trip() {
+        let dir = temp_dir();
+        let path = dir.path().join("state.bin");
+        let mut chunk = Chunk::<DefaultVoxel>::new();
+        chunk.set(15, 0, 15, DefaultVoxel::IronOre);
+        chunk.set_state(15, 0, 15, 200);
+
+        save_chunk(&chunk, &path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            (CHUNK_VOLUME * 2) as u64
+        );
+        let loaded = load_chunk::<DefaultVoxel>(&path).unwrap();
+        assert_eq!(loaded.get_state(15, 0, 15), 200);
+    }
+
+    #[test]
+    fn unknown_voxel_byte_loads_as_air() {
+        let dir = temp_dir();
+        let path = dir.path().join("unknown.bin");
+        let mut bytes = vec![0u8; CHUNK_VOLUME];
+        bytes[0] = 250;
+        fs::write(&path, &bytes).unwrap();
+
+        let loaded = load_chunk::<DefaultVoxel>(&path).unwrap();
+        assert_eq!(loaded.get(0, 0, 0), DefaultVoxel::Air);
+    }
+
+    #[test]
+    fn truncated_state_section_is_ignored() {
+        // A write cut short after the voxel section keeps the voxels and
+        // falls back to zero state instead of reading a partial state block.
+        let dir = temp_dir();
+        let path = dir.path().join("truncated.bin");
+        let mut bytes = vec![DefaultVoxel::Rock.to_byte(); CHUNK_VOLUME];
+        bytes.extend(std::iter::repeat_n(9u8, CHUNK_VOLUME / 2));
+        fs::write(&path, &bytes).unwrap();
+
+        let loaded = load_chunk::<DefaultVoxel>(&path).unwrap();
+        assert!(loaded.is_fully_solid());
+        assert_eq!(loaded.get_state(0, 0, 0), 0);
+    }
 }

@@ -200,3 +200,142 @@ pub fn set_state_at<V: VoxelType>(
     chunk.set_state(x, y, z, state);
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::CHUNK_SIZE;
+    use crate::test_support::world_with_chunks;
+    use crate::voxel::DefaultVoxel;
+    use bevy::ecs::message::Messages;
+    use bevy::ecs::system::SystemState;
+    use bevy::ecs::world::World;
+
+    /// Two empty chunks side by side across the x = 0 boundary.
+    fn two_chunk_world() -> World {
+        let mut world = world_with_chunks([
+            (IVec3::new(-1, 0, 0), Chunk::<DefaultVoxel>::new()),
+            (IVec3::ZERO, Chunk::<DefaultVoxel>::new()),
+        ]);
+        world.init_resource::<Messages<ChunkModified>>();
+        world
+    }
+
+    fn set(world: &mut World, pos: Vec3, voxel: DefaultVoxel) -> bool {
+        let mut state: SystemState<(
+            Res<ChunkManager>,
+            Query<&mut Chunk<DefaultVoxel>>,
+            MessageWriter<ChunkModified>,
+        )> = SystemState::new(world);
+        let (manager, mut chunks, mut writer) = state.get_mut(world);
+        let placed = set_voxel_at(pos, voxel, &manager, &mut chunks, &mut writer);
+        state.apply(world);
+        placed
+    }
+
+    fn get(world: &mut World, pos: Vec3) -> Option<DefaultVoxel> {
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(world);
+        let (manager, chunks) = state.get(world);
+        get_voxel_at(pos, &manager, &chunks)
+    }
+
+    fn modified(world: &World) -> Vec<ChunkModified> {
+        world
+            .resource::<Messages<ChunkModified>>()
+            .iter_current_update_messages()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn set_and_get_on_both_sides_of_the_x_boundary() {
+        let mut world = two_chunk_world();
+
+        assert!(set(
+            &mut world,
+            Vec3::new(-0.5, 0.5, 0.5),
+            DefaultVoxel::Rock
+        ));
+        assert!(set(
+            &mut world,
+            Vec3::new(0.5, 0.5, 0.5),
+            DefaultVoxel::IronOre
+        ));
+
+        assert_eq!(
+            get(&mut world, Vec3::new(-0.5, 0.5, 0.5)),
+            Some(DefaultVoxel::Rock)
+        );
+        assert_eq!(
+            get(&mut world, Vec3::new(0.5, 0.5, 0.5)),
+            Some(DefaultVoxel::IronOre)
+        );
+        assert_eq!(
+            modified(&world),
+            vec![
+                ChunkModified(IVec3::new(-1, 0, 0)),
+                ChunkModified(IVec3::ZERO)
+            ]
+        );
+    }
+
+    #[test]
+    fn negative_position_writes_last_local_cell_of_lower_chunk() {
+        let mut world = two_chunk_world();
+        assert!(set(
+            &mut world,
+            Vec3::new(-0.5, 0.5, 0.5),
+            DefaultVoxel::Rock
+        ));
+
+        let manager = world.resource::<ChunkManager>();
+        let entity = manager.get_entity(IVec3::new(-1, 0, 0)).unwrap();
+        let chunk = world.entity(entity).get::<Chunk<DefaultVoxel>>().unwrap();
+        assert_eq!(chunk.get(CHUNK_SIZE - 1, 0, 0), DefaultVoxel::Rock);
+    }
+
+    #[test]
+    fn tiny_negative_offset_does_not_panic_and_hits_lower_chunk() {
+        let mut world = two_chunk_world();
+        assert!(set(
+            &mut world,
+            Vec3::new(-1e-7, 0.5, 0.5),
+            DefaultVoxel::Rock
+        ));
+        assert_eq!(
+            get(&mut world, Vec3::new(-0.5, 0.5, 0.5)),
+            Some(DefaultVoxel::Rock)
+        );
+    }
+
+    #[test]
+    fn unloaded_chunk_returns_none_and_emits_nothing() {
+        let mut world = two_chunk_world();
+        let far = Vec3::new(100.0, 0.5, 0.5);
+
+        assert_eq!(get(&mut world, far), None);
+        assert!(!set(&mut world, far, DefaultVoxel::Rock));
+        assert!(modified(&world).is_empty());
+    }
+
+    #[test]
+    fn state_round_trips_across_chunks() {
+        let mut world = two_chunk_world();
+        let pos = Vec3::new(-15.5, 2.5, 7.5);
+
+        let mut state: SystemState<(Res<ChunkManager>, Query<&mut Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, mut chunks) = state.get_mut(&mut world);
+        assert!(set_state_at(pos, 42, &manager, &mut chunks));
+
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+        assert_eq!(get_state_at(pos, &manager, &chunks), Some(42));
+        assert_eq!(
+            get_state_at(Vec3::new(50.0, 0.0, 0.0), &manager, &chunks),
+            None
+        );
+    }
+}
