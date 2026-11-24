@@ -107,6 +107,30 @@ pub fn sphere_overlaps_voxels<V: VoxelType, F: QueryFilter>(
     false
 }
 
+/// Combines per-voxel push-out vectors without double counting.
+///
+/// A body resting on the edge or corner between voxels overlaps two or four
+/// of them, and each one asks for the same push (e.g. +0.2 on y). Summing
+/// those pushes moved the body 2x or 4x too far. Instead, keep the largest
+/// push in each direction per axis: same-direction pushes collapse to one,
+/// pushes on different axes still combine, and opposite pushes still cancel.
+#[derive(Default)]
+struct PushOut {
+    positive: Vec3,
+    negative: Vec3,
+}
+
+impl PushOut {
+    fn add(&mut self, push: Vec3) {
+        self.positive = self.positive.max(push);
+        self.negative = self.negative.min(push);
+    }
+
+    fn total(&self) -> Vec3 {
+        self.positive + self.negative
+    }
+}
+
 /// Resolve sphere collision against solid voxels and return the corrected position.
 ///
 /// For each solid voxel that overlaps the sphere, computes a push-out vector
@@ -148,7 +172,7 @@ pub fn resolve_sphere_collision<V: VoxelType, F: QueryFilter>(
     let y_max = max.y.ceil() as i32;
     let z_max = max.z.ceil() as i32;
 
-    let mut total_pushout = Vec3::ZERO;
+    let mut pushout = PushOut::default();
 
     for vx in x_min..x_max {
         for vy in y_min..y_max {
@@ -176,11 +200,11 @@ pub fn resolve_sphere_collision<V: VoxelType, F: QueryFilter>(
                     let dist = dist_sq.sqrt();
                     let push_dir = diff / dist;
                     let overlap = radius - dist;
-                    total_pushout += push_dir * overlap;
+                    pushout.add(push_dir * overlap);
                 } else {
                     // Sphere center is inside (or exactly on the surface of) the AABB.
                     // Use the minimum-penetration-depth axis to find the shortest exit.
-                    let center = position + total_pushout;
+                    let center = position + pushout.total();
                     let depth_neg_x = center.x - voxel_min.x;
                     let depth_pos_x = voxel_max.x - center.x;
                     let depth_neg_y = center.y - voxel_min.y;
@@ -202,13 +226,13 @@ pub fn resolve_sphere_collision<V: VoxelType, F: QueryFilter>(
 
                     // Push the center out by (penetration depth + radius) so the
                     // sphere surface clears the voxel face entirely.
-                    total_pushout += push_dir * (min_depth + radius);
+                    pushout.add(push_dir * (min_depth + radius));
                 }
             }
         }
     }
 
-    position + total_pushout
+    position + pushout.total()
 }
 
 /// Resolve capsule collision against solid voxels and return the corrected bottom position.
@@ -262,7 +286,7 @@ pub fn resolve_capsule_collision<V: VoxelType, F: QueryFilter>(
     let y_max = cap_max.y.ceil() as i32;
     let z_max = cap_max.z.ceil() as i32;
 
-    let mut total_pushout = Vec3::ZERO;
+    let mut pushout = PushOut::default();
 
     for vx in x_min..x_max {
         for vy in y_min..y_max {
@@ -292,10 +316,10 @@ pub fn resolve_capsule_collision<V: VoxelType, F: QueryFilter>(
                     let dist = dist_sq.sqrt();
                     let push_dir = diff / dist;
                     let overlap = radius - dist;
-                    total_pushout += push_dir * overlap;
+                    pushout.add(push_dir * overlap);
                 } else {
                     // Axis point is inside the AABB — use minimum-penetration-depth axis.
-                    let center = axis_point + total_pushout;
+                    let center = axis_point + pushout.total();
                     let depth_neg_x = center.x - voxel_min.x;
                     let depth_pos_x = voxel_max.x - center.x;
                     let depth_neg_y = center.y - voxel_min.y;
@@ -315,13 +339,13 @@ pub fn resolve_capsule_collision<V: VoxelType, F: QueryFilter>(
                     .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
                     .unwrap();
 
-                    total_pushout += push_dir * (min_depth + radius);
+                    pushout.add(push_dir * (min_depth + radius));
                 }
             }
         }
     }
 
-    bottom + total_pushout
+    bottom + pushout.total()
 }
 
 /// Returns `true` if a capsule overlaps any solid voxel in the loaded world.
@@ -643,8 +667,8 @@ mod tests {
             "no sideways push at the seam: {resolved}"
         );
         assert!(
-            resolved.y >= 1.5 - 1e-4,
-            "should rest on top of the floor: {resolved}"
+            (resolved.y - 1.5).abs() < 1e-4,
+            "should rest exactly on top of the floor: {resolved}"
         );
         assert!(!sphere_overlaps_voxels::<DefaultVoxel, ()>(
             resolved, 0.5, &manager, &chunks
@@ -718,5 +742,70 @@ mod tests {
             resolve_sphere_collision::<DefaultVoxel, ()>(pos, 0.5, &manager, &chunks),
             pos
         );
+    }
+
+    #[test]
+    fn capsule_on_voxel_edges_and_corners_is_not_pushed_too_far() {
+        // Regression: push-outs from every overlapped voxel used to be summed,
+        // so a capsule resting on an edge rose 2x too far and 4x on a corner.
+        let mut world = floor_across_x_boundary();
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+
+        // Bottom sphere sunk 0.2 into the floor; it should rest at y = 1.0 + 0.4.
+        for (label, x, z) in [
+            ("voxel centre", 8.5, 8.5),
+            ("voxel edge", 8.5, 8.0),
+            ("voxel corner", 8.0, 8.0),
+            ("chunk seam corner", 16.0, 8.0),
+        ] {
+            let bottom = Vec3::new(x, 1.2, z);
+            let resolved = resolve_capsule_collision::<DefaultVoxel, ()>(
+                bottom,
+                bottom + Vec3::Y,
+                0.4,
+                &manager,
+                &chunks,
+            );
+            assert!(
+                (resolved - Vec3::new(x, 1.4, z)).length() < 1e-4,
+                "{label}: expected to rest at y = 1.4, got {resolved}"
+            );
+        }
+    }
+
+    #[test]
+    fn pushes_on_different_axes_still_combine() {
+        // Floor below and a wall on +x: the sphere must leave both.
+        let mut chunk = Chunk::<DefaultVoxel>::new();
+        for x in 0..4 {
+            for z in 0..4 {
+                chunk.set(x, 0, z, DefaultVoxel::Rock);
+            }
+        }
+        for y in 0..4 {
+            for z in 0..4 {
+                chunk.set(3, y, z, DefaultVoxel::Rock);
+            }
+        }
+        let mut world = world_with_chunks([(IVec3::ZERO, chunk)]);
+        let mut state: SystemState<(Res<ChunkManager>, Query<&Chunk<DefaultVoxel>>)> =
+            SystemState::new(&mut world);
+        let (manager, chunks) = state.get(&world);
+
+        let pos = Vec3::new(2.7, 1.3, 1.5);
+        let resolved = resolve_sphere_collision::<DefaultVoxel, ()>(pos, 0.5, &manager, &chunks);
+        assert!(
+            (resolved.x - 2.5).abs() < 1e-4,
+            "pushed off the wall: {resolved}"
+        );
+        assert!(
+            (resolved.y - 1.5).abs() < 1e-4,
+            "pushed up off the floor: {resolved}"
+        );
+        assert!(!sphere_overlaps_voxels::<DefaultVoxel, ()>(
+            resolved, 0.5, &manager, &chunks
+        ));
     }
 }

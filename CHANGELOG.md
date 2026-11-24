@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for positions a tiny distance below a chunk edge (for example `x = -1e-7`).
   In release builds this could panic or read/write the wrong voxel through
   `get_voxel_at` / `set_voxel_at`.
+- `resolve_sphere_collision` and `resolve_capsule_collision` no longer push a
+  body too far when it rests on the edge or corner between voxels (the push
+  was counted once per overlapped voxel: 2x on edges, 4x on corners). Mobs
+  no longer pop upward when walking along block edges.
 
 ## [0.10.5] - 2026-11-23
 
