@@ -170,6 +170,9 @@ pub mod ui;
 pub mod voxel;
 pub mod world;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 use bevy::prelude::*;
 
 use audio::SfxPlugin;

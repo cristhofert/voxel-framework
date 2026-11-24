@@ -1,8 +1,8 @@
 //! Integration tests for voxel-framework.
 //!
-//! Tests pure logic without spinning up a Bevy App (no display required).
+//! Mostly pure logic; the runtime contract tests use a headless `App` with
+//! `MinimalPlugins` (no display required).
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -121,13 +121,6 @@ impl ChunkGenerator<DefaultVoxel> for CountingGenerator {
         self.calls.fetch_add(1, Ordering::SeqCst);
         chunk.set(0, 0, 0, DefaultVoxel::IronOre);
     }
-}
-
-fn unique_temp_chunk_dir(test_name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "voxel_framework_{test_name}_{}",
-        std::process::id()
-    ))
 }
 
 // ── 1. Chunk + Voxel roundtrip ────────────────────────────────────────────────
@@ -487,9 +480,8 @@ fn streaming_requests_new_viewer_region_once_and_marks_pending() {
 #[test]
 fn generator_plugin_loads_persisted_chunk_before_calling_generator() {
     let coord = IVec3::new(7, -2, 3);
-    let save_dir = unique_temp_chunk_dir("persisted_chunk_wins");
-    let _ = std::fs::remove_dir_all(&save_dir);
-    std::fs::create_dir_all(&save_dir).expect("create temp chunk dir");
+    let temp = tempfile::tempdir().expect("create temp chunk dir");
+    let save_dir = temp.path();
 
     let mut saved_chunk = Chunk::<DefaultVoxel>::new();
     saved_chunk.set(0, 0, 0, DefaultVoxel::RareMineral);
@@ -540,8 +532,6 @@ fn generator_plugin_loads_persisted_chunk_before_calling_generator() {
         1,
         "loading a persisted chunk should notify mesh/persistence consumers"
     );
-
-    let _ = std::fs::remove_dir_all(&save_dir);
 }
 
 #[test]
