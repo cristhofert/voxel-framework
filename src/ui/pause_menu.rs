@@ -52,7 +52,7 @@ use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 
 use crate::audio::{SfxConfig, SfxEvent, SfxRequest};
-use crate::player::PlayerConfig;
+use crate::player::{Player, PlayerConfig};
 use crate::world::{ChunkManager, WorldConfig};
 
 /// Asset path of the NotoSans font embedded into the framework binary.
@@ -750,7 +750,8 @@ fn despawn_settings_menu(mut commands: Commands, q: Query<Entity, With<SettingsM
 ///   ±2 chunks (clamped `4`–`32`) and updates [`RenderDistLabel`] text and
 ///   [`ChunkManager`] distances.
 /// - `SensitivityInc` / `SensitivityDec`: changes [`PlayerConfig::sensitivity`] by
-///   ±1% (clamped `10`–`100`) and updates [`SensitivityLabel`] text.
+///   ±1% (clamped `10`–`100`), applies it to every live [`Player`] so mouse
+///   look changes immediately, and updates [`SensitivityLabel`] text.
 /// - `Back`: emits [`SaveSettingsRequest`] and transitions to [`PauseMenuState::Paused`].
 #[allow(clippy::too_many_arguments)]
 fn handle_settings_buttons(
@@ -800,6 +801,7 @@ fn handle_settings_buttons(
         ),
     >,
     mut camera_q: Query<&mut Projection, With<Camera3d>>,
+    mut players: Query<&mut Player>,
     mut save_writer: MessageWriter<SaveSettingsRequest>,
 ) {
     for (interaction, mut bg, action) in &mut q {
@@ -816,12 +818,10 @@ fn handle_settings_buttons(
             SettingsButton::FovInc | SettingsButton::FovDec => {
                 if let Ok(mut proj) = camera_q.single_mut() {
                     if let Projection::Perspective(ref mut pp) = *proj {
-                        let delta = if matches!(action, SettingsButton::FovInc) {
-                            5.0
-                        } else {
-                            -5.0
-                        };
-                        let new_fov = (pp.fov.to_degrees() + delta).clamp(50.0, 120.0);
+                        let new_fov = step_fov_degrees(
+                            pp.fov.to_degrees(),
+                            matches!(action, SettingsButton::FovInc),
+                        );
                         pp.fov = new_fov.to_radians();
                         if let Ok(mut t) = fov_label.single_mut() {
                             **t = format!("{new_fov:.0}°");
@@ -830,12 +830,10 @@ fn handle_settings_buttons(
                 }
             }
             SettingsButton::VolumeInc | SettingsButton::VolumeDec => {
-                let delta = if matches!(action, SettingsButton::VolumeInc) {
-                    0.1
-                } else {
-                    -0.1
-                };
-                sfx_config.volume = (sfx_config.volume + delta).clamp(0.0, 1.0);
+                sfx_config.volume = step_volume(
+                    sfx_config.volume,
+                    matches!(action, SettingsButton::VolumeInc),
+                );
                 let pct = sfx_config.volume * 100.0;
                 if let Ok(mut t) = vol_label.single_mut() {
                     **t = format!("{pct:.0}%");
@@ -843,19 +841,10 @@ fn handle_settings_buttons(
             }
             SettingsButton::RenderDistInc | SettingsButton::RenderDistDec => {
                 if let Some(ref mut wc) = world_config {
-                    // Current value in chunks (rounded to nearest even)
-                    let current = ((wc.load_distance / 16.0).round() as i32).clamp(4, 32);
-                    let current = if current % 2 == 0 {
-                        current
-                    } else {
-                        current + 1
-                    };
-                    let delta: i32 = if matches!(action, SettingsButton::RenderDistInc) {
-                        2
-                    } else {
-                        -2
-                    };
-                    let new_chunks = (current + delta).clamp(4, 32);
+                    let new_chunks = step_render_distance_chunks(
+                        wc.load_distance,
+                        matches!(action, SettingsButton::RenderDistInc),
+                    );
                     wc.load_distance = new_chunks as f32 * 16.0;
                     wc.unload_distance = wc.load_distance + 32.0;
                     if let Some(ref mut cm) = chunk_manager {
@@ -869,14 +858,17 @@ fn handle_settings_buttons(
             }
             SettingsButton::SensitivityInc | SettingsButton::SensitivityDec => {
                 if let Some(ref mut pc) = player_config {
-                    let current_pct = (pc.sensitivity * 100.0).round() as i32;
-                    let delta: i32 = if matches!(action, SettingsButton::SensitivityInc) {
-                        1
-                    } else {
-                        -1
-                    };
-                    let new_pct = (current_pct + delta).clamp(10, 100);
+                    let new_pct = step_sensitivity_pct(
+                        pc.sensitivity,
+                        matches!(action, SettingsButton::SensitivityInc),
+                    );
                     pc.sensitivity = new_pct as f32 / 100.0;
+                    // `Player::sensitivity` is copied from the config at spawn
+                    // and is what mouse look reads, so update live players too;
+                    // otherwise the change only applied after a restart.
+                    for mut player in &mut players {
+                        player.sensitivity = pc.sensitivity;
+                    }
                     if let Ok(mut t) = sens_label.single_mut() {
                         **t = format!("{new_pct:.0}%");
                     }
@@ -887,5 +879,151 @@ fn handle_settings_buttons(
                 next.set(PauseMenuState::Paused);
             }
         }
+    }
+}
+
+// ─── Slider steps ─────────────────────────────────────────────────────────────
+//
+// Pure helpers behind the settings buttons, kept separate from the Bevy system
+// so the rules (step size, limits, rounding) are unit-testable.
+
+/// Next field of view in degrees: ±5°, clamped to `50`–`120`.
+fn step_fov_degrees(current_deg: f32, increase: bool) -> f32 {
+    let delta = if increase { 5.0 } else { -5.0 };
+    (current_deg + delta).clamp(50.0, 120.0)
+}
+
+/// Next SFX volume: ±0.1, clamped to `0.0`–`1.0`.
+fn step_volume(current: f32, increase: bool) -> f32 {
+    let delta = if increase { 0.1 } else { -0.1 };
+    (current + delta).clamp(0.0, 1.0)
+}
+
+/// Next render distance in chunks: the current `load_distance` is rounded to
+/// whole chunks, clamped to `4`–`32` and bumped to even, then moved ±2 chunks
+/// and clamped again.
+fn step_render_distance_chunks(load_distance: f32, increase: bool) -> i32 {
+    let current = ((load_distance / 16.0).round() as i32).clamp(4, 32);
+    let current = if current % 2 == 0 {
+        current
+    } else {
+        current + 1
+    };
+    let delta = if increase { 2 } else { -2 };
+    (current + delta).clamp(4, 32)
+}
+
+/// Next mouse sensitivity in percent: ±1%, clamped to `10`–`100`.
+fn step_sensitivity_pct(sensitivity: f32, increase: bool) -> i32 {
+    let current_pct = (sensitivity * 100.0).round() as i32;
+    let delta = if increase { 1 } else { -1 };
+    (current_pct + delta).clamp(10, 100)
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::message::Messages;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn fov_steps_by_five_degrees_within_limits() {
+        assert_eq!(step_fov_degrees(70.0, true), 75.0);
+        assert_eq!(step_fov_degrees(70.0, false), 65.0);
+        assert_eq!(step_fov_degrees(118.0, true), 120.0);
+        assert_eq!(step_fov_degrees(52.0, false), 50.0);
+    }
+
+    #[test]
+    fn volume_steps_by_a_tenth_within_limits() {
+        assert!((step_volume(0.5, true) - 0.6).abs() < 1e-6);
+        assert!((step_volume(0.5, false) - 0.4).abs() < 1e-6);
+        assert_eq!(step_volume(0.95, true), 1.0);
+        assert_eq!(step_volume(0.05, false), 0.0);
+    }
+
+    #[test]
+    fn render_distance_steps_by_two_chunks_within_limits() {
+        // Default load distance is 150 units ≈ 9.4 chunks → 9 → bumped to 10.
+        assert_eq!(step_render_distance_chunks(150.0, true), 12);
+        assert_eq!(step_render_distance_chunks(150.0, false), 8);
+        assert_eq!(step_render_distance_chunks(8.0 * 16.0, true), 10);
+        assert_eq!(step_render_distance_chunks(32.0 * 16.0, true), 32);
+        assert_eq!(step_render_distance_chunks(4.0 * 16.0, false), 4);
+        // Values outside the slider range are clamped first.
+        assert_eq!(step_render_distance_chunks(1000.0 * 16.0, false), 30);
+    }
+
+    #[test]
+    fn sensitivity_steps_by_one_percent_within_limits() {
+        assert_eq!(step_sensitivity_pct(1.0, false), 99);
+        assert_eq!(step_sensitivity_pct(1.0, true), 100);
+        assert_eq!(step_sensitivity_pct(0.5, true), 51);
+        assert_eq!(step_sensitivity_pct(0.1, false), 10);
+    }
+
+    /// World with the resources `handle_settings_buttons` needs and one
+    /// pressed button.
+    fn settings_world(pressed: SettingsButton) -> World {
+        let mut world = World::new();
+        world.insert_resource(SfxConfig::default());
+        world.init_resource::<NextState<PauseMenuState>>();
+        world.init_resource::<Messages<SaveSettingsRequest>>();
+        world.spawn((
+            Button,
+            Interaction::Pressed,
+            BackgroundColor(BTN_NORMAL),
+            pressed,
+        ));
+        world
+    }
+
+    fn press(world: &mut World) {
+        world
+            .run_system_once(handle_settings_buttons)
+            .expect("handle_settings_buttons should run");
+    }
+
+    #[test]
+    fn sensitivity_button_updates_config_and_live_players() {
+        let mut world = settings_world(SettingsButton::SensitivityDec);
+        world.insert_resource(PlayerConfig::default());
+        let player = world.spawn(Player::default()).id();
+        assert_eq!(world.get::<Player>(player).unwrap().sensitivity, 1.0);
+
+        press(&mut world);
+
+        assert!((world.resource::<PlayerConfig>().sensitivity - 0.99).abs() < 1e-6);
+        assert!(
+            (world.get::<Player>(player).unwrap().sensitivity - 0.99).abs() < 1e-6,
+            "the live player must pick up the new sensitivity without a restart"
+        );
+    }
+
+    #[test]
+    fn volume_button_updates_sfx_config() {
+        let mut world = settings_world(SettingsButton::VolumeDec);
+        let before = world.resource::<SfxConfig>().volume;
+
+        press(&mut world);
+
+        let after = world.resource::<SfxConfig>().volume;
+        assert!((after - (before - 0.1).clamp(0.0, 1.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn back_button_requests_save_and_returns_to_pause() {
+        let mut world = settings_world(SettingsButton::Back);
+
+        press(&mut world);
+
+        let saves = world.resource::<Messages<SaveSettingsRequest>>();
+        assert_eq!(saves.iter_current_update_messages().count(), 1);
+        assert!(matches!(
+            *world.resource::<NextState<PauseMenuState>>(),
+            NextState::Pending(PauseMenuState::Paused)
+        ));
     }
 }
