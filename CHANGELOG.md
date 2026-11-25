@@ -21,15 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately. They only changed `PlayerConfig`, which is copied into
   `Player::sensitivity` at spawn, so the new value took effect only after a
   restart.
+- `DayCyclePlugin` no longer turns the sun and sky into `NaN` when
+  `DayCycleConfig::day_length_secs` is `0` or negative (the clock now stays
+  frozen), and a negative `time_of_day` set by a game wraps into `[0, 1)`.
 
 ### Changed
 
 - `lod_update_system` looks up a chunk's coordinate through its
   `ChunkCoordComp` instead of scanning every loaded chunk each time a chunk
   changes LOD level (falls back to the scan for entities without one).
-- `DayCyclePlugin` no longer turns the sun and sky into `NaN` when
-  `DayCycleConfig::day_length_secs` is `0` or negative (the clock now stays
-  frozen), and a negative `time_of_day` set by a game wraps into `[0, 1)`.
 - `DayCyclePlugin` now drives `GlobalAmbientLight::brightness` from
   `DayCycleConfig::night_ambient` (sun below the horizon) to `day_ambient`
   (noon), as documented. `day_ambient` was previously ignored, so scenes
