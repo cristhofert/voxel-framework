@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body too far when it rests on the edge or corner between voxels (the push
   was counted once per overlapped voxel: 2x on edges, 4x on corners). Mobs
   no longer pop upward when walking along block edges.
+- The pause menu's mouse sensitivity buttons now apply to the live player
+  immediately. They only changed `PlayerConfig`, which is copied into
+  `Player::sensitivity` at spawn, so the new value took effect only after a
+  restart.
 
 ### Changed
 
