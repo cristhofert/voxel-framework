@@ -119,4 +119,94 @@ mod tests {
         assert_eq!(loaded.spawn_y, pos.y);
         assert_eq!(loaded.spawn_z, pos.z);
     }
+
+    fn dir_str(dir: &std::path::Path) -> String {
+        dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn save_then_load_returns_the_same_position() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = dir_str(temp.path());
+        let pos = Vec3::new(-12.5, 70.25, 3.0);
+
+        save_spawn_position(pos, &data_dir);
+
+        assert_eq!(load_spawn_position(&data_dir), Some(pos));
+    }
+
+    #[test]
+    fn save_creates_missing_data_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = temp.path().join("worlds").join("survival");
+
+        save_spawn_position(Vec3::ONE, &dir_str(&data_dir));
+
+        assert!(data_dir.join("player_data.json").is_file());
+        assert_eq!(load_spawn_position(&dir_str(&data_dir)), Some(Vec3::ONE));
+    }
+
+    #[test]
+    fn save_overwrites_a_previous_spawn() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = dir_str(temp.path());
+
+        save_spawn_position(Vec3::new(1.0, 2.0, 3.0), &data_dir);
+        save_spawn_position(Vec3::new(4.0, 5.0, 6.0), &data_dir);
+
+        assert_eq!(
+            load_spawn_position(&data_dir),
+            Some(Vec3::new(4.0, 5.0, 6.0))
+        );
+    }
+
+    #[test]
+    fn load_without_a_file_returns_none() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(load_spawn_position(&dir_str(temp.path())), None);
+    }
+
+    #[test]
+    fn load_corrupt_or_incomplete_json_returns_none_instead_of_panicking() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = dir_str(temp.path());
+        let path = temp.path().join("player_data.json");
+
+        for contents in ["not json", "", r#"{"spawn_x": 1.0, "spawn_y": 2.0}"#] {
+            std::fs::write(&path, contents).unwrap();
+            assert_eq!(
+                load_spawn_position(&data_dir),
+                None,
+                "contents: {contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn load_reads_the_documented_hand_editable_format() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("player_data.json"),
+            r#"{"spawn_x": 8.0, "spawn_y": 60.0, "spawn_z": 8.0}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_spawn_position(&dir_str(temp.path())),
+            Some(Vec3::new(8.0, 60.0, 8.0))
+        );
+    }
+
+    #[test]
+    fn save_into_an_unwritable_location_does_not_panic() {
+        // `data_dir` is an existing *file*, so the directory cannot be
+        // created. The contract is "log and carry on", never panic.
+        let temp = tempfile::tempdir().unwrap();
+        let blocker = temp.path().join("not_a_dir");
+        std::fs::write(&blocker, "x").unwrap();
+
+        save_spawn_position(Vec3::ONE, &dir_str(&blocker));
+
+        assert_eq!(load_spawn_position(&dir_str(&blocker)), None);
+    }
 }
