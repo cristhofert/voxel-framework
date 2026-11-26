@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DayCyclePlugin` no longer turns the sun and sky into `NaN` when
   `DayCycleConfig::day_length_secs` is `0` or negative (the clock now stays
   frozen), and a negative `time_of_day` set by a game wraps into `[0, 1)`.
+- Mob physics no longer teleports mobs: `mob_physics_system` added the
+  corrected capsule *position* returned by `resolve_capsule_collision` to the
+  mob's translation instead of the push-out offset.
+- A mob resting on the ground now reports `Mob::on_ground == true` on every
+  frame (it used to alternate between grounded and falling). Grounded mobs use
+  a short downward probe and snap onto the floor.
+- Mobs no longer hang on walls or sink into the floor: mob physics resolves
+  horizontal and vertical motion separately and in substeps shorter than the
+  capsule radius, and falling speed is capped at 40 m/s.
+- Mobs with gravity are frozen while the chunk under their feet is not
+  loaded, instead of falling through terrain that is still streaming in (the
+  same rule the player follows). Zero-gravity mobs are unaffected.
 
 ### Changed
 
