@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `minetest` example spawns mobs through `MobSpawnerPlugin` rules (red
+  slimes by day, faster purple ones at night that vanish at dawn) instead of
+  five mobs at fixed coordinates.
 - Mobs now despawn by distance to the *nearest* `Player`. With one player
   nothing changes; with several, mobs used to never despawn by distance.
 - `lod_update_system` looks up a chunk's coordinate through its

@@ -264,7 +264,7 @@ cargo run --example basic_world
 | `effect_definitions` | Headless (`MinimalPlugins`) | Author-defined global/entity effects, ticking, and lifecycle messages |
 | `hud` | Headless (`MinimalPlugins`); feature-independent | Neutral text, bar, icon, and segment definitions with same-frame publication and retained updates |
 | `basic_world` | Graphical; display required; requires `items` (enabled by default) | Small playable asteroid world; see [`examples/basic_world.md`](examples/basic_world.md) |
-| `minetest` | Graphical; display required; requires `items`, `crafting`, and `mobs` (enabled by default) | Larger integration example |
+| `minetest` | Graphical; display required; requires `items`, `crafting`, and `mobs` (enabled by default) | Larger integration example, including day/night mob spawn rules |
 
 The headless examples are the fastest way to inspect author-defined APIs without
 opening a window. The HUD, stats, and effects examples do not require optional

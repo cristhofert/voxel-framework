@@ -20,7 +20,6 @@ use std::sync::Arc;
 use voxel_framework::audio::{DefaultAudioPlugin, SfxConfig, SfxEvent};
 use voxel_framework::items::inventory::{ContainerComponent, PrimaryContainer};
 use voxel_framework::items::{DefaultItem, ItemCollector};
-use voxel_framework::mobs::{MobConfig, MobPlugin, spawn_mob};
 use voxel_framework::prelude::*;
 
 // ─── Status effects ──────────────────────────────────────────────────────────
@@ -287,8 +286,9 @@ fn main() {
         .add_plugins(DayCyclePlugin)
         // ── Debug overlay (F3 toggle) ────────────────────────────────────────
         .add_plugins(DebugOverlayPlugin)
-        // ── Mobs (patrol + chase + attack) ──────────────────────────────────
+        // ── Mobs (patrol + chase + attack), spawned by day/night rules ──────
         .add_plugins(MobPlugin::<DefaultTerrainVoxel>::new())
+        .add_plugins(MobSpawnerPlugin::<DefaultTerrainVoxel>::new())
         // ── Audio (real bevy_audio playback) ────────────────────────────────
         .add_plugins(DefaultAudioPlugin)
         // ── World manifest (writes world.json on first run) ──────────────────
@@ -490,29 +490,42 @@ fn setup_audio(mut cfg: ResMut<SfxConfig>) {
     );
 }
 
-/// Spawns a few mob enemies near the player spawn point.
-fn setup_mobs(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let config = MobConfig {
-        max_health: 20.0,
-        chase_speed: 3.0,
-        detection_radius: 14.0,
-        color: Color::srgb(0.7, 0.15, 0.15),
-        ..MobConfig::default()
-    };
-    // Spread mobs around the spawn point so the player encounters them quickly.
-    for (dx, dz) in [(16, 0), (-16, 0), (0, 16), (8, 12), (-12, 8)] {
-        spawn_mob(
-            Vec3::new(8.0 + dx as f32, 65.0, 8.0 + dz as f32),
-            config.clone(),
-            &mut commands,
-            &mut meshes,
-            &mut materials,
+/// Registers the mob types and the rules that spawn them around the player.
+///
+/// Both types are the basic mob with a different config: red slimes roam by
+/// day, faster purple ones replace them at night and vanish at dawn.
+fn setup_mobs(mut registry: ResMut<MobRegistry>, mut rules: ResMut<MobSpawnRules>) {
+    registry.register(
+        "slime",
+        MobConfig {
+            chase_speed: 3.0,
+            detection_radius: 14.0,
+            color: Color::srgb(0.7, 0.15, 0.15),
+            ..MobConfig::default()
+        },
+    );
+    registry
+        .register_variant("night_slime", "slime", |config| {
+            config.chase_speed = 4.5;
+            config.attack_damage = 6.0;
+            config.color = Color::srgb(0.35, 0.1, 0.6);
+        })
+        .expect("`slime` was registered just above");
+
+    rules
+        .add(
+            SpawnRule::new("slime")
+                .time(TimeWindow::Day)
+                .ring(14.0, 30.0)
+                .cap(3),
+        )
+        .add(
+            SpawnRule::new("night_slime")
+                .time(TimeWindow::Night)
+                .ring(12.0, 28.0)
+                .cap(6)
+                .despawn_outside_window(true),
         );
-    }
 }
 
 /// Queues all voxel texture handles for deferred array assembly.
