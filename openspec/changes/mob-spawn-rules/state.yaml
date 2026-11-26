@@ -1,9 +1,0 @@
-change: mob-spawn-rules
-phase: verify
-artifacts:
-  proposal: done
-  spec: done
-  design: done
-  tasks: done
-  verify-report: done
-  archive: pending
