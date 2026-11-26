@@ -31,6 +31,8 @@
 //!     .run();
 //! ```
 
+use std::collections::BTreeMap;
+
 use bevy::prelude::*;
 
 use crate::chunk::{Chunk, world_to_chunk_coord};
@@ -38,6 +40,13 @@ use crate::player::{Player, PlayerHealth};
 use crate::voxel::VoxelType;
 use crate::world::ChunkManager;
 use crate::world::collision::resolve_capsule_collision;
+
+mod spawner;
+
+pub use spawner::{
+    DAY_END, DAY_START, DespawnOutsideWindow, MobSpawnRules, MobSpawnerPlugin, SpawnContext,
+    SpawnPlacement, SpawnRing, SpawnRule, SpawnZone, TimeWindow,
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -200,6 +209,168 @@ pub fn spawn_mob(
 /// can read it without a separate resource lookup.
 #[derive(Component)]
 pub struct MobConfigComponent(pub MobConfig);
+
+// ─── Mob kinds ────────────────────────────────────────────────────────────────
+
+/// Named mob type, such as `"slime"` or `"night_slime"`.
+///
+/// Mobs spawned through [`spawn_mob_kind`] carry this component so games and
+/// spawners can count or filter mobs by type. Mobs spawned with the plain
+/// [`spawn_mob`] have no kind.
+#[derive(Component, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MobKind(String);
+
+impl MobKind {
+    /// Creates a kind from its name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    /// Returns the kind's name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for MobKind {
+    fn from(name: &str) -> Self {
+        Self::new(name)
+    }
+}
+
+impl From<String> for MobKind {
+    fn from(name: String) -> Self {
+        Self::new(name)
+    }
+}
+
+impl AsRef<str> for MobKind {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for MobKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Error returned by [`MobRegistry::register_variant`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MobRegistryError {
+    /// The base kind a variant derives from is not registered.
+    UnknownBase(MobKind),
+}
+
+impl std::fmt::Display for MobRegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownBase(kind) => write!(f, "unknown base mob kind `{kind}`"),
+        }
+    }
+}
+
+impl std::error::Error for MobRegistryError {}
+
+/// Registry of named mob types, each backed by a [`MobConfig`].
+///
+/// Every mob type is a configuration of the same base mob (the colored box
+/// with patrol/chase/attack AI). Use [`MobRegistry::register_variant`] to
+/// derive a new type from an existing one and change only what differs.
+///
+/// [`MobPlugin`] initializes an empty registry; games fill it at startup.
+///
+/// ```
+/// use bevy::prelude::Color;
+/// use voxel_framework::mobs::{MobConfig, MobKind, MobRegistry};
+///
+/// let mut registry = MobRegistry::default();
+/// registry.register("slime", MobConfig::default());
+/// registry
+///     .register_variant("night_slime", "slime", |config| {
+///         config.chase_speed = 5.0;
+///         config.color = Color::srgb(0.3, 0.1, 0.6);
+///     })
+///     .unwrap();
+///
+/// assert_eq!(registry.get(&MobKind::new("night_slime")).unwrap().chase_speed, 5.0);
+/// ```
+#[derive(Resource, Clone, Debug, Default)]
+pub struct MobRegistry {
+    kinds: BTreeMap<MobKind, MobConfig>,
+}
+
+impl MobRegistry {
+    /// Registers (or replaces) a mob type.
+    pub fn register(&mut self, kind: impl Into<MobKind>, config: MobConfig) -> &mut Self {
+        self.kinds.insert(kind.into(), config);
+        self
+    }
+
+    /// Registers `kind` as a copy of `base`'s config modified by `customize`.
+    ///
+    /// Later changes to `base` do not affect the variant.
+    pub fn register_variant(
+        &mut self,
+        kind: impl Into<MobKind>,
+        base: impl Into<MobKind>,
+        customize: impl FnOnce(&mut MobConfig),
+    ) -> Result<&mut Self, MobRegistryError> {
+        let base = base.into();
+        let mut config = self
+            .kinds
+            .get(&base)
+            .cloned()
+            .ok_or(MobRegistryError::UnknownBase(base))?;
+        customize(&mut config);
+        Ok(self.register(kind, config))
+    }
+
+    /// Returns the config for `kind`, if registered.
+    pub fn get(&self, kind: &MobKind) -> Option<&MobConfig> {
+        self.kinds.get(kind)
+    }
+
+    /// Returns `true` if `kind` is registered.
+    pub fn contains(&self, kind: &MobKind) -> bool {
+        self.kinds.contains_key(kind)
+    }
+
+    /// Iterates registered kinds in name order.
+    pub fn iter(&self) -> impl Iterator<Item = (&MobKind, &MobConfig)> {
+        self.kinds.iter()
+    }
+
+    /// Number of registered kinds.
+    pub fn len(&self) -> usize {
+        self.kinds.len()
+    }
+
+    /// Returns `true` when no kinds are registered.
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+}
+
+/// Spawns a mob of a registered `kind` at `position`.
+///
+/// Works like [`spawn_mob`] with a copy of the kind's current [`MobConfig`]
+/// and also inserts the [`MobKind`] component; later registry changes do not
+/// affect mobs already spawned. Returns `None` when `kind` is not registered.
+pub fn spawn_mob_kind(
+    kind: &MobKind,
+    registry: &MobRegistry,
+    position: Vec3,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Option<Entity> {
+    let config = registry.get(kind)?.clone();
+    let entity = spawn_mob(position, config, commands, meshes, materials);
+    commands.entity(entity).insert(kind.clone());
+    Some(entity)
+}
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
@@ -465,18 +636,24 @@ fn mob_death_system(
     }
 }
 
+/// Despawns mobs farther than their `despawn_distance` from every player.
 fn mob_despawn_system(
     mob_q: Query<(Entity, &Transform, &MobConfigComponent)>,
     player_q: Query<&Transform, With<Player>>,
     mut commands: Commands,
 ) {
-    let Ok(player_tf) = player_q.single() else {
+    // Without players there is nothing to measure against; keep the mobs.
+    if player_q.is_empty() {
         return;
-    };
-    let player_pos = player_tf.translation;
+    }
     for (entity, tf, cfg) in mob_q.iter() {
-        if tf.translation.distance(player_pos) > cfg.0.despawn_distance {
-            commands.entity(entity).despawn();
+        let nearest = player_q
+            .iter()
+            .map(|player| player.translation.distance(tf.translation))
+            .fold(f32::INFINITY, f32::min);
+        if nearest > cfg.0.despawn_distance {
+            // Another system may despawn the same mob this frame.
+            commands.entity(entity).try_despawn();
         }
     }
 }
@@ -485,7 +662,8 @@ fn mob_despawn_system(
 
 /// Plugin that wires up all mob systems for voxel type `V`.
 ///
-/// Add [`MobPlugin`] after your core voxel plugin. It relies on
+/// Initializes an empty [`MobRegistry`]. Add [`MobPlugin`] after your core
+/// voxel plugin. It relies on
 /// [`crate::world::ChunkManager`], [`crate::player::Player`], and
 /// [`crate::player::PlayerHealth`] being present.
 ///
@@ -525,6 +703,7 @@ impl<V: VoxelType> Default for MobPlugin<V> {
 impl<V: VoxelType> Plugin for MobPlugin<V> {
     fn build(&self, app: &mut App) {
         app.add_message::<MobDied>();
+        app.init_resource::<MobRegistry>();
         app.add_systems(
             Update,
             (
@@ -987,5 +1166,126 @@ mod tests {
 
         let pos = world.get::<Transform>(entity).unwrap().translation;
         assert!((pos.y - 2.0).abs() < 1e-2, "y={}", pos.y);
+    }
+
+    #[test]
+    fn registry_variant_derives_from_base() {
+        let mut registry = MobRegistry::default();
+        registry.register("slime", MobConfig::default());
+        registry
+            .register_variant("night_slime", "slime", |c| c.chase_speed = 6.0)
+            .unwrap();
+
+        let base = registry.get(&"slime".into()).unwrap();
+        let variant = registry.get(&"night_slime".into()).unwrap();
+        assert_eq!(variant.chase_speed, 6.0);
+        assert_eq!(variant.max_health, base.max_health);
+        assert_eq!(base.chase_speed, MobConfig::default().chase_speed);
+        assert_eq!(registry.len(), 2);
+    }
+
+    #[test]
+    fn registry_iterates_in_name_order_and_replaces_on_reregister() {
+        let mut registry = MobRegistry::default();
+        for name in ["slime", "bat", "zombie"] {
+            registry.register(name, MobConfig::default());
+        }
+        let names: Vec<&str> = registry.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(names, ["bat", "slime", "zombie"]);
+
+        registry.register(
+            "slime",
+            MobConfig {
+                chase_speed: 9.0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.get(&"slime".into()).unwrap().chase_speed, 9.0);
+    }
+
+    #[test]
+    fn mob_plugin_initializes_an_empty_registry() {
+        let mut app = App::new();
+        app.add_plugins(MobPlugin::<DefaultVoxel>::new());
+        assert!(app.world().resource::<MobRegistry>().is_empty());
+    }
+
+    #[test]
+    fn mobs_despawn_by_distance_to_the_nearest_player() {
+        let mut world = World::new();
+        let config = MobConfig {
+            despawn_distance: 10.0,
+            ..Default::default()
+        };
+        let near_a = spawn_bare_mob(&mut world, Vec3::new(5.0, 0.0, 0.0), config.clone());
+        let near_b = spawn_bare_mob(&mut world, Vec3::new(105.0, 0.0, 0.0), config.clone());
+        let stranded = spawn_bare_mob(&mut world, Vec3::new(50.0, 0.0, 0.0), config);
+
+        // No players: nothing is despawned.
+        world.run_system_once(mob_despawn_system).unwrap();
+        assert!(world.get_entity(stranded).is_ok());
+
+        world.spawn((Player::default(), Transform::from_xyz(0.0, 0.0, 0.0)));
+        world.spawn((Player::default(), Transform::from_xyz(100.0, 0.0, 0.0)));
+        world.run_system_once(mob_despawn_system).unwrap();
+
+        assert!(world.get_entity(near_a).is_ok());
+        assert!(world.get_entity(near_b).is_ok());
+        assert!(world.get_entity(stranded).is_err());
+    }
+
+    #[test]
+    fn registry_variant_of_unknown_base_fails() {
+        let mut registry = MobRegistry::default();
+        let err = registry
+            .register_variant("ghost", "slime", |_| {})
+            .unwrap_err();
+        assert_eq!(err, MobRegistryError::UnknownBase("slime".into()));
+        assert!(!registry.contains(&"ghost".into()));
+    }
+
+    #[test]
+    fn spawn_mob_kind_inserts_kind_component() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>();
+        let mut registry = MobRegistry::default();
+        registry.register("slime", MobConfig::default());
+        app.insert_resource(registry);
+
+        let spawned = app
+            .world_mut()
+            .run_system_once(
+                |mut commands: Commands,
+                 registry: Res<MobRegistry>,
+                 mut meshes: ResMut<Assets<Mesh>>,
+                 mut materials: ResMut<Assets<StandardMaterial>>| {
+                    let slime = spawn_mob_kind(
+                        &"slime".into(),
+                        &registry,
+                        Vec3::ZERO,
+                        &mut commands,
+                        &mut meshes,
+                        &mut materials,
+                    );
+                    let unknown = spawn_mob_kind(
+                        &"ghost".into(),
+                        &registry,
+                        Vec3::ZERO,
+                        &mut commands,
+                        &mut meshes,
+                        &mut materials,
+                    );
+                    (slime, unknown)
+                },
+            )
+            .unwrap();
+
+        assert!(spawned.1.is_none());
+        let entity = spawned.0.expect("registered kind spawns");
+        let kind = app.world().get::<MobKind>(entity).unwrap();
+        assert_eq!(kind.as_str(), "slime");
     }
 }

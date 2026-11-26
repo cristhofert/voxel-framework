@@ -32,7 +32,7 @@ use crate::generator::{GeneratorPlugin, MultiGeneratorPlugin};
 use crate::items::{DropVisualPlugin, DropsPlugin, HotbarPlugin, ItemType};
 use crate::mesh::MeshPlugin;
 #[cfg(feature = "mobs")]
-use crate::mobs::MobPlugin;
+use crate::mobs::{MobPlugin, MobSpawnerPlugin};
 use crate::player::PlayerPlugin;
 use crate::player::effects::{StatusEffect, StatusEffectsPlugin};
 use crate::render::RenderPlugin;
@@ -157,6 +157,10 @@ impl<I: ItemType> GameplayPlugin for CraftingPlugin<I> {}
 impl<V: VoxelType> VoxelFrameworkPlugin for MobPlugin<V> {}
 #[cfg(feature = "mobs")]
 impl<V: VoxelType> GameplayPlugin for MobPlugin<V> {}
+#[cfg(feature = "mobs")]
+impl<V: VoxelType> VoxelFrameworkPlugin for MobSpawnerPlugin<V> {}
+#[cfg(feature = "mobs")]
+impl<V: VoxelType> GameplayPlugin for MobSpawnerPlugin<V> {}
 
 impl<E: StatusEffect> VoxelFrameworkPlugin for StatusEffectsPlugin<E> {}
 impl<E: StatusEffect> GameplayPlugin for StatusEffectsPlugin<E> {}
