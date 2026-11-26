@@ -167,7 +167,10 @@ pub use crate::player::{
 // Mobs
 #[cfg(feature = "mobs")]
 pub use crate::mobs::{
-    MOB_HALF_HEIGHT, MOB_RADIUS, Mob, MobAiState, MobConfig, MobDied, MobPlugin, spawn_mob,
+    DespawnOutsideWindow, MOB_HALF_HEIGHT, MOB_RADIUS, Mob, MobAiState, MobConfig, MobDied,
+    MobKind, MobPlugin, MobRegistry, MobRegistryError, MobSpawnRules, MobSpawnerPlugin,
+    SpawnContext, SpawnPlacement, SpawnRing, SpawnRule, SpawnZone, TimeWindow, spawn_mob,
+    spawn_mob_kind,
 };
 
 // World manifest (requires crafting because the manifest writer reads the recipe registry)

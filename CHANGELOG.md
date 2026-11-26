@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `MobKind` component and `MobRegistry` resource (initialized by
+  `MobPlugin`): named mob types backed by `MobConfig`.
+  `MobRegistry::register_variant` derives a new type from an existing one
+  (`MobRegistryError::UnknownBase` when the base is missing), and
+  `spawn_mob_kind` spawns a registered type with its `MobKind` attached.
+- `MobSpawnerPlugin<V>` (Gameplay) and `MobSpawnRules`: rule-driven mob
+  spawning around every `Player`. A `SpawnRule` picks a registered kind, a
+  weight, a distance ring (`SpawnRing`), a `TimeWindow` (`Any`, `Day`, `Night`
+  or a `Range` that may wrap midnight, read from `DayCycleConfig`), a
+  `SpawnPlacement` (`Ground` or `Air`), a per-player cap, an optional zone
+  predicate over `SpawnContext`, and `despawn_outside_window` (mobs carry
+  `DespawnOutsideWindow` and disappear when their window ends). Spawning is
+  deterministic for a given `MobSpawnRules::seed`.
+
 ### Fixed
 
 - `world_to_local_coord` no longer returns an out-of-range local index (`16`)
@@ -39,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Mobs now despawn by distance to the *nearest* `Player`. With one player
+  nothing changes; with several, mobs used to never despawn by distance.
 - `lod_update_system` looks up a chunk's coordinate through its
   `ChunkCoordComp` instead of scanning every loaded chunk each time a chunk
   changes LOD level (falls back to the scan for entities without one).

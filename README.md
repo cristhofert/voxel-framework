@@ -1049,6 +1049,61 @@ App::new()
     );
 ```
 
+## Mobs
+
+Requires the `mobs` feature (on by default). `MobPlugin<V>` runs the basic mob:
+a colored box with patrol/chase/attack AI, gravity and voxel collision.
+`spawn_mob` places one by hand.
+
+Mob types are named configurations of that basic mob. Register them in
+`MobRegistry` and let `MobSpawnerPlugin<V>` spawn them around every `Player`
+according to rules:
+
+```rust
+use voxel_framework::prelude::*;
+
+let mut registry = MobRegistry::default();
+registry.register("slime", MobConfig::default());
+registry
+    .register_variant("night_slime", "slime", |config| {
+        config.chase_speed = 5.0;
+        config.color = Color::srgb(0.3, 0.1, 0.6);
+    })
+    .unwrap();
+
+let rules = MobSpawnRules::default()
+    .with_rule(SpawnRule::new("slime").time(TimeWindow::Day).cap(3))
+    .with_rule(
+        SpawnRule::new("night_slime")
+            .time(TimeWindow::Night)
+            .ring(12.0, 32.0)          // min/max distance from the player
+            .cap(6)                    // live mobs of this kind per player
+            .zone(|ctx| ctx.position.y < 80.0)
+            .despawn_outside_window(true),
+    );
+
+app.add_plugins(MobPlugin::<MyVoxel>::new())
+    .add_plugins(MobSpawnerPlugin::<MyVoxel>::new())
+    .add_plugins(DayCyclePlugin)
+    .insert_resource(registry)
+    .insert_resource(rules);
+```
+
+| Rule field | Default | Meaning |
+|---|---|---|
+| `weight` | `1.0` | Relative chance among the rules that apply |
+| `ring` | `[12, 32]` | Distance band around the player; capped below the kind's `despawn_distance`. Ground rules need at least 1.5 units of width |
+| `time` | `Any` | `Any`, `Day` (`[0.25, 0.75)`), `Night`, or `Range { start, end }` (wraps midnight) |
+| `placement` | `Ground` | `Ground`: on a solid voxel with two free voxels above, never farther than `ring.max` in 3D. `Air`: free space, for zero-gravity mobs |
+| `cap` | `4` | Most live mobs of the kind within `ring.max` of one player |
+| `zone` | none | Extra predicate on the candidate position (hook for biomes or regions) |
+| `despawn_outside_window` | `false` | Despawn the mob when `time` stops applying |
+
+The spawner evaluates every `MobSpawnRules::interval_secs` (default 2 s) and
+spawns at most one mob per player per evaluation, only in loaded chunks.
+Without `DayCyclePlugin` only `TimeWindow::Any` rules apply. Mobs despawn by
+distance to the nearest `Player`; mob AI still assumes a single `Player`.
+
 ## Pause Menu
 
 `PauseMenuPlugin` is an optional plugin that provides a full pause menu with a settings submenu. It manages its own `PauseMenuState` — use it to gate your gameplay systems:
