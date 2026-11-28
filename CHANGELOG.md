@@ -23,8 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DespawnOutsideWindow` and disappear when their window ends). Spawning is
   deterministic for a given `MobSpawnRules::seed`.
 
+- `PlayerSystems`: a system set with every `Update` system `PlayerPlugin`
+  adds, so a game can gate the player on its own state or order it against
+  its systems with `configure_sets` instead of registering the systems by
+  hand.
+
 ### Fixed
 
+- `PlayerPlugin` and `PauseMenuPlugin` can now be used together, as both
+  bundled examples already did. With the pause menu installed,
+  `player_cursor_system` leaves Escape to the menu: pressing Escape with a
+  free cursor (before the first click, or after the window lost focus) used
+  to open the menu and close the window in the same frame. The cursor system
+  also ignores clicks while a menu is open, so it never captures the cursor
+  from a menu click when registered without a pause run condition (only
+  Resume captures it).
+- The pause menu releases and captures only the primary window's cursor, and
+  resuming no longer captures the cursor of an unfocused window.
 - `world_to_local_coord` no longer returns an out-of-range local index (`16`)
   for positions a tiny distance below a chunk edge (for example `x = -1e-7`).
   In release builds this could panic or read/write the wrong voxel through

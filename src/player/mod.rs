@@ -23,7 +23,8 @@
 //! # Quick start — [`PlayerPlugin`]
 //!
 //! The simplest integration: add [`PlayerPlugin`] and everything is wired
-//! automatically. Systems run unconditionally every frame.
+//! automatically. Systems run every frame, or only while unpaused when
+//! [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) is installed.
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
@@ -38,10 +39,24 @@
 //!     .run();
 //! ```
 //!
-//! # AppState integration — manual systems
+//! # AppState integration
 //!
-//! When your game has an `AppState` enum, skip [`PlayerPlugin`] and register the
-//! systems manually so they only run during gameplay:
+//! When your game has an `AppState` enum, keep [`PlayerPlugin`] and gate (or
+//! order) all of its `Update` systems through the [`PlayerSystems`] set:
+//!
+//! ```rust,no_run
+//! # use bevy::prelude::*;
+//! # use voxel_framework::player::{PlayerPlugin, PlayerSystems};
+//! # use voxel_framework::voxel::DefaultVoxel;
+//! # #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
+//! # enum AppState { #[default] Playing }
+//! App::new()
+//!     .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+//!     .configure_sets(Update, PlayerSystems.run_if(in_state(AppState::Playing)));
+//! ```
+//!
+//! Alternatively, skip [`PlayerPlugin`] and register the systems manually
+//! (this drops the plugin's spawn-position persistence):
 //!
 //! ```rust,no_run
 //! # use bevy::prelude::*;
@@ -73,9 +88,11 @@
 //! Look and movement require a focused primary window with a captured cursor.
 //! Headless calls without a primary window retain synthetic-input support.
 //!
-//! If you use [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) alongside this
-//! module, do **not** add [`player_cursor_system`] — the pause menu handles cursor
-//! management itself.
+//! With [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) installed the pause
+//! menu owns Escape: [`player_cursor_system`] ignores the key (Escape opens
+//! the menu and never closes the window) and keeps handling click-to-capture
+//! and focus-loss release while the game is unpaused. The menu releases the
+//! cursor when it opens and captures it again on resume.
 //!
 //! # Controls
 //!
@@ -88,7 +105,7 @@
 //! | Space        | Move along local up                 |
 //! | Shift        | Move along local down               |
 //! | Left click   | Lock cursor                         |
-//! | Escape       | Release cursor (if already free: close focused window) |
+//! | Escape       | Release cursor (if already free: close focused window); opens the pause menu instead when `PauseMenuPlugin` is installed |
 
 use bevy::ecs::message::MessageWriter;
 use bevy::input::mouse::MouseMotion;
@@ -1377,32 +1394,46 @@ pub fn player_resolve_collision<V: VoxelType>(
 
 // ─── Cursor grab ──────────────────────────────────────────────────────────────
 
-/// Manages cursor lock state and window close on Escape.
-///
-/// This system implements a two-stage Escape behavior common in first-person
-/// games:
+/// Manages the primary window's cursor capture.
 ///
 /// | Trigger | Cursor state before | Effect |
 /// |---------|---------------------|--------|
-/// | Left click | Free (`None`) | Locks cursor, hides it |
+/// | Window loses focus | Locked | Releases cursor, shows it |
+/// | Left click in the focused window | Free (`None`) | Locks cursor, hides it |
 /// | Escape | Locked | Releases cursor, shows it |
 /// | Escape | Free | Despawns the window entity (closes the app) |
 ///
-/// Do **not** add this system when using [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin),
-/// which provides its own cursor management and a richer Escape flow
-/// (Playing → Paused → Playing).
+/// ## With the pause menu
+///
+/// When [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin) is installed (its
+/// [`PauseMenuState`](crate::ui::PauseMenuState) exists) the pause menu owns
+/// Escape: this system ignores the key, so Escape opens the menu instead of
+/// releasing the cursor or closing the window. Click-to-capture and
+/// focus-loss release keep working while the state is `Playing`, and clicks
+/// are ignored while a menu is open, so menu buttons never capture the cursor.
+/// The two can be used together; [`PlayerPlugin`] does exactly that.
 pub fn player_cursor_system(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut windows: Query<(Entity, &Window, &mut CursorOptions), With<PrimaryWindow>>,
+    pause: Option<Res<State<crate::ui::PauseMenuState>>>,
 ) {
+    use crate::ui::PauseMenuState;
+
+    let pause_menu_installed = pause.is_some();
+    let menu_open = pause.is_some_and(|state| !matches!(state.get(), PauseMenuState::Playing));
+
     for (entity, window, mut cursor) in windows.iter_mut() {
         if !window.focused {
             if cursor.grab_mode != CursorGrabMode::None || !cursor.visible {
                 cursor.grab_mode = CursorGrabMode::None;
                 cursor.visible = true;
             }
+            continue;
+        }
+        if menu_open {
+            // The pause menu shows a free cursor; its clicks are for buttons.
             continue;
         }
         if mouse.just_pressed(MouseButton::Left)
@@ -1412,7 +1443,8 @@ pub fn player_cursor_system(
             cursor.visible = false;
         }
 
-        if keys.just_pressed(KeyCode::Escape) {
+        // With the pause menu installed, Escape opens the menu instead.
+        if !pause_menu_installed && keys.just_pressed(KeyCode::Escape) {
             if cursor.grab_mode != bevy::window::CursorGrabMode::None {
                 cursor.grab_mode = bevy::window::CursorGrabMode::None;
                 cursor.visible = true;
@@ -1717,6 +1749,29 @@ fn gameplay_active(state: Option<Res<bevy::prelude::State<crate::ui::PauseMenuSt
     state.map_or(true, |s| matches!(s.get(), PauseMenuState::Playing))
 }
 
+// ─── System set ───────────────────────────────────────────────────────────────
+
+/// System set containing every `Update` system that [`PlayerPlugin`] adds.
+///
+/// Use it to order the player against your own systems or to add a run
+/// condition without registering the player systems by hand:
+///
+/// ```rust,no_run
+/// use bevy::prelude::*;
+/// use voxel_framework::prelude::*;
+///
+/// #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
+/// enum AppState { #[default] Menu, InGame }
+///
+/// App::new()
+///     .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+///     .configure_sets(Update, PlayerSystems.run_if(in_state(AppState::InGame)));
+/// ```
+///
+/// Conditions added here combine with the plugin's own pause gating.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlayerSystems;
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 /// Plugin that wires up the complete 6DOF player controller.
@@ -1732,9 +1787,20 @@ fn gameplay_active(state: Option<Res<bevy::prelude::State<crate::ui::PauseMenuSt
 /// [`player_cursor_system`] is added as a separate, un-chained `Update` system
 /// so cursor events are processed independently of the movement pipeline.
 ///
-/// All systems run **unconditionally** every frame. If your game requires
-/// state-gated player control (e.g., pausing during a menu), skip this plugin
-/// and register the systems manually:
+/// ## Pause menu
+///
+/// The plugin works together with [`PauseMenuPlugin`](crate::ui::PauseMenuPlugin):
+/// when that plugin is installed, look, movement and collision run only in
+/// `PauseMenuState::Playing`, and Escape opens the menu. The cursor system,
+/// health and respawn keep running while paused; the cursor system then only
+/// releases the cursor on focus loss. Without the pause menu
+/// everything runs every frame.
+///
+/// ## Extra conditions and ordering
+///
+/// All `Update` systems of the plugin are in [`PlayerSystems`]. Configure that
+/// set to gate the player on your own state or to order it against your
+/// systems. Registering the systems manually is still possible:
 ///
 /// ```rust,no_run
 /// # use bevy::prelude::*;
@@ -1809,16 +1875,21 @@ impl<V: VoxelType> Plugin for PlayerPlugin<V> {
                 player_footstep_system::<V>,
             )
                 .chain()
-                .run_if(gameplay_active),
+                .run_if(gameplay_active)
+                .in_set(PlayerSystems),
         );
-        // health_system and respawn_system run unconditionally (not gated by pause).
-        app.add_systems(Update, health_system);
-        app.add_systems(Update, respawn_system);
+        // health_system and respawn_system are not gated by pause.
         app.add_systems(
             Update,
+            (health_system, respawn_system).in_set(PlayerSystems),
+        );
+        app.add_systems(
+            Update,
+            // Not gated by pause: the system ignores clicks and Escape itself
+            // while a menu is open, and must still release on focus loss.
             player_cursor_system
-                .run_if(gameplay_active)
-                .before(player_look),
+                .before(player_look)
+                .in_set(PlayerSystems),
         );
         app.add_systems(PostUpdate, save_spawn_on_exit);
     }
@@ -2544,6 +2615,178 @@ mod tests {
             ))
             .id();
         (app, entity)
+    }
+
+    /// App running only [`player_cursor_system`], with a focused primary
+    /// window and, optionally, a pause-menu state resource.
+    fn cursor_app(
+        pause: Option<crate::ui::PauseMenuState>,
+        locked: bool,
+    ) -> (App, bevy::ecs::entity::Entity) {
+        use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .add_systems(Update, player_cursor_system);
+        if let Some(state) = pause {
+            app.insert_resource(State::new(state));
+        }
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: true,
+                    ..default()
+                },
+                PrimaryWindow,
+                CursorOptions {
+                    grab_mode: if locked {
+                        CursorGrabMode::Locked
+                    } else {
+                        CursorGrabMode::None
+                    },
+                    visible: !locked,
+                    ..default()
+                },
+            ))
+            .id();
+        (app, window)
+    }
+
+    fn grab_mode(app: &App, window: bevy::ecs::entity::Entity) -> bevy::window::CursorGrabMode {
+        app.world()
+            .get::<bevy::window::CursorOptions>(window)
+            .expect("window should still exist")
+            .grab_mode
+    }
+
+    #[test]
+    fn pause_menu_owns_escape_so_a_free_cursor_does_not_close_the_window() {
+        use crate::ui::PauseMenuState;
+        let (mut app, window) = cursor_app(Some(PauseMenuState::Playing), false);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+
+        app.update();
+
+        assert!(
+            app.world().get_entity(window).is_ok(),
+            "Escape belongs to the pause menu when it is installed"
+        );
+    }
+
+    #[test]
+    fn pause_menu_owns_escape_so_a_captured_cursor_is_not_released_here() {
+        use crate::ui::PauseMenuState;
+        use bevy::window::CursorGrabMode;
+        let (mut app, window) = cursor_app(Some(PauseMenuState::Playing), true);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+
+        app.update();
+
+        // The pause menu releases it when it enters `Paused`.
+        assert_eq!(grab_mode(&app, window), CursorGrabMode::Locked);
+    }
+
+    #[test]
+    fn with_pause_menu_a_focused_click_captures_and_focus_loss_releases() {
+        use crate::ui::PauseMenuState;
+        use bevy::window::CursorGrabMode;
+        let (mut app, window) = cursor_app(Some(PauseMenuState::Playing), false);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert_eq!(grab_mode(&app, window), CursorGrabMode::Locked);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .reset_all();
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        app.update();
+        assert_eq!(grab_mode(&app, window), CursorGrabMode::None);
+    }
+
+    #[test]
+    fn menu_clicks_do_not_capture_the_cursor_while_paused_or_in_settings() {
+        use crate::ui::PauseMenuState;
+        use bevy::window::CursorGrabMode;
+        for state in [PauseMenuState::Paused, PauseMenuState::Settings] {
+            // The system is added without a run condition, as a game composing
+            // the player systems by hand would.
+            let (mut app, window) = cursor_app(Some(state), false);
+            app.world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .press(MouseButton::Left);
+
+            app.update();
+
+            assert_eq!(grab_mode(&app, window), CursorGrabMode::None);
+        }
+    }
+
+    #[test]
+    fn player_systems_set_gates_the_plugin_systems() {
+        use bevy::window::{CursorGrabMode, PrimaryWindow};
+        let mut app = App::new();
+        app.add_plugins(PlayerPlugin::<crate::voxel::DefaultVoxel>::new());
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>();
+        // A game-owned condition on the whole plugin, without re-registering
+        // its systems by hand.
+        app.configure_sets(Update, PlayerSystems.run_if(|| false));
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: true,
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+
+        // Only `Update`: the plugin's `Startup` systems touch the disk.
+        app.world_mut().run_schedule(Update);
+
+        assert_eq!(
+            grab_mode(&app, window),
+            CursorGrabMode::None,
+            "a disabled PlayerSystems set must stop the cursor system"
+        );
+    }
+
+    #[test]
+    fn focus_loss_releases_the_cursor_even_while_a_menu_is_open() {
+        use crate::ui::PauseMenuState;
+        use bevy::window::CursorGrabMode;
+        let (mut app, window) = cursor_app(Some(PauseMenuState::Paused), true);
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+
+        app.update();
+
+        assert_eq!(grab_mode(&app, window), CursorGrabMode::None);
+    }
+
+    #[test]
+    fn without_pause_menu_escape_keeps_its_two_stage_behavior() {
+        use bevy::window::CursorGrabMode;
+        let (mut app, window) = cursor_app(None, true);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        assert_eq!(grab_mode(&app, window), CursorGrabMode::None);
+
+        // Still held as "just pressed": the second stage closes the window.
+        app.update();
+        assert!(app.world().get_entity(window).is_err());
     }
 
     #[test]

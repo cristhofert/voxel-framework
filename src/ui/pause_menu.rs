@@ -19,33 +19,35 @@
 //!                             └──────────┘
 //! ```
 //!
-//! **Cursor management:** entering `Paused` releases the cursor
-//! (`CursorGrabMode::None`, visible). Returning to `Playing` re-locks it
-//! (`CursorGrabMode::Locked`, hidden). Do not combine this plugin with
-//! [`player_cursor_system`](crate::player::player_cursor_system), which
-//! implements a conflicting two-stage Escape handler.
+//! **Cursor management:** entering `Paused` releases the primary window's
+//! cursor (`CursorGrabMode::None`, visible). Returning to `Playing` re-locks
+//! it (`CursorGrabMode::Locked`, hidden) when the window is focused.
+//!
+//! This plugin does not capture the cursor on the first click or release it
+//! when the window loses focus. Add
+//! [`PlayerPlugin`](crate::player::PlayerPlugin), or
+//! [`player_cursor_system`](crate::player::player_cursor_system) on its own,
+//! for that: when this plugin is installed the cursor system leaves Escape to
+//! the pause menu, so the two work together.
 //!
 //! # Integration
 //!
-//! Gate all gameplay systems on [`PauseMenuState::Playing`]:
+//! [`PlayerPlugin`](crate::player::PlayerPlugin) pauses with the menu on its
+//! own. Gate your other gameplay systems on [`PauseMenuState::Playing`]:
 //!
 //! ```rust,no_run
 //! use bevy::prelude::*;
 //! use voxel_framework::prelude::*;
-//! use voxel_framework::player::{spawn_player, player_look, player_move,
-//!     player_resolve_collision};
 //! use voxel_framework::ui::{PauseMenuPlugin, PauseMenuState};
+//!
+//! fn my_gameplay_system() {}
 //!
 //! App::new()
 //!     .add_plugins(DefaultPlugins)
 //!     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
 //!     .add_plugins(PauseMenuPlugin)
-//!     .add_systems(Startup, spawn_player)
-//!     .add_systems(Update,
-//!         (player_look, player_move::<DefaultVoxel>, player_resolve_collision::<DefaultVoxel>)
-//!             .chain()
-//!             .run_if(in_state(PauseMenuState::Playing)),
-//!     );
+//!     .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+//!     .add_systems(Update, my_gameplay_system.run_if(in_state(PauseMenuState::Playing)));
 //! ```
 
 use bevy::asset::embedded_asset;
@@ -234,9 +236,11 @@ impl Default for PauseMenuConfig {
 /// (±5° per click, clamped to `50°`–`120°`) and SFX volume (±10% per click,
 /// clamped to `0%`–`100%`).
 ///
-/// **Does not** include [`player_cursor_system`](crate::player::player_cursor_system).
-/// If you use this plugin, omit that system — this plugin handles cursor locking
-/// and releasing as part of the `Playing ↔ Paused` transition.
+/// Handles cursor releasing and locking as part of the `Playing ↔ Paused`
+/// transition. First-click capture and focus-loss release come from
+/// [`player_cursor_system`](crate::player::player_cursor_system), which
+/// [`PlayerPlugin`](crate::player::PlayerPlugin) registers and which defers
+/// Escape to this plugin when both are present.
 ///
 /// # Simple usage
 ///
@@ -252,13 +256,16 @@ impl Default for PauseMenuConfig {
 ///     .run();
 /// ```
 ///
-/// # With state-gated player systems
+/// # With hand-registered player systems
+///
+/// Include [`player_cursor_system`](crate::player::player_cursor_system) so the
+/// first click captures the cursor and focus loss releases it:
 ///
 /// ```rust,no_run
 /// use bevy::prelude::*;
 /// use voxel_framework::prelude::*;
-/// use voxel_framework::player::{spawn_player, player_look, player_move,
-///     player_resolve_collision};
+/// use voxel_framework::player::{spawn_player, player_cursor_system, player_look,
+///     player_move, player_resolve_collision};
 /// use voxel_framework::ui::{PauseMenuPlugin, PauseMenuState};
 ///
 /// App::new()
@@ -267,7 +274,8 @@ impl Default for PauseMenuConfig {
 ///     .add_plugins(PauseMenuPlugin)
 ///     .add_systems(Startup, spawn_player)
 ///     .add_systems(Update,
-///         (player_look, player_move::<DefaultVoxel>, player_resolve_collision::<DefaultVoxel>)
+///         (player_cursor_system, player_look, player_move::<DefaultVoxel>,
+///             player_resolve_collision::<DefaultVoxel>)
 ///             .chain()
 ///             .run_if(in_state(PauseMenuState::Playing)),
 ///     );
@@ -342,22 +350,38 @@ fn load_default_font(mut cfg: ResMut<PauseMenuConfig>, asset_server: Res<AssetSe
 
 /// Releases the cursor when entering [`PauseMenuState::Paused`].
 ///
-/// Called via `OnEnter(Paused)`. Sets `CursorGrabMode::None` and makes the
-/// cursor visible so the player can interact with the menu buttons.
-fn release_cursor(mut windows: Query<&mut bevy::window::CursorOptions>) {
-    for mut cursor in &mut windows {
+/// Called via `OnEnter(Paused)`. Sets `CursorGrabMode::None` on the primary
+/// window and makes the cursor visible so the player can interact with the
+/// menu buttons.
+fn release_cursor(mut windows: PrimaryCursor) {
+    for (_, mut cursor) in &mut windows {
         cursor.grab_mode = bevy::window::CursorGrabMode::None;
         cursor.visible = true;
     }
 }
+
+/// The primary window and its cursor options: the only cursor the pause menu
+/// manages.
+type PrimaryCursor<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Window, &'static mut bevy::window::CursorOptions),
+    With<bevy::window::PrimaryWindow>,
+>;
 
 /// Re-locks the cursor when returning to [`PauseMenuState::Playing`].
 ///
 /// Called as a plain function (not a system) from [`escape_to_resume`] and
 /// [`handle_pause_buttons`] so that cursor re-lock and state transition happen
 /// in the same frame without a one-frame gap.
-fn lock_cursor(windows: &mut Query<&mut bevy::window::CursorOptions>) {
-    for mut cursor in windows.iter_mut() {
+///
+/// An unfocused window is left alone: a window must be focused before its
+/// cursor is captured, and a click captures it later.
+fn lock_cursor(windows: &mut PrimaryCursor) {
+    for (window, mut cursor) in windows.iter_mut() {
+        if !window.focused {
+            continue;
+        }
         cursor.grab_mode = bevy::window::CursorGrabMode::Locked;
         cursor.visible = false;
     }
@@ -390,7 +414,7 @@ fn toggle_pause(
 fn escape_to_resume(
     keys: Res<ButtonInput<KeyCode>>,
     mut next: ResMut<NextState<PauseMenuState>>,
-    mut windows: Query<&mut bevy::window::CursorOptions>,
+    mut windows: PrimaryCursor,
     mut sfx: MessageWriter<SfxRequest>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -526,7 +550,7 @@ fn handle_pause_buttons(
         (Changed<Interaction>, With<Button>),
     >,
     mut next: ResMut<NextState<PauseMenuState>>,
-    mut windows: Query<&mut bevy::window::CursorOptions>,
+    mut windows: PrimaryCursor,
     mut app_exit: MessageWriter<AppExit>,
     mut sfx: MessageWriter<SfxRequest>,
 ) {
@@ -927,6 +951,159 @@ mod tests {
     use super::*;
     use bevy::ecs::message::Messages;
     use bevy::ecs::system::RunSystemOnce;
+
+    use crate::player::player_cursor_system;
+    use bevy::state::app::StatesPlugin;
+    use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+
+    /// Headless app with the pause transitions wired as [`PauseMenuPlugin`]
+    /// does (minus UI and assets) plus the player's cursor system, and a
+    /// focused primary window with a free cursor.
+    fn pause_cursor_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin);
+        app.init_state::<PauseMenuState>();
+        app.add_message::<SfxRequest>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.add_systems(
+            Update,
+            (
+                toggle_pause.run_if(in_state(PauseMenuState::Playing)),
+                escape_to_resume.run_if(in_state(PauseMenuState::Paused)),
+                player_cursor_system.run_if(in_state(PauseMenuState::Playing)),
+            ),
+        );
+        app.add_systems(OnEnter(PauseMenuState::Paused), release_cursor);
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: true,
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        (app, window)
+    }
+
+    /// Presses `key` for one frame, then runs a second frame so the state
+    /// transition it requested is applied.
+    fn tap(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
+    }
+
+    fn click(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .reset_all();
+    }
+
+    fn pause_state(app: &App) -> PauseMenuState {
+        app.world()
+            .resource::<State<PauseMenuState>>()
+            .get()
+            .clone()
+    }
+
+    fn grab(app: &App, window: Entity) -> CursorGrabMode {
+        app.world()
+            .get::<CursorOptions>(window)
+            .expect("window should still exist")
+            .grab_mode
+    }
+
+    #[test]
+    fn cursor_follows_pause_focus_and_click_with_the_player_cursor_system() {
+        let (mut app, window) = pause_cursor_app();
+
+        // Escape before the first click opens the menu; it must not close the window.
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(pause_state(&app), PauseMenuState::Paused);
+        assert_eq!(grab(&app, window), CursorGrabMode::None);
+
+        // Escape again resumes with the cursor captured.
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(pause_state(&app), PauseMenuState::Playing);
+        assert_eq!(grab(&app, window), CursorGrabMode::Locked);
+
+        // Losing focus releases the cursor without pausing.
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        app.update();
+        assert_eq!(grab(&app, window), CursorGrabMode::None);
+        assert_eq!(pause_state(&app), PauseMenuState::Playing);
+
+        // Regaining focus alone does not recapture; a click does.
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        app.update();
+        assert_eq!(grab(&app, window), CursorGrabMode::None);
+        click(&mut app);
+        assert_eq!(grab(&app, window), CursorGrabMode::Locked);
+
+        // Pausing from a captured cursor releases it for the menu.
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(pause_state(&app), PauseMenuState::Paused);
+        assert_eq!(grab(&app, window), CursorGrabMode::None);
+    }
+
+    #[test]
+    fn resuming_does_not_capture_an_unfocused_window() {
+        let (mut app, window) = pause_cursor_app();
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(pause_state(&app), PauseMenuState::Paused);
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        // Checked before the next frame, where the player's cursor system
+        // would release an unfocused capture anyway.
+        assert_eq!(grab(&app, window), CursorGrabMode::None);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
+
+        assert_eq!(pause_state(&app), PauseMenuState::Playing);
+        assert_eq!(grab(&app, window), CursorGrabMode::None);
+    }
+
+    #[test]
+    fn pause_cursor_changes_only_touch_the_primary_window() {
+        let (mut app, window) = pause_cursor_app();
+        let secondary = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: false,
+                    ..default()
+                },
+                CursorOptions {
+                    grab_mode: CursorGrabMode::Confined,
+                    ..default()
+                },
+            ))
+            .id();
+
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::Escape);
+
+        assert_eq!(grab(&app, window), CursorGrabMode::Locked);
+        assert_eq!(grab(&app, secondary), CursorGrabMode::Confined);
+    }
 
     #[test]
     fn fov_steps_by_five_degrees_within_limits() {

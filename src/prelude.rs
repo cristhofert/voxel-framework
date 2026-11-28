@@ -159,7 +159,7 @@ pub use crate::player::effects::{
 pub use crate::player::persistence::{load_spawn_position, save_spawn_position};
 pub use crate::player::{
     PLAYER_HALF_HEIGHT, PLAYER_RADIUS, Player, PlayerConfig, PlayerCrouching, PlayerDamaged,
-    PlayerDied, PlayerHealth, PlayerMode, PlayerPlugin, RollMode, SPRINT_MULTIPLIER,
+    PlayerDied, PlayerHealth, PlayerMode, PlayerPlugin, PlayerSystems, RollMode, SPRINT_MULTIPLIER,
     SnapRollEasing, health_system, player_cursor_system, player_input_active, player_look,
     player_move, player_resolve_collision, respawn_system, spawn_player,
 };

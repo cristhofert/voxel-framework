@@ -80,7 +80,8 @@
   with_world("basic_world") uses that folder as the save directory.
 
   (5) PauseMenuPlugin — the pause menu (Escape). It registers the PauseMenuState that drives
-  gameplay_active on the player.
+  gameplay_active on the player. Together with PlayerPlugin, Escape opens the menu, a click in the
+  focused window captures the cursor, and losing focus releases it.
 
   (6) PlayerPlugin::<DefaultVoxel> — the full player: camera, movement, collision, mining input,
   sprint/crouch, footsteps.

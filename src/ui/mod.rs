@@ -63,8 +63,10 @@
 //!
 //! The optional [`PauseMenuPlugin`] lives in the
 //! `pause_menu` submodule and is re-exported from this module. It is **not**
-//! included in [`UiPlugin`] because it manages its own [`PauseMenuState`] and
-//! cursor lifetime, which must be coordinated with your game's state machine.
+//! included in [`UiPlugin`] because it manages its own [`PauseMenuState`],
+//! which must be coordinated with your game's state machine. It works together
+//! with [`PlayerPlugin`](crate::player::PlayerPlugin), which pauses with it and
+//! supplies first-click cursor capture and focus-loss release.
 
 use bevy::prelude::*;
 
