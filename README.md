@@ -25,7 +25,7 @@
 
 ## Release Status & Stability
 
-`voxel-framework` 0.10 is the current package line for this Bevy-first voxel game
+`voxel-framework` 0.11 is the current package line for this Bevy-first voxel game
 framework. It is intended to be usable by real consumer crates, examples, and
 experiments, but it is not a 1.0 stability promise yet. Package metadata and
 guidance may be prepared before the corresponding crate and tag are published.
@@ -38,7 +38,7 @@ Compatibility target:
 
 | Area | Current status |
 |---|---|
-| Crate version | `0.10.x` |
+| Crate version | `0.11.x` |
 | Bevy version | `0.18` |
 | Rust version | MSRV `1.89` |
 | Stability | Public API can still change across `0.x` minor releases |
@@ -165,14 +165,14 @@ chosen repository revision. Do not assume candidate metadata implies a tag.
 
 ```toml
 [dependencies]
-# Option A — released 0.10 line (recommended for consumers):
-voxel-framework = "0.10"
+# Option A — released 0.11 line (recommended for consumers):
+voxel-framework = "0.11"
 
 # Option B — local clone side-by-side (development):
 voxel-framework = { path = "../voxel-framework" }
 
 # Option C — from the matching release tag:
-voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.10.5" }
+voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", tag = "v0.11.0" }
 
 # Option D — follow the dev branch (bleeding-edge):
 voxel-framework = { git = "https://github.com/cristhofert/voxel-framework", branch = "dev" }

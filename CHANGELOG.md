@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-28
+
+Version 0.10.5 was prepared but never published; its changes ship here.
+
+### Upgrading from 0.10.4
+
+- Chunk persistence writes only chunks whose voxels or state bytes changed.
+  Terrain nobody edited is no longer saved, so it follows later generator or
+  seed changes. Existing save directories keep working.
+- A saved chunk is restored on a background task and becomes available a
+  frame or more after its `ChunkLoadRequest`, like a generated one.
+- Code that writes the public `Chunk::states` array directly must call
+  `Chunk::mark_dirty()` (or use `Chunk::set_state`) for the change to be saved.
+- With `PauseMenuPlugin` installed, Escape is handled by the pause menu only;
+  `player_cursor_system` no longer releases the cursor or closes the window on
+  Escape in that setup.
+- `mob_despawn_system` measures the distance to the nearest `Player`.
+- Example texture files were renamed (see Changed).
+
 ### Added
 
 - `MobKind` component and `MobRegistry` resource (initialized by
@@ -30,6 +49,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adds, so a game can gate the player on its own state or order it against
   its systems with `configure_sets` instead of registering the systems by
   hand.
+- Ship the SIL Open Font License 1.1 text (`src/ui/OFL-NotoSans.txt`) for the
+  embedded Noto Sans fonts.
+- Add `assets/CREDITS.md` documenting the provenance of example assets.
+
+### Changed
+
+- Chunk persistence saves only chunks with unsaved changes. Before, every
+  `ChunkModified` message wrote the chunk (including the ones sent for a
+  first mesh, a neighbour border or a LOD change) and every unloaded chunk
+  was written, so a session saved all the terrain it streamed through.
+  `chunk_autosave_system` and `chunk_despawn_system` now skip clean chunks,
+  and a chunk restored from disk is not written back. Existing save
+  directories keep working; untouched terrain already on disk is still
+  restored from its file.
+- Saved chunks are restored on the generator's background task instead of in
+  the `Update` schedule, so loading a saved world no longer blocks frames on
+  file reads. A restored chunk now becomes available a frame or more after
+  its `ChunkLoadRequest`, like a generated one. Without a
+  `GeneratorResource` the restore still happens immediately.
+- Direct writes to the public `Chunk::states` array are not tracked; call
+  `Chunk::mark_dirty()` after them or use `Chunk::set_state`.
+- The `minetest` example spawns mobs through `MobSpawnerPlugin` rules (red
+  slimes by day, faster purple ones at night that vanish at dawn) instead of
+  five mobs at fixed coordinates.
+- Mobs now despawn by distance to the *nearest* `Player`. With one player
+  nothing changes; with several, mobs used to never despawn by distance.
+- `lod_update_system` looks up a chunk's coordinate through its
+  `ChunkCoordComp` instead of scanning every loaded chunk each time a chunk
+  changes LOD level (falls back to the scan for entities without one).
+- `DayCyclePlugin` now drives `GlobalAmbientLight::brightness` from
+  `DayCycleConfig::night_ambient` (sun below the horizon) to `day_ambient`
+  (noon), as documented. `day_ambient` was previously ignored, so scenes
+  using the plugin kept Bevy's default ambient brightness (`80`). With the
+  default config the ambient light is now `200`–`800`; lower both fields to
+  keep the old look.
+- Replace the example block textures with original, procedurally generated
+  ones (`scripts/generate-example-textures.py`). The previous textures were
+  third-party files without a license and are no longer distributed. Example
+  texture files were renamed: `grass_block_top` → `grass_top`, `oak_log` →
+  `wood_log`, `oak_leaves` → `leaves`, `water_still` → `water`,
+  `amethyst_block` → `crystal`, `emerald_ore` → `rare_ore`.
 
 ### Fixed
 
@@ -70,55 +130,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mobs with gravity are frozen while the chunk under their feet is not
   loaded, instead of falling through terrain that is still streaming in (the
   same rule the player follows). Zero-gravity mobs are unaffected.
-
-### Changed
-
-- Chunk persistence saves only chunks with unsaved changes. Before, every
-  `ChunkModified` message wrote the chunk (including the ones sent for a
-  first mesh, a neighbour border or a LOD change) and every unloaded chunk
-  was written, so a session saved all the terrain it streamed through.
-  `chunk_autosave_system` and `chunk_despawn_system` now skip clean chunks,
-  and a chunk restored from disk is not written back. Existing save
-  directories keep working; untouched terrain already on disk is still
-  restored from its file.
-- Saved chunks are restored on the generator's background task instead of in
-  the `Update` schedule, so loading a saved world no longer blocks frames on
-  file reads. A restored chunk now becomes available a frame or more after
-  its `ChunkLoadRequest`, like a generated one. Without a
-  `GeneratorResource` the restore still happens immediately.
-- Direct writes to the public `Chunk::states` array are not tracked; call
-  `Chunk::mark_dirty()` after them or use `Chunk::set_state`.
-- The `minetest` example spawns mobs through `MobSpawnerPlugin` rules (red
-  slimes by day, faster purple ones at night that vanish at dawn) instead of
-  five mobs at fixed coordinates.
-- Mobs now despawn by distance to the *nearest* `Player`. With one player
-  nothing changes; with several, mobs used to never despawn by distance.
-- `lod_update_system` looks up a chunk's coordinate through its
-  `ChunkCoordComp` instead of scanning every loaded chunk each time a chunk
-  changes LOD level (falls back to the scan for entities without one).
-- `DayCyclePlugin` now drives `GlobalAmbientLight::brightness` from
-  `DayCycleConfig::night_ambient` (sun below the horizon) to `day_ambient`
-  (noon), as documented. `day_ambient` was previously ignored, so scenes
-  using the plugin kept Bevy's default ambient brightness (`80`). With the
-  default config the ambient light is now `200`–`800`; lower both fields to
-  keep the old look.
-
-## [0.10.5] - 2026-11-23
-
-### Added
-
-- Ship the SIL Open Font License 1.1 text (`src/ui/OFL-NotoSans.txt`) for the
-  embedded Noto Sans fonts.
-- Add `assets/CREDITS.md` documenting the provenance of example assets.
-
-### Changed
-
-- Replace the example block textures with original, procedurally generated
-  ones (`scripts/generate-example-textures.py`). The previous textures were
-  third-party files without a license and are no longer distributed. Example
-  texture files were renamed: `grass_block_top` → `grass_top`, `oak_log` →
-  `wood_log`, `oak_leaves` → `leaves`, `water_still` → `water`,
-  `amethyst_block` → `crystal`, `emerald_ore` → `rare_ore`.
 
 ## [0.10.4] - 2026-11-22
 
