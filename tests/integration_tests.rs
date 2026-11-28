@@ -477,60 +477,100 @@ fn streaming_requests_new_viewer_region_once_and_marks_pending() {
     );
 }
 
+/// Counts every `ChunkModified` message it sees.
+#[derive(Resource, Default)]
+struct ModifiedSeen(usize);
+
+fn count_modified(mut reader: MessageReader<ChunkModified>, mut seen: ResMut<ModifiedSeen>) {
+    seen.0 += reader.read().count();
+}
+
 #[test]
-fn generator_plugin_loads_persisted_chunk_before_calling_generator() {
+fn generator_plugin_restores_persisted_chunk_instead_of_generating() {
     let coord = IVec3::new(7, -2, 3);
     let temp = tempfile::tempdir().expect("create temp chunk dir");
     let save_dir = temp.path();
 
     let mut saved_chunk = Chunk::<DefaultVoxel>::new();
     saved_chunk.set(0, 0, 0, DefaultVoxel::RareMineral);
-    save_chunk(&saved_chunk, save_dir.join(chunk_filename(coord))).expect("save test chunk");
+    let file = save_dir.join(chunk_filename(coord));
+    save_chunk(&saved_chunk, &file).expect("save test chunk");
+    // Keep only the voxel half: a valid legacy file that any rewrite would
+    // replace with the full, twice as long format.
+    let voxel_bytes = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+    let mut legacy = std::fs::read(&file).expect("read saved chunk");
+    legacy.truncate(voxel_bytes);
+    std::fs::write(&file, &legacy).expect("write legacy chunk");
 
     let generator_calls = Arc::new(AtomicUsize::new(0));
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.add_plugins(WorldPlugin);
-    app.insert_resource(PersistenceConfig {
-        save_dir: save_dir.to_string_lossy().into_owned(),
-        auto_save: false,
-    });
-    app.insert_resource(
-        voxel_framework::generator::GeneratorResource::<DefaultVoxel> {
-            generator: Arc::new(CountingGenerator {
-                calls: generator_calls.clone(),
-            }),
-        },
-    );
-    app.add_plugins(GeneratorPlugin::<DefaultVoxel>::new());
+    let mut app = lifecycle_app(save_dir, generator_calls.clone());
+    app.init_resource::<ModifiedSeen>();
+    app.add_systems(Update, count_modified);
 
     app.world_mut().write_message(ChunkLoadRequest(coord));
+    assert!(
+        run_until(&mut app, 500, |app| loaded_voxel(app, coord, (0, 0, 0))
+            .is_some()),
+        "persisted chunk should be restored"
+    );
+    // Let the autosave system see the notification from the restore.
+    app.update();
     app.update();
 
     assert_eq!(
         generator_calls.load(Ordering::SeqCst),
         0,
-        "disk-backed chunks should be loaded synchronously before generator fallback"
+        "a saved chunk must win over the generator"
+    );
+    assert_eq!(
+        loaded_voxel(&app, coord, (0, 0, 0)),
+        Some(DefaultVoxel::RareMineral)
+    );
+    assert_eq!(
+        app.world().resource::<ModifiedSeen>().0,
+        1,
+        "restoring a chunk should notify the mesh system once"
     );
 
-    let manager = app.world().resource::<ChunkManager>();
-    let entity = manager
-        .get_entity(coord)
-        .expect("persisted chunk should be registered as loaded");
-    let loaded = app
-        .world()
-        .entity(entity)
-        .get::<Chunk<DefaultVoxel>>()
-        .expect("loaded entity should contain chunk data");
-    assert_eq!(loaded.get(0, 0, 0), DefaultVoxel::RareMineral);
-
-    let modified = app
-        .world()
-        .resource::<bevy::ecs::message::Messages<ChunkModified>>();
+    // Restoring must not write the chunk back: not on the notification that
+    // followed the restore...
     assert_eq!(
-        modified.len(),
-        1,
-        "loading a persisted chunk should notify mesh/persistence consumers"
+        std::fs::metadata(&file).expect("saved chunk").len(),
+        voxel_bytes as u64,
+        "restoring a chunk must not rewrite its file"
+    );
+    // ...and not on a later one.
+    std::fs::remove_file(&file).expect("remove saved chunk");
+    app.world_mut().write_message(ChunkModified(coord));
+    app.update();
+    app.update();
+    assert!(
+        !file.exists(),
+        "a restored, unedited chunk must not be saved again"
+    );
+}
+
+#[test]
+fn unreadable_persisted_chunk_falls_back_to_the_generator() {
+    let coord = IVec3::new(-1, 0, 4);
+    let temp = tempfile::tempdir().expect("create temp chunk dir");
+    std::fs::write(temp.path().join(chunk_filename(coord)), b"truncated")
+        .expect("write damaged chunk");
+
+    let generator_calls = Arc::new(AtomicUsize::new(0));
+    let mut app = lifecycle_app(temp.path(), generator_calls.clone());
+
+    app.world_mut().write_message(ChunkLoadRequest(coord));
+    assert!(
+        run_until(&mut app, 500, |app| loaded_voxel(app, coord, (0, 0, 0))
+            .is_some()),
+        "chunk should still load"
+    );
+
+    assert_eq!(generator_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        loaded_voxel(&app, coord, (0, 0, 0)),
+        Some(DefaultVoxel::IronOre)
     );
 }
 
@@ -625,6 +665,15 @@ fn chunk_lifecycle_generate_modify_autosave_and_reload_from_disk() {
         Some(DefaultVoxel::IronOre)
     );
 
+    // Generated terrain is not saved: it can be generated again.
+    let file = temp.path().join(chunk_filename(coord));
+    app.update();
+    app.update();
+    assert!(
+        !file.exists(),
+        "an unedited generated chunk must not be written"
+    );
+
     // 2. Modify it through the public voxel API, which emits ChunkModified.
     {
         let mut state = bevy::ecs::system::SystemState::<(
@@ -645,7 +694,6 @@ fn chunk_lifecycle_generate_modify_autosave_and_reload_from_disk() {
 
     // 3. Autosave writes it on the next frame.
     app.update();
-    let file = temp.path().join(chunk_filename(coord));
     assert!(file.is_file(), "autosave should write {}", file.display());
     drop(app);
 
@@ -653,7 +701,7 @@ fn chunk_lifecycle_generate_modify_autosave_and_reload_from_disk() {
     let mut app = lifecycle_app(temp.path(), Arc::new(AtomicUsize::new(0)));
     app.world_mut().write_message(ChunkLoadRequest(coord));
     assert!(
-        run_until(&mut app, 50, |app| loaded_voxel(app, coord, (5, 6, 7))
+        run_until(&mut app, 500, |app| loaded_voxel(app, coord, (5, 6, 7))
             .is_some()),
         "saved chunk should load"
     );

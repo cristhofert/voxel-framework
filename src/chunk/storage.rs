@@ -23,8 +23,8 @@ use crate::voxel::VoxelType;
 ///
 /// This means a full row of Z-adjacent voxels is contiguous in memory —
 /// the layout the greedy meshing algorithm iterates most frequently.
-/// The array is wrapped in a `Box` to keep the struct's stack size to a single
-/// pointer (`8 bytes`) regardless of `V`'s size.
+/// Both arrays are boxed, so the struct itself stays a few machine words
+/// regardless of `V`'s size.
 ///
 /// ## Block states
 ///
@@ -41,6 +41,14 @@ use crate::voxel::VoxelType;
 /// Games may read and write state bytes freely via [`Chunk::get_state`] /
 /// [`Chunk::set_state`] for door open/close flags, liquid level, growth stage,
 /// or any other per-voxel metadata.
+///
+/// ## Unsaved changes
+///
+/// A chunk remembers whether its data changed since it was generated, loaded
+/// from disk or last saved (see [`Chunk::is_dirty`]). [`Chunk::set`] and
+/// [`Chunk::set_state`] set the flag when they change a value; the persistence
+/// systems save only dirty chunks and clear it. Writing the public `states`
+/// array directly is **not** tracked — call [`Chunk::mark_dirty`] afterwards.
 ///
 /// ## Coordinate bounds
 ///
@@ -64,7 +72,13 @@ pub struct Chunk<V: VoxelType> {
     ///
     /// Bits 0–2 encode the placement face; bits 3–7 are reserved for games.
     /// All states are initialised to `0` (face = +X, conventional default).
+    ///
+    /// Prefer [`Chunk::set_state`]: direct writes to this array do not mark
+    /// the chunk as modified (see [`Chunk::mark_dirty`]).
     pub states: Box<[u8; CHUNK_VOLUME]>,
+    /// `true` when the data differs from what was generated, loaded or last
+    /// saved.
+    dirty: bool,
 }
 
 /// Converts a world-space face normal to a placement-face state byte (bits 0–2).
@@ -102,7 +116,37 @@ impl<V: VoxelType> Chunk<V> {
         Self {
             voxels: Box::new([V::air(); CHUNK_VOLUME]),
             states: Box::new([0u8; CHUNK_VOLUME]),
+            dirty: false,
         }
+    }
+
+    /// Returns `true` if the chunk has changes that were not saved.
+    ///
+    /// A chunk from [`Chunk::new`] is clean. [`Chunk::set`] and
+    /// [`Chunk::set_state`] mark it dirty when they change a value. The
+    /// generator pipeline hands out clean chunks, so freshly generated or
+    /// restored terrain is never written to disk until something edits it.
+    #[inline]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Marks the chunk as matching its saved (or regenerable) form.
+    ///
+    /// Call this after saving a chunk yourself, or after filling a chunk whose
+    /// contents can be reproduced and therefore need not be saved.
+    #[inline]
+    pub fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Marks the chunk as having unsaved changes.
+    ///
+    /// Needed only after writing the public `states` array directly, which the
+    /// chunk cannot observe.
+    #[inline]
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     /// Computes the flat array index for the voxel at local coordinate `(x, y, z)`.
@@ -155,7 +199,11 @@ impl<V: VoxelType> Chunk<V> {
     /// [`Chunk::get_index`]).
     #[inline]
     pub fn set(&mut self, x: usize, y: usize, z: usize, voxel: V) {
-        self.voxels[Self::get_index(x, y, z)] = voxel;
+        let slot = &mut self.voxels[Self::get_index(x, y, z)];
+        if *slot != voxel {
+            *slot = voxel;
+            self.dirty = true;
+        }
     }
 
     /// Returns the state byte for the voxel at local coordinate `(x, y, z)`.
@@ -182,7 +230,11 @@ impl<V: VoxelType> Chunk<V> {
     /// Panics in debug builds if any coordinate is out of bounds.
     #[inline]
     pub fn set_state(&mut self, x: usize, y: usize, z: usize, state: u8) {
-        self.states[Self::get_index(x, y, z)] = state;
+        let slot = &mut self.states[Self::get_index(x, y, z)];
+        if *slot != state {
+            *slot = state;
+            self.dirty = true;
+        }
     }
 
     /// Returns `true` if the voxel at local coordinate `(x, y, z)` is solid.
@@ -321,6 +373,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn new_chunk_is_clean() {
+        assert!(!Chunk::<DefaultVoxel>::new().is_dirty());
+    }
+
+    #[test]
+    fn changing_a_voxel_or_state_marks_the_chunk_dirty() {
+        let mut chunk = Chunk::<DefaultVoxel>::new();
+        chunk.set(1, 2, 3, DefaultVoxel::Rock);
+        assert!(chunk.is_dirty());
+
+        let mut chunk = Chunk::<DefaultVoxel>::new();
+        chunk.set_state(1, 2, 3, 5);
+        assert!(chunk.is_dirty());
+    }
+
+    #[test]
+    fn writing_the_same_value_keeps_the_chunk_clean() {
+        let mut chunk = Chunk::<DefaultVoxel>::new();
+        chunk.set(1, 2, 3, DefaultVoxel::Air);
+        chunk.set_state(1, 2, 3, 0);
+        assert!(!chunk.is_dirty());
+    }
+
+    #[test]
+    fn mark_clean_and_mark_dirty_override_the_flag() {
+        let mut chunk = Chunk::<DefaultVoxel>::new();
+        chunk.set(0, 0, 0, DefaultVoxel::Rock);
+        chunk.mark_clean();
+        assert!(!chunk.is_dirty());
+        // Still clean when the same value is written again.
+        chunk.set(0, 0, 0, DefaultVoxel::Rock);
+        assert!(!chunk.is_dirty());
+        chunk.mark_dirty();
+        assert!(chunk.is_dirty());
     }
 
     #[test]

@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DespawnOutsideWindow` and disappear when their window ends). Spawning is
   deterministic for a given `MobSpawnRules::seed`.
 
+- `Chunk::is_dirty`, `Chunk::mark_clean` and `Chunk::mark_dirty`: a chunk now
+  tracks whether its voxels or state bytes changed since it was generated,
+  restored or last saved. `Chunk::set` and `Chunk::set_state` set the flag
+  when they change a value.
+
 ### Fixed
 
 - `world_to_local_coord` no longer returns an out-of-range local index (`16`)
@@ -55,6 +60,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Chunk persistence saves only chunks with unsaved changes. Before, every
+  `ChunkModified` message wrote the chunk (including the ones sent for a
+  first mesh, a neighbour border or a LOD change) and every unloaded chunk
+  was written, so a session saved all the terrain it streamed through.
+  `chunk_autosave_system` and `chunk_despawn_system` now skip clean chunks,
+  and a chunk restored from disk is not written back. Existing save
+  directories keep working; untouched terrain already on disk is still
+  restored from its file.
+- Saved chunks are restored on the generator's background task instead of in
+  the `Update` schedule, so loading a saved world no longer blocks frames on
+  file reads. A restored chunk now becomes available a frame or more after
+  its `ChunkLoadRequest`, like a generated one. Without a
+  `GeneratorResource` the restore still happens immediately.
+- Direct writes to the public `Chunk::states` array are not tracked; call
+  `Chunk::mark_dirty()` after them or use `Chunk::set_state`.
 - The `minetest` example spawns mobs through `MobSpawnerPlugin` rules (red
   slimes by day, faster purple ones at night that vanish at dawn) instead of
   five mobs at fixed coordinates.
