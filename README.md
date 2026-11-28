@@ -10,7 +10,7 @@
 - Pluggable `ChunkGenerator` trait — bring your own world generation
 - Built-in `AsteroidGenerator` with FBM noise and mineral distribution
 - World streaming — automatic chunk load/unload based on viewer position
-- Save-on-unload — chunks written to disk when streaming out
+- Save-on-unload — edited chunks written to disk when streaming out
 - PBR rendering via Bevy's `StandardMaterial` with vertex colors
 - Binary chunk persistence
 - Dynamic LOD (2 levels based on viewer distance)
@@ -787,7 +787,7 @@ saving.
 
 ## Persistence
 
-`PersistencePlugin` wires chunk auto-save into the Bevy game loop. Every time a `ChunkModified` event fires, the affected chunk is written to disk in binary format. Chunks are also saved when they stream out of range (save-on-unload).
+`PersistencePlugin` wires chunk auto-save into the Bevy game loop. Only chunks whose voxels or state bytes changed are written: after an edit, the next `ChunkModified` event saves the chunk in binary format, and a chunk that still has unsaved changes is saved when it streams out of range (save-on-unload). Generated terrain that nobody edited is never written; it is generated again the next time it loads.
 
 ```rust
 use voxel_framework::prelude::*;
@@ -821,9 +821,11 @@ App::new()
 | Field | Default | Description |
 |---|---|---|
 | `save_dir` | `"./worlds/world/chunks"` | Directory for chunk binary files (created automatically) |
-| `auto_save` | `true` | Write to disk on every `ChunkModified` event |
+| `auto_save` | `true` | Save chunks with unsaved changes, on `ChunkModified` and on unload |
 
-On load, the generator pipeline calls `try_load_chunk` before spawning an async generation task. If a saved file exists for a given coordinate, it is loaded directly — generation is skipped.
+On load, the generator pipeline's background task calls `try_load_chunk` first. If a saved file exists for a given coordinate it is restored and generation is skipped; no chunk file is read on the main thread. A restored chunk is not written back until it is edited again.
+
+`Chunk::is_dirty()` reports whether a chunk has unsaved changes. `Chunk::set` and `Chunk::set_state` track them for you; if you write the public `Chunk::states` array directly, call `Chunk::mark_dirty()` so the change is saved.
 
 ## LOD System
 

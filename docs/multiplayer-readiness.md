@@ -52,7 +52,8 @@ requirement breaks before the game even gets a packet.
    behavior uses Bevy's `Time` resource (per-frame delta, also seedable via
    fixed timestep).
 8. **Persistence is event-driven, not time-driven.** Binary chunk writes
-   key off `ChunkModified` (`src/world/persistence.rs`); no timestamps in
+   key off `ChunkModified` and chunk unload, and only for chunks with unsaved
+   changes (`Chunk::is_dirty`, `src/world/persistence.rs`); no timestamps in
    the on-disk format.
 
 ## Invariants to preserve

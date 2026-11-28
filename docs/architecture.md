@@ -202,16 +202,15 @@ sequenceDiagram
     Streaming->>Generator: ChunkLoadRequest(coord)
     Streaming->>Mesh: ChunkUnloadRequest(coord)
 
-    Generator->>Disk: try_load_chunk(coord) when PersistenceConfig exists
-    alt saved chunk exists
+    Generator->>Generator: spawn load task on AsyncComputeTaskPool
+    alt saved chunk exists (PersistenceConfig present)
+        Generator->>Disk: try_load_chunk(coord) inside the task
         Disk-->>Generator: Chunk<V>
-        Generator->>Manager: register(coord, entity)
-        Generator->>Mesh: ChunkModified(coord)
     else no saved chunk or persistence disabled
-        Generator->>Generator: AsyncComputeTaskPool calls ChunkGenerator::generate
-        Generator->>Manager: register(coord, entity)
-        Generator->>Mesh: ChunkModified(coord)
+        Generator->>Generator: task calls ChunkGenerator::generate
     end
+    Generator->>Manager: register(coord, entity) when the task completes
+    Generator->>Mesh: ChunkModified(coord)
 
     Mesh->>Mesh: neighbor-aware greedy mesh at current LOD
     Mesh->>Render: insert/update Mesh3d, material, transform, visibility, AABB
@@ -223,8 +222,9 @@ The main event bus is:
 
 - `ChunkLoadRequest` — produced by streaming, consumed by generation.
 - `ChunkUnloadRequest` — produced by streaming, consumed by chunk despawn.
-- `ChunkModified` — produced by generation and voxel edits, consumed by mesh,
-  persistence, LOD/neighbor remesh propagation, and occlusion.
+- `ChunkModified` — produced by generation, restore, voxel edits and remesh
+  requests; consumed by mesh, persistence, LOD/neighbor remesh propagation,
+  and occlusion. Persistence acts on it only for chunks with unsaved changes.
 
 Generation is two-stage: request dispatch spawns work on
 `AsyncComputeTaskPool`, then a poll system attaches the completed `Chunk<V>` to
@@ -294,23 +294,28 @@ flowchart TD
     Despawn["chunk_despawn_system<V>"]
     LoadRequest["ChunkLoadRequest"]
     Generator["chunk_request_system<V>"]
+    Task["background load task"]
     Disk["./worlds/{world}/chunks/chunk_X_Y_Z.bin"]
 
     Modified --> Autosave
-    Autosave --> Disk
+    Autosave -->|"if Chunk::is_dirty"| Disk
 
     Unload --> Despawn
-    Despawn --> Disk
+    Despawn -->|"if Chunk::is_dirty"| Disk
 
     LoadRequest --> Generator
-    Generator --> Disk
-    Disk --> Generator
+    Generator --> Task
+    Task -->|"try_load_chunk"| Disk
+    Disk --> Task
 ```
 
 `PersistencePlugin<V>` inserts `PersistenceConfig` and registers auto-save on
-`ChunkModified`. The generator pipeline checks disk first when
-`PersistenceConfig` exists; if no saved chunk is found, generation falls back to
-the configured `ChunkGenerator<V>`.
+`ChunkModified`. Only chunks with unsaved changes (`Chunk::is_dirty`) are
+written, by auto-save or when they unload; generated and restored chunks start
+clean. The generator pipeline's background task checks disk first when
+`PersistenceConfig` exists; if no saved chunk is found, it falls back to the
+configured `ChunkGenerator<V>`. Without a generator the saved chunk is read
+directly by `chunk_request_system<V>`.
 
 The chunk binary format is palette-byte based. `VoxelType::to_byte` and
 `VoxelType::from_byte` therefore form a save compatibility contract.
