@@ -7,10 +7,18 @@
 //!   live on disk and whether auto-save is enabled.
 //! - [`chunk_autosave_system`] — listens for [`ChunkModified`] messages and
 //!   saves the affected chunk to disk when [`PersistenceConfig::auto_save`] is
-//!   `true`.
+//!   `true` and the chunk has unsaved changes.
 //! - [`try_load_chunk`] — a free function (not a system) that attempts to load
-//!   a chunk from disk; called by the generator pipeline before spawning an
-//!   async generation task.
+//!   a chunk from disk; the generator pipeline calls it from its background
+//!   task before falling back to generation.
+//!
+//! ## What gets written
+//!
+//! Only chunks whose data changed are saved ([`Chunk::is_dirty`]). Generated
+//! and restored chunks start clean, so [`ChunkModified`] messages that only
+//! ask for a remesh (first mesh, neighbour borders, LOD changes) write nothing.
+//! A chunk that is still dirty when it streams out is saved on unload by
+//! [`chunk_despawn_system`](crate::mesh::chunk_despawn_system).
 
 use std::path::PathBuf;
 
@@ -82,11 +90,12 @@ pub struct PersistenceConfig {
     /// The directory is created automatically (including all parent
     /// directories) the first time a chunk is saved.
     ///
-    /// Default: `"./chunks"`.
+    /// Default: `"./worlds/world/chunks"`.
     pub save_dir: String,
 
-    /// When `true`, every [`ChunkModified`] event triggers a disk write for
-    /// the affected chunk.
+    /// When `true`, chunks with unsaved changes are written to disk: on the
+    /// [`ChunkModified`] message that follows an edit, and when the chunk is
+    /// unloaded. Unmodified chunks are never written.
     ///
     /// Default: `true`.
     pub auto_save: bool,
@@ -109,12 +118,54 @@ impl Default for PersistenceConfig {
 /// to read and deserialise it via [`load_chunk`](crate::chunk::persistence::load_chunk).
 ///
 /// Returns `Some(chunk)` on success, `None` if the file does not exist or
-/// cannot be read.
+/// cannot be read. The returned chunk is clean ([`Chunk::is_dirty`] is
+/// `false`): it matches its file, so it is not written again until edited.
+///
+/// Does blocking file I/O. The generator pipeline calls it from a background
+/// task.
 pub fn try_load_chunk<V: VoxelType>(coord: ChunkCoord, save_dir: &str) -> Option<Chunk<V>> {
-    let filename = chunk_persistence::chunk_filename(coord);
-    let path: PathBuf = [save_dir, &filename].iter().collect();
+    let mut chunk = chunk_persistence::load_chunk::<V>(chunk_path(coord, save_dir)).ok()?;
+    chunk.mark_clean();
+    Some(chunk)
+}
 
-    chunk_persistence::load_chunk::<V>(&path).ok()
+fn chunk_path(coord: ChunkCoord, save_dir: &str) -> PathBuf {
+    let filename = chunk_persistence::chunk_filename(coord);
+    [save_dir, &filename].iter().collect()
+}
+
+/// Writes `chunk` to its file under `save_dir`, creating the directory first.
+///
+/// Returns `true` when the chunk is on disk. Failures are reported with
+/// `eprintln!`; `context` says which path triggered the save.
+pub(crate) fn save_chunk_to_dir<V: VoxelType>(
+    chunk: &Chunk<V>,
+    coord: ChunkCoord,
+    save_dir: &str,
+    context: &str,
+) -> bool {
+    let path = chunk_path(coord, save_dir);
+
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        eprintln!(
+            "voxel-framework: failed to create chunk save directory '{}': {e}",
+            parent.display()
+        );
+        return false;
+    }
+
+    match chunk_persistence::save_chunk(chunk, &path) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "voxel-framework: failed to save chunk {coord}{context} to '{}': {e}",
+                path.display()
+            );
+            false
+        }
+    }
 }
 
 // ─── chunk_autosave_system ────────────────────────────────────────────────────
@@ -123,18 +174,21 @@ pub fn try_load_chunk<V: VoxelType>(coord: ChunkCoord, save_dir: &str) -> Option
 ///
 /// For each [`ChunkModified`] message this system:
 /// 1. Resolves the chunk entity from [`ChunkManager`].
-/// 2. Queries the [`Chunk<V>`] component on that entity.
-/// 3. Constructs the output path from [`PersistenceConfig::save_dir`] and the
-///    chunk coordinate.
-/// 4. Ensures the save directory exists (`std::fs::create_dir_all`).
-/// 5. Writes the chunk data via [`save_chunk`](crate::chunk::persistence::save_chunk).
+/// 2. Skips the chunk unless it has unsaved changes ([`Chunk::is_dirty`]).
+///    [`ChunkModified`] is also sent when a chunk only needs a new mesh, and
+///    those chunks have nothing to save.
+/// 3. Ensures the save directory exists and writes the chunk via
+///    [`save_chunk`](crate::chunk::persistence::save_chunk).
+/// 4. Marks the chunk clean, so it is not written again until the next edit.
 ///
-/// Errors are reported with `eprintln!` and do not panic.
+/// Errors are reported with `eprintln!` and do not panic. A chunk whose save
+/// failed stays dirty and is retried on its next [`ChunkModified`] or when it
+/// is unloaded.
 pub fn chunk_autosave_system<V: VoxelType>(
     mut modified_reader: MessageReader<ChunkModified>,
     config: Res<PersistenceConfig>,
     manager: Res<ChunkManager>,
-    chunks: Query<&Chunk<V>>,
+    mut chunks: Query<&mut Chunk<V>>,
 ) {
     if !config.auto_save {
         return;
@@ -145,29 +199,17 @@ pub fn chunk_autosave_system<V: VoxelType>(
             continue;
         };
 
-        let Ok(chunk) = chunks.get(entity) else {
+        let Ok(mut chunk) = chunks.get_mut(entity) else {
             continue;
         };
 
-        let filename = chunk_persistence::chunk_filename(coord);
-        let path: PathBuf = [config.save_dir.as_str(), &filename].iter().collect();
-
-        // Ensure the save directory exists.
-        if let Some(parent) = path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            eprintln!(
-                "voxel-framework: failed to create chunk save directory '{}': {e}",
-                parent.display()
-            );
+        if !chunk.is_dirty() {
             continue;
         }
 
-        if let Err(e) = chunk_persistence::save_chunk(chunk, &path) {
-            eprintln!(
-                "voxel-framework: failed to save chunk {coord} to '{}': {e}",
-                path.display()
-            );
+        if save_chunk_to_dir(&*chunk, coord, &config.save_dir, "") {
+            // Clearing the flag is bookkeeping, not a data change.
+            chunk.bypass_change_detection().mark_clean();
         }
     }
 }
@@ -337,6 +379,89 @@ mod tests {
         app.update();
 
         assert!(!dir.path().join(chunk_filename(unloaded)).exists());
+    }
+
+    fn chunk_at(app: &App, coord: IVec3) -> &Chunk<DefaultVoxel> {
+        let entity = app
+            .world()
+            .resource::<ChunkManager>()
+            .get_entity(coord)
+            .expect("chunk is registered");
+        app.world().get::<Chunk<DefaultVoxel>>(entity).unwrap()
+    }
+
+    fn mark_clean(app: &mut App, coord: IVec3) {
+        let entity = app
+            .world()
+            .resource::<ChunkManager>()
+            .get_entity(coord)
+            .expect("chunk is registered");
+        app.world_mut()
+            .get_mut::<Chunk<DefaultVoxel>>(entity)
+            .unwrap()
+            .mark_clean();
+    }
+
+    #[test]
+    fn try_load_chunk_returns_a_clean_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        save_chunk(
+            &chunk_with_marker(),
+            dir.path().join(chunk_filename(IVec3::ZERO)),
+        )
+        .unwrap();
+
+        let loaded =
+            try_load_chunk::<DefaultVoxel>(IVec3::ZERO, dir.path().to_str().unwrap()).unwrap();
+
+        assert!(!loaded.is_dirty(), "a restored chunk matches its file");
+    }
+
+    #[test]
+    fn autosave_skips_a_chunk_without_unsaved_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = autosave_app(IVec3::ZERO, dir.path(), true);
+        mark_clean(&mut app, IVec3::ZERO);
+
+        // A remesh-only notification: the data did not change.
+        app.world_mut().write_message(ChunkModified(IVec3::ZERO));
+        app.update();
+
+        assert!(!dir.path().join(chunk_filename(IVec3::ZERO)).exists());
+    }
+
+    #[test]
+    fn autosave_marks_the_chunk_clean_and_does_not_write_it_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(chunk_filename(IVec3::ZERO));
+        let mut app = autosave_app(IVec3::ZERO, dir.path(), true);
+
+        app.world_mut().write_message(ChunkModified(IVec3::ZERO));
+        app.update();
+        assert!(file.is_file());
+        assert!(!chunk_at(&app, IVec3::ZERO).is_dirty());
+
+        std::fs::remove_file(&file).unwrap();
+        app.world_mut().write_message(ChunkModified(IVec3::ZERO));
+        app.update();
+        assert!(!file.exists(), "an unchanged chunk must not be rewritten");
+    }
+
+    #[test]
+    fn autosave_failure_keeps_the_chunk_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        // The save "directory" is a regular file, so every write fails.
+        let blocked = dir.path().join("not-a-directory");
+        std::fs::write(&blocked, b"x").unwrap();
+        let mut app = autosave_app(IVec3::ZERO, &blocked, true);
+
+        app.world_mut().write_message(ChunkModified(IVec3::ZERO));
+        app.update();
+
+        assert!(
+            chunk_at(&app, IVec3::ZERO).is_dirty(),
+            "a failed save must be retried later"
+        );
     }
 
     #[test]

@@ -73,7 +73,7 @@
 //! |---|---|---|
 //! | [`ChunkLoadRequest`] | Chunk coord enters `load_distance` sphere | Generation system |
 //! | [`ChunkUnloadRequest`] | Loaded chunk center exits `unload_distance` sphere | Despawn system |
-//! | [`ChunkModified`] | Voxel data written to a loaded chunk | Mesh rebuild system |
+//! | [`ChunkModified`] | A loaded chunk needs a remesh: data written, finished loading, or a neighbour/LOD change | Mesh rebuild, occlusion, autosave (chunks with unsaved changes only) |
 //!
 //! # World Configuration
 //!
@@ -181,7 +181,13 @@ pub struct ChunkLoadRequest(pub ChunkCoord);
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkUnloadRequest(pub ChunkCoord);
 
-/// Fired whenever voxel data inside a loaded chunk is written.
+/// Fired whenever a loaded chunk needs its mesh rebuilt: its voxel data was
+/// written, it just finished loading, or a neighbour or LOD change affects
+/// its faces.
+///
+/// The message alone does not mean the data changed. Whether a chunk has
+/// unsaved changes is tracked by [`Chunk::is_dirty`](crate::chunk::Chunk::is_dirty),
+/// which is what the persistence systems check before writing.
 ///
 /// The wrapped [`ChunkCoord`] identifies the modified chunk. Consumers
 /// — typically the mesh rebuild system — should regenerate the mesh for this

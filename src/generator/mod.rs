@@ -6,11 +6,12 @@
 //! [`GeneratorSystems`]:
 //!
 //! 1. **[`chunk_request_system`]** — receives [`crate::world::ChunkLoadRequest`]
-//!    messages.  It first tries to restore the chunk from disk (when
-//!    [`crate::world::PersistenceConfig`] is present); on a cache miss it
-//!    clones the [`Arc`]-wrapped generator and offloads work to Bevy's
-//!    [`bevy::tasks::AsyncComputeTaskPool`], storing the returned [`Task`] as a
-//!    [`ChunkTask<V>`] component on a new entity.
+//!    messages.  It clones the [`Arc`]-wrapped generator and offloads work to
+//!    Bevy's [`bevy::tasks::AsyncComputeTaskPool`], storing the returned
+//!    [`Task`] as a [`ChunkTask<V>`] component on a new entity. The task first
+//!    tries to restore the chunk from disk (when
+//!    [`crate::world::PersistenceConfig`] is present) and generates it
+//!    otherwise.
 //!
 //! 2. **[`chunk_task_poll_system`]** — polls every in-flight [`ChunkTask<V>`]
 //!    with a single non-blocking `poll_once`.  When a task resolves it removes
@@ -177,7 +178,7 @@ pub struct GeneratorResource<V: VoxelType> {
 /// frame:
 ///
 /// 1. [`chunk_request_system`] — converts [`crate::world::ChunkLoadRequest`]
-///    messages into async tasks (or immediate disk loads).
+///    messages into async tasks that restore from disk or generate.
 /// 2. [`chunk_task_poll_system`] — harvests completed tasks and attaches
 ///    [`crate::chunk::Chunk<V>`] components.
 ///

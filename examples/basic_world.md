@@ -76,7 +76,7 @@
   (3) GeneratorPlugin::<DefaultVoxel> — wires the chunk generator (on background threads) to the
   ChunkManager. Without this plugin, chunks would come up empty.
 
-  (4) PersistencePlugin::<DefaultVoxel> — saves and loads modified chunks to disk.
+  (4) PersistencePlugin::<DefaultVoxel> — saves modified chunks to disk and restores them. Terrain you never edit is not saved.
   with_world("basic_world") uses that folder as the save directory.
 
   (5) PauseMenuPlugin — the pause menu (Escape). It registers the PauseMenuState that drives

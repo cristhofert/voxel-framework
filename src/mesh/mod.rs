@@ -90,7 +90,7 @@ use crate::voxel::VoxelType;
 /// - [`chunk_mesh_system`] — runs after [`crate::generator::GeneratorSystems`];
 ///   responds to [`crate::world::ChunkModified`] by (re)building chunk meshes.
 /// - [`chunk_despawn_system`] — responds to [`crate::world::ChunkUnloadRequest`]
-///   by optionally saving to disk and despawning the entity.
+///   by saving the chunk if it has unsaved changes and despawning the entity.
 ///
 /// # Examples
 ///

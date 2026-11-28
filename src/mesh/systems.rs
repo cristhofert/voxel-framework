@@ -10,16 +10,13 @@
 //! rendered chunk based on distance to the viewer, and emits [`ChunkModified`]
 //! when the level changes so that `chunk_mesh_system` regenerates the mesh.
 
-use std::path::PathBuf;
-
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
-use crate::chunk::persistence as chunk_persistence;
 use crate::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkCoordComp, ChunkLod};
 use crate::render::material::{ChunkMaterial, ChunkMaterialHandle, ChunkRendered};
 use crate::voxel::VoxelType;
-use crate::world::persistence::PersistenceConfig;
+use crate::world::persistence::{PersistenceConfig, save_chunk_to_dir};
 use crate::world::{ChunkManager, ChunkModified, ChunkUnloadRequest, ViewerPosition};
 
 use super::lod::{compute_lod, compute_lod_with_hysteresis, lod_to_step};
@@ -408,8 +405,10 @@ pub fn lod_update_system<V: VoxelType>(
 /// Responds to [`ChunkUnloadRequest`] messages by saving and despawning chunk entities.
 ///
 /// For each unload request this system:
-/// 1. If [`PersistenceConfig::auto_save`] is `true`, saves the chunk's voxel
-///    data to disk before the entity is despawned.
+/// 1. If [`PersistenceConfig::auto_save`] is `true` and the chunk has unsaved
+///    changes ([`Chunk::is_dirty`]), saves it to disk before the entity is
+///    despawned. Unmodified chunks are not written: they can be generated or
+///    restored again.
 /// 2. Removes the chunk from [`ChunkManager`] so the streaming system can
 ///    re-request the same coord if the viewer returns.
 /// 3. Despawns the entity.
@@ -428,30 +427,12 @@ pub fn chunk_despawn_system<V: VoxelType>(
     crate::profile_span!("voxel::world::chunk_unload");
     for &ChunkUnloadRequest(coord) in unload_reader.read() {
         // Save before unregistering so the entity is still valid.
-        if config.as_ref().map(|c| c.auto_save).unwrap_or(false) {
-            if let Some(entity) = manager.get_entity(coord) {
-                if let Ok(chunk) = chunks.get(entity) {
-                    let filename = chunk_persistence::chunk_filename(coord);
-                    let save_dir = config.as_ref().unwrap().save_dir.as_str();
-                    let path: PathBuf = [save_dir, &filename].iter().collect();
-
-                    if let Some(parent) = path.parent() {
-                        if let Err(e) = std::fs::create_dir_all(parent) {
-                            eprintln!(
-                                "voxel-framework: failed to create chunk save directory '{}': {e}",
-                                parent.display()
-                            );
-                        }
-                    }
-
-                    if let Err(e) = chunk_persistence::save_chunk(chunk, &path) {
-                        eprintln!(
-                            "voxel-framework: failed to save chunk {coord} on unload to '{}': {e}",
-                            path.display()
-                        );
-                    }
-                }
-            }
+        if let Some(config) = config.as_ref().filter(|c| c.auto_save)
+            && let Some(entity) = manager.get_entity(coord)
+            && let Ok(chunk) = chunks.get(entity)
+            && chunk.is_dirty()
+        {
+            save_chunk_to_dir(chunk, coord, &config.save_dir, " on unload");
         }
 
         if let Some(entity) = manager.unregister(coord) {
@@ -465,6 +446,7 @@ pub fn chunk_despawn_system<V: VoxelType>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk::persistence as chunk_persistence;
     use crate::test_support::{filled_chunk, world_with_chunks};
     use crate::voxel::DefaultVoxel;
     use bevy::ecs::message::Messages;
@@ -808,6 +790,48 @@ mod tests {
         let saved: Chunk<V> = chunk_persistence::load_chunk(&path).expect("chunk saved on unload");
         assert_eq!(saved.get(8, 8, 8), DefaultVoxel::Rock);
         assert_eq!(saved.get(0, 0, 0), DefaultVoxel::Air);
+    }
+
+    #[test]
+    fn unload_of_an_unmodified_chunk_writes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let coord = IVec3::new(2, 0, -1);
+        let mut chunk = single_voxel_chunk();
+        // As handed out by the generator pipeline: nothing to save.
+        chunk.mark_clean();
+        let mut world = mesh_world([(coord, chunk)]);
+        world.insert_resource(PersistenceConfig {
+            save_dir: temp.path().to_string_lossy().into_owned(),
+            auto_save: true,
+        });
+        let entity = entity_at(&world, coord);
+
+        run_despawn(&mut world, coord);
+
+        assert!(world.get_entity(entity).is_err());
+        assert!(!world.resource::<ChunkManager>().is_loaded(coord));
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn unload_writes_a_chunk_whose_only_change_is_a_state_byte() {
+        let temp = tempfile::tempdir().unwrap();
+        let coord = IVec3::ZERO;
+        let mut chunk = single_voxel_chunk();
+        chunk.mark_clean();
+        // State-only edits emit no ChunkModified, so unload is their only save.
+        chunk.set_state(8, 8, 8, 9);
+        let mut world = mesh_world([(coord, chunk)]);
+        world.insert_resource(PersistenceConfig {
+            save_dir: temp.path().to_string_lossy().into_owned(),
+            auto_save: true,
+        });
+
+        run_despawn(&mut world, coord);
+
+        let path = temp.path().join(chunk_persistence::chunk_filename(coord));
+        let saved: Chunk<V> = chunk_persistence::load_chunk(&path).expect("chunk saved on unload");
+        assert_eq!(saved.get_state(8, 8, 8), 9);
     }
 
     #[test]
