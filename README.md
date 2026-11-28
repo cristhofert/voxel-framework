@@ -1021,7 +1021,7 @@ App::new()
 | Space | Move along local up |
 | Shift | Move along local down |
 | Left click in focused window | Lock cursor and enable player input |
-| Escape | Release cursor (if already free: close focused window) |
+| Escape | Without `PauseMenuPlugin`: release cursor (if already free: close focused window). With it: open the pause menu |
 
 The player starts with a free, visible cursor. Click the focused game window to
 control it. Losing focus releases control; returning requires another click.
@@ -1037,13 +1037,26 @@ focus events and received keys. Verify that startup and focus return leave the
 cursor free, inactive input does not move/rotate the camera, and a fresh focused
 click restores control. Check ordinary keys separately from desktop shortcuts.
 
-If your game uses an `AppState`, skip `PlayerPlugin` and add the systems manually gated to your playing state:
+`PlayerPlugin` works together with `PauseMenuPlugin`: the player pauses with the menu, Escape opens the menu instead of releasing the cursor or closing the window, and click-to-capture and focus-loss release keep working while unpaused.
+
+If your game uses its own `AppState`, gate or order the whole plugin through the `PlayerSystems` set:
 
 ```rust
-use voxel_framework::prelude::{player_look, player_move, player_resolve_collision};
+App::new()
+    .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+    .configure_sets(Update, PlayerSystems.run_if(in_state(MyState::Playing)));
+```
+
+Or skip `PlayerPlugin` and add the systems manually (this drops the plugin's spawn-position persistence):
+
+```rust
+use voxel_framework::prelude::{
+    player_cursor_system, player_look, player_move, player_resolve_collision,
+};
 
 App::new()
     .add_systems(Startup, spawn_player)
+    .add_systems(Update, player_cursor_system)
     .add_systems(Update,
         (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
             .chain()
@@ -1108,7 +1121,7 @@ distance to the nearest `Player`; mob AI still assumes a single `Player`.
 
 ## Pause Menu
 
-`PauseMenuPlugin` is an optional plugin that provides a full pause menu with a settings submenu. It manages its own `PauseMenuState` — use it to gate your gameplay systems:
+`PauseMenuPlugin` is an optional plugin that provides a full pause menu with a settings submenu. It manages its own `PauseMenuState`. `PlayerPlugin` reads it automatically; gate your own gameplay systems on it:
 
 ```rust
 use voxel_framework::prelude::{PauseMenuPlugin, PauseMenuState};
@@ -1116,13 +1129,21 @@ use voxel_framework::prelude::{PauseMenuPlugin, PauseMenuState};
 App::new()
     .add_plugins(VoxelPlugin::<DefaultVoxel>::new())
     .add_plugins(PauseMenuPlugin)
-    .add_systems(Startup, spawn_player)
-    .add_systems(Update,
-        (player_look, player_move, player_resolve_collision::<DefaultVoxel>)
-            .chain()
-            .run_if(in_state(PauseMenuState::Playing)),
-    );
+    .add_plugins(PlayerPlugin::<DefaultVoxel>::new())
+    .add_systems(Update, my_gameplay_system.run_if(in_state(PauseMenuState::Playing)));
 ```
+
+Cursor ownership with both plugins:
+
+| Event | Result |
+|---|---|
+| Left click in the focused window while playing | Cursor captured |
+| Window loses focus | Cursor released; the game does not pause |
+| Escape while playing | Menu opens, cursor released (the window never closes) |
+| Resume or Escape in the menu | Cursor captured again if the window is focused |
+| Click on a menu button other than Resume | Does not capture the cursor |
+
+If you register the player systems by hand instead of using `PlayerPlugin`, add `player_cursor_system` too: the pause menu on its own does not capture on the first click or release on focus loss.
 
 | State | Description |
 |---|---|
